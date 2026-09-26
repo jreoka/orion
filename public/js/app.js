@@ -161,7 +161,14 @@ async function render() {
   else if (r === 'admin') renderAdmin();
   else if (r === 'settings') renderSettings();
 }
-window.addEventListener('hashchange', render);
+// Boot navigates to the chat route itself; the resulting hashchange must not
+// re-run render() concurrently with the boot render — two interleaved
+// renderChat() calls corrupt the empty-state layout on mobile.
+let suppressHashRender = false;
+window.addEventListener('hashchange', () => {
+  if (suppressHashRender) { suppressHashRender = false; return; }
+  render();
+});
 
 /* ---------- service worker ---------- */
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
@@ -220,7 +227,10 @@ async function boot() {
     S.me = await api('/api/auth/me');
   } catch { S.me = null; }
   if (!S.me) { if (route() !== 'login') go('login'); }
-  else if (!location.hash || location.hash === '#/' || route() === 'login') go('chat');
+  else if (!location.hash || location.hash === '#/' || route() === 'login') {
+    suppressHashRender = true;
+    go('chat');
+  }
   wireGlobal();
   await render();
   layoutDebugOverlay();
