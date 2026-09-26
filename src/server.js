@@ -771,8 +771,18 @@ app.get('/api/avatar', requireAuth, (req, res) => {
 
 app.delete('/api/avatar', requireAuth, (req, res) => {
   deleteAvatarFile(req.user.id);
-  db.prepare('UPDATE users SET avatar_path = NULL WHERE id = ?').run(req.user.id);
-  res.json({ ok: true });
+  db.prepare('UPDATE users SET avatar_path = NULL WHERE id = ?').run(req.user.id);  res.json({ ok: true });
+});
+
+// Admin: view any user's avatar (the /api/avatar route is self-only).
+app.get('/api/admin/users/:id/avatar', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT avatar_path FROM users WHERE id = ?').get(Number(req.params.id));
+  if (!row?.avatar_path) return res.status(404).json({ error: 'No avatar' });
+  const fp = path.resolve(DATA_DIR, row.avatar_path);
+  if (!fp.startsWith(path.resolve(DATA_DIR) + path.sep)) return res.status(400).json({ error: 'Bad path' });
+  res.sendFile(fp, (err) => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'File missing' });
+  });
 });
 
 app.get('/api/files/:id', requireAuth, (req, res) => {  const att = db.prepare('SELECT * FROM attachments WHERE id = ?').get(req.params.id);
@@ -837,7 +847,7 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
   const rows = db
     .prepare(
       `SELECT u.id, u.username, u.role, u.disabled, u.abuse_locked, u.abuse_reason,
-              u.weekly_token_limit, u.created_at, COUNT(m.id) AS message_count
+              u.weekly_token_limit, u.avatar_path, u.created_at, COUNT(m.id) AS message_count
        FROM users u
        LEFT JOIN conversations c ON c.user_id = u.id
        LEFT JOIN messages m ON m.conversation_id = c.id

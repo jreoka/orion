@@ -1559,9 +1559,11 @@ function renderAdminUsers() {
     const used = usage ? usage.total_tokens : 0;
     const lim = u.weekly_token_limit;
     const tr = document.createElement('tr');
+    const initial = esc((u.username[0] || '?').toUpperCase());
+    const avatarHtml = `<span class="avatar">${initial}${u.avatar_path ? `<img src="/api/admin/users/${u.id}/avatar" alt="" onerror="this.remove()">` : ''}</span>`;
     tr.innerHTML = `
       <td><span class="u-name ${u.disabled ? 'u-disabled' : ''}">
-        <span class="avatar">${esc((u.username[0] || '?').toUpperCase())}</span>${esc(u.username)}
+        ${avatarHtml}${esc(u.username)}
       </span></td>
       <td>
         <span class="pill ${u.role === 'admin' ? 'admin' : 'user'}">${esc(u.role)}</span>
