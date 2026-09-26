@@ -350,6 +350,17 @@ app.get('/api/conversations', requireAuth, (req, res) => {
 });
 
 app.post('/api/conversations', requireAuth, (req, res) => {
+  // Never stack up empty chats: if the user already has a message-less
+  // conversation, hand that one back instead of creating another.
+  const empty = db
+    .prepare(
+      `SELECT c.id, c.title, c.kind, c.created_at, c.updated_at FROM conversations c
+       WHERE c.user_id = ?
+         AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id)
+       ORDER BY c.updated_at DESC LIMIT 1`
+    )
+    .get(req.user.id);
+  if (empty) return res.json(empty);
   const now = Date.now();
   const title = String(req.body?.title || 'New chat').slice(0, 120) || 'New chat';
   const info = db
