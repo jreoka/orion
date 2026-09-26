@@ -1527,18 +1527,6 @@ function fmtTokens(n) {
   return String(n);
 }
 
-function renderAdminUsers() {
-  const body = $('#users-body');
-  body.innerHTML = '';
-  if (!S.adminUsers.length) {
-    body.innerHTML = `<tr><td colspan="6" class="muted">No users yet.</td></tr>`;
-    return;
-  }
-  const usageById = {};
-  for (const r of S.adminUsage || []) usageById[r.user_id] = r;
-  for (const u of S.adminUsers) {
-    const isSelf = S.me && u.id === S.me.id;
-    const usage = usageById[u.id];
 /* Usage cell with a progress bar: "used / limit" plus a fill that turns hot
    near the cap. Unlimited users get the ∞ label with no bar. */
 function usageCell(used, lim) {
@@ -1555,6 +1543,21 @@ function usageCell(used, lim) {
     <div class="usage-bar"><div class="${cls}" style="width:${pct.toFixed(1)}%"></div></div>
   </td>`;
 }
+
+function renderAdminUsers() {
+  const body = $('#users-body');
+  body.innerHTML = '';
+  if (!S.adminUsers.length) {
+    body.innerHTML = `<tr><td colspan="6" class="muted">No users yet.</td></tr>`;
+    return;
+  }
+  const usageById = {};
+  for (const r of S.adminUsage || []) usageById[r.user_id] = r;
+  for (const u of S.adminUsers) {
+    const isSelf = S.me && u.id === S.me.id;
+    const usage = usageById[u.id];
+    const used = usage ? usage.total_tokens : 0;
+    const lim = u.weekly_token_limit;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><span class="u-name ${u.disabled ? 'u-disabled' : ''}">
