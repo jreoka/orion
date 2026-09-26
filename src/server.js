@@ -233,24 +233,41 @@ function getConv(id, userId) {
 
 // The client sees user/assistant turns only; the agent replays tool rows
 // from the DB directly when it needs context.
-function conversationPayload(conv) {
+function messagePayload(m, userId) {
+  return {
+    ...m,
+    attachments: db
+      .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
+      .all(m.id)
+      .map((a) => ({ id: a.id, filename: a.filename, url: `/api/files/${a.id}` })),
+    reactions: groupedReactions(m.id, userId),
+  };
+}
+
+function conversationPayload(conv, limit = 80) {
+  const n = Math.max(1, Math.min(200, Number(limit) || 80));
   const messages = db
     .prepare(
       `SELECT id, role, content, created_at FROM messages
-       WHERE conversation_id = ? AND role != 'tool' ORDER BY id`
+       WHERE conversation_id = ? AND role != 'tool' ORDER BY id DESC LIMIT ?`
     )
-    .all(conv.id)
-    .map((m) => ({
-      ...m,
-      attachments: db
-        .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
-        .all(m.id)
-        .map((a) => ({ id: a.id, filename: a.filename, url: `/api/files/${a.id}` })),
-      reactions: groupedReactions(m.id, conv.user_id),
-    }));
+    .all(conv.id, n)
+    .reverse()
+    .map((m) => messagePayload(m, conv.user_id));
+  const oldestLoaded = messages.length ? messages[0].id : null;
+  const hasMoreOlder = oldestLoaded
+    ? db
+        .prepare(
+          `SELECT 1 FROM messages WHERE conversation_id = ? AND role != 'tool' AND id < ? LIMIT 1`
+        )
+        .get(conv.id, oldestLoaded)
+      ? true
+      : false
+    : false;
   return {
     conversation: { id: conv.id, title: conv.title, kind: conv.kind, task_id: conv.task_id, created_at: conv.created_at, updated_at: conv.updated_at },
     messages,
+    hasMoreOlder,
   };
 }
 
@@ -294,7 +311,34 @@ app.delete('/api/messages/:id/reactions/:emoji', requireAuth, (req, res) => {
 // Single main chat: the only conversation the client ever opens.
 app.get('/api/chat', requireAuth, (req, res) => {
   const conv = getConv(getOrCreateMainConversation(req.user.id), req.user.id);
-  res.json(conversationPayload(conv));
+  res.json(conversationPayload(conv, req.query.limit));
+});
+
+// Older messages for scroll-up windowing: messages before `before` (exclusive).
+app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
+  const conv = getConv(req.params.id, req.user.id);
+  if (!conv) return res.status(404).json({ error: 'Not found' });
+  const n = Math.max(1, Math.min(200, Number(req.query.limit) || 60));
+  const before = Number(req.query.before);
+  if (!Number.isFinite(before)) return res.status(400).json({ error: 'before is required' });
+  const messages = db
+    .prepare(
+      `SELECT id, role, content, created_at FROM messages
+       WHERE conversation_id = ? AND role != 'tool' AND id < ?
+       ORDER BY id DESC LIMIT ?`
+    )
+    .all(conv.id, before, n)
+    .reverse()
+    .map((m) => messagePayload(m, conv.user_id));
+  const oldestLoaded = messages.length ? messages[0].id : null;
+  const hasMoreOlder = oldestLoaded
+    ? !!db
+        .prepare(
+          `SELECT 1 FROM messages WHERE conversation_id = ? AND role != 'tool' AND id < ? LIMIT 1`
+        )
+        .get(conv.id, oldestLoaded)
+    : false;
+  res.json({ messages, hasMoreOlder });
 });
 
 app.get('/api/conversations', requireAuth, (req, res) => {

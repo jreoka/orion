@@ -347,6 +347,72 @@ function attachmentHtml(a) {
 }
 
 /* ---------- messages ---------- */
+// Windowing: the DOM only ever holds a suffix of S.messages. Older history
+// stays in S.messages (and on the server) and is prepended as the user
+// scrolls up, so long chats never overload the browser.
+const RENDER_WINDOW = 80;  // messages painted on first load / full re-render
+const RENDER_CAP = 200;    // DOM nodes kept; older ones are trimmed from the top
+const OLDER_BATCH = 60;
+
+function setMessages(data) {
+  S.messages = data.messages || [];
+  S.hasMoreOlder = !!data.hasMoreOlder;
+  S.loadingOlder = false;
+}
+
+// "Loading older messages" spinner pinned to the top of the list.
+let olderSpinner = null;
+function ensureOlderSpinner() {
+  if (olderSpinner) return olderSpinner;
+  olderSpinner = document.createElement('div');
+  olderSpinner.id = 'older-spinner';
+  olderSpinner.hidden = true;
+  olderSpinner.innerHTML = '<span class="spin"></span>';
+  return olderSpinner;
+}
+function showOlderSpinner(on) {
+  ensureOlderSpinner().hidden = !on;
+}
+
+// Prepend an older batch fetched from the server, keeping the view stable.
+async function loadOlder() {
+  if (S.loadingOlder || !S.hasMoreOlder || !S.messages.length || !S.activeId) return;
+  S.loadingOlder = true;
+  showOlderSpinner(true);
+  try {
+    const data = await api(`/api/conversations/${S.activeId}/messages?before=${S.messages[0].id}&limit=${OLDER_BATCH}`);
+    const batch = data.messages || [];
+    S.hasMoreOlder = !!data.hasMoreOlder;
+    if (!batch.length) return;
+    const box = $('#messages');
+    const prevHeight = box.scrollHeight;
+    const prevTop = box.scrollTop;
+    S.messages = [...batch, ...S.messages];
+    const frag = document.createDocumentFragment();
+    for (const m of batch) frag.appendChild(messageEl(m));
+    box.insertBefore(frag, ensureOlderSpinner().nextSibling);
+    box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
+  } catch {
+    /* a failed page just means scrolling up tries again later */
+  } finally {
+    S.loadingOlder = false;
+    showOlderSpinner(false);
+  }
+}
+
+// Drop message nodes from the top when the DOM grows past RENDER_CAP.
+// Only when the user isn't reading the top; scroll position is preserved.
+function trimRenderedTop() {
+  const box = $('#messages');
+  if (box.scrollTop < 200) return;
+  const nodes = box.querySelectorAll(':scope > [data-mid]');
+  const over = nodes.length - RENDER_CAP;
+  if (over <= 0) return;
+  const prevHeight = box.scrollHeight;
+  const prevTop = box.scrollTop;
+  for (let i = 0; i < over && i < nodes.length; i++) nodes[i].remove();
+  box.scrollTop = Math.max(0, prevTop - (prevHeight - box.scrollHeight));
+}
 function distFromBottom() {
   const box = $('#messages');
   return box.scrollHeight - box.scrollTop - box.clientHeight;
@@ -393,6 +459,8 @@ function wireJumpPill() {
   $('#messages').addEventListener('scroll', () => {
     if (nearBottom()) hideJump();
     else if (!$('#jump-latest').hidden) paintJump();
+    // Near the top with older history available: page it in.
+    if ($('#messages').scrollTop < 600) loadOlder();
   }, { passive: true });
 }
 
@@ -463,9 +531,12 @@ function wireUploads() {
 function renderMessages() {
   const box = $('#messages');
   box.innerHTML = '';
+  box.appendChild(ensureOlderSpinner());
   const empty = $('#empty-state');
   empty.hidden = S.messages.length > 0;
-  for (const m of S.messages) box.appendChild(messageEl(m));
+  // Windowed: only the latest RENDER_WINDOW messages hit the DOM.
+  const win = S.messages.slice(-RENDER_WINDOW);
+  for (const m of win) box.appendChild(messageEl(m));
   scrollBottom(true);
 }
 
@@ -602,6 +673,7 @@ function appendUserMessage(content, attachments) {
   const m = { id: 'local-' + Date.now(), role: 'user', content, attachments: attachments || [] };
   S.messages.push(m);
   $('#messages').appendChild(messageEl(m));
+  trimRenderedTop();
   $('#empty-state').hidden = true;
   scrollBottom(true);
   return m;
@@ -681,7 +753,7 @@ function wireUserMenu() {
     if (act === 'logout') {
       try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
       closeEventStream();
-      S.me = null; S.activeId = null; S.messages = [];
+      S.me = null; S.activeId = null; S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
       go('login');
     } else if (act === 'settings') go('settings');
     else if (act === 'password') changePasswordModal();
@@ -740,7 +812,7 @@ async function renderChat() {
     try {
       const data = await api('/api/chat');
       S.activeId = data.conversation.id;
-      S.messages = data.messages || [];
+      setMessages(data);
     } catch {
       box.innerHTML = `<div class="conv-empty">Couldn't load the chat.</div>`;
       return;
@@ -821,7 +893,7 @@ async function sendMessage() {
     try {
       const data = await api('/api/chat');
       S.activeId = data.conversation.id;
-      S.messages = data.messages || [];
+      setMessages(data);
       renderMessages();
       openEventStream(S.activeId);
     } catch (e) { toast(e.message, 'error'); return; }
@@ -982,7 +1054,7 @@ async function refreshAfterReconnect(convId) {
   try {
     const data = await api(`/api/conversations/${convId}`);
     if (!data || S.activeId !== convId) return;
-    S.messages = data.messages || [];
+    setMessages(data);
     S.buffers.clear();
     S.toolRows.clear();
     renderMessages(); // live state re-derives from hello + subsequent events
@@ -1006,6 +1078,7 @@ function onBusMessage(m) {
     msg = { id: m.id, role: m.role, content: m.content || '', attachments: m.attachments || [], reactions: m.reactions || [] };
     S.messages.push(msg);
     $('#messages').appendChild(messageEl(msg));
+    trimRenderedTop();
     $('#empty-state').hidden = true;
     added = true;
   } else if (msg.role === 'assistant' && S.liveIds.has(msg.id) && typeof m.content === 'string') {
@@ -1385,7 +1458,7 @@ async function submit2fa(e) {
     S.me = d.user;
 
     S.activeId = null;
-    S.messages = [];
+    S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
     hide2faStep();
     go('chat');
   } catch (err) {
@@ -1404,7 +1477,7 @@ async function passkeyLogin() {
     S.me = d;
 
     S.activeId = null;
-    S.messages = [];
+    S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
     go('chat');
   } catch (err) {
     if (err && (err.name === 'NotAllowedError' || err.name === 'AbortError')) return; // user cancelled
@@ -1512,7 +1585,7 @@ async function resetEverythingModal() {
 
 // Drop every message (and any in-flight streaming state) from the chat view.
 function clearChatState() {
-  S.messages = [];
+  S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
   S.liveIds.clear();
   S.buffers.clear();
   S.toolRows.clear();
