@@ -991,11 +991,10 @@ async function passkeyLogin() {
   const errEl = $('#auth-error');
   errEl.hidden = true;
   try {
-    const { options } = await api('/api/auth/passkey/login/options', { method: 'POST' });
+    const { token, options } = await api('/api/auth/passkey/login/options', { method: 'POST' });
     const cred = await navigator.credentials.get({ publicKey: webauthnOptionsFromJson(options) });
-    const d = await api('/api/auth/passkey/login/verify', { method: 'POST', body: JSON.stringify(webauthnCredToJson(cred)) });
-    if (d.need_2fa) { show2faStep(d.challenge); return; }
-    S.me = d.user;
+    const d = await api('/api/auth/passkey/login/verify', { method: 'POST', body: JSON.stringify({ token, response: webauthnCredToJson(cred) }) });
+    S.me = d;
     S.conversations = [];
     S.activeId = null;
     S.messages = [];
@@ -1079,8 +1078,8 @@ async function renderSecurityTab() {
     _twofaStatus = null;
   }
   try {
-    const d = await api('/api/auth/passkey/list');
-    _passkeys = d.passkeys || [];
+    const d = await api('/api/auth/passkeys');
+    _passkeys = Array.isArray(d) ? d : [];
   } catch (err) {
     pkBox.innerHTML = `<p class="form-error">${esc(err.message)}</p>`;
     _passkeys = null;
@@ -1227,7 +1226,7 @@ function renderPasskeyBox() {
       row.querySelector('button').onclick = async () => {
         if (!await confirmDialog({ title: 'Remove passkey', message: `Remove “${name}”?`, confirmLabel: 'Remove', danger: true })) return;
         try {
-          await api(`/api/auth/passkey/${pk.id}`, { method: 'DELETE' });
+          await api(`/api/auth/passkeys/${pk.id}`, { method: 'DELETE' });
           _passkeys = _passkeys.filter(x => x.id !== pk.id);
           renderPasskeyBox();
         } catch (err) { toast('Remove failed: ' + err.message); }
@@ -1249,14 +1248,14 @@ async function registerPasskey() {
   if (!waSupported()) { toast('This browser doesn’t support passkeys'); return; }
   const name = prompt('Name this passkey (e.g. “iPhone”):', '') ?? '';
   try {
-    const { options } = await api('/api/auth/passkey/register/options', { method: 'POST' });
+    const { token, options } = await api('/api/auth/passkey/register/options', { method: 'POST' });
     const cred = await navigator.credentials.create({ publicKey: webauthnOptionsFromJson(options) });
     await api('/api/auth/passkey/register/verify', {
       method: 'POST',
-      body: JSON.stringify({ ...webauthnCredToJson(cred), name: name.trim() || undefined }),
+      body: JSON.stringify({ token, response: webauthnCredToJson(cred), name: name.trim() || undefined }),
     });
-    const d = await api('/api/auth/passkey/list');
-    _passkeys = d.passkeys || [];
+    const d = await api('/api/auth/passkeys');
+    _passkeys = Array.isArray(d) ? d : [];
     renderPasskeyBox();
     toast('Passkey registered');
   } catch (err) {
@@ -1289,7 +1288,7 @@ async function renderSessionsTab() {
   box.innerHTML = '<p class="muted">Loading…</p>';
   try {
     const d = await api('/api/auth/sessions');
-    const sessions = d.sessions || [];
+    const sessions = Array.isArray(d) ? d : [];
     if (!sessions.length) { box.innerHTML = '<p class="muted">No sessions.</p>'; return; }
     box.innerHTML = '';
     for (const s of sessions) {
@@ -1297,10 +1296,10 @@ async function renderSessionsTab() {
       row.className = 'row-item';
       row.innerHTML = `
         <div class="row-main">
-          <span class="row-title">${s.is_current ? '<span class="badge ok">This device</span> ' : ''}${esc(truncUA(s.user_agent, 40) || 'Unknown device')}</span>
-          <span class="row-sub">${esc(s.ip || '')} · last active ${esc(fmtDateTime(s.last_active_at || s.created_at))}</span>
+          <span class="row-title">${s.current ? '<span class="badge ok">This device</span> ' : ''}${esc(truncUA(s.user_agent, 40) || 'Unknown device')}</span>
+          <span class="row-sub">${esc(s.ip || '')} · last active ${esc(fmtDateTime(s.last_seen_at || s.created_at))}</span>
         </div>
-        ${s.is_current ? '' : '<button class="btn small danger">Revoke</button>'}`;
+        ${s.current ? '' : '<button class="btn small danger">Revoke</button>'}`;
       const btn = row.querySelector('button');
       if (btn) {
         btn.onclick = async () => {
@@ -1339,14 +1338,14 @@ function wireTasksTab() {
     const prompt = $('#task-prompt').value.trim();
     if (!name || !prompt) { toast('Name and prompt are required'); return; }
     const kind = document.querySelector('input[name="task-kind"]:checked').value;
-    const body = { name, prompt };
+    const body = { name, prompt, kind };
     if (kind === 'once') {
       const at = $('#task-runat').value;
       if (!at) { toast('Pick a date and time'); return; }
       body.run_at = new Date(at).toISOString();
     } else {
-      body.cron = $('#task-cron').value.trim();
-      if (!body.cron) { toast('Enter a cron expression'); return; }
+      body.cron_expr = $('#task-cron').value.trim();
+      if (!body.cron_expr) { toast('Enter a cron expression'); return; }
     }
     try {
       await api('/api/tasks', { method: 'POST', body: JSON.stringify(body) });
@@ -1359,10 +1358,10 @@ function wireTasksTab() {
   });
 }
 function taskScheduleLabel(t) {
-  if (t.run_at && !t.cron) return 'once · ' + fmtDateTime(t.run_at);
-  if (t.cron) {
+  if (t.run_at && !t.cron_expr) return 'once · ' + fmtDateTime(t.run_at);
+  if (t.cron_expr) {
     const presets = { '0 * * * *': 'hourly', '0 9 * * *': 'daily 9am', '0 9 * * 1': 'weekly Mon 9am' };
-    return 'repeats · ' + (presets[t.cron] || t.cron);
+    return 'repeats · ' + (presets[t.cron_expr] || t.cron_expr);
   }
   return t.run_at ? 'once · ' + fmtDateTime(t.run_at) : '';
 }

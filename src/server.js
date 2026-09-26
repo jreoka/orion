@@ -27,6 +27,7 @@ import {
   beginTotpSetup,
   confirmTotpSetup,
   disableTotp,
+  getTotpStatus,
   verifySecondFactor,
   consumeLoginChallenge,
 } from './totp.js';
@@ -107,6 +108,10 @@ app.patch('/api/auth/me', requireAuth, asyncRoute(async (req, res) => {
 }));
 
 // ---- two-factor auth (TOTP) ------------------------------------------------
+
+app.get('/api/auth/2fa/status', requireAuth, (req, res) => {
+  res.json(getTotpStatus(req.user.id));
+});
 
 app.post('/api/auth/2fa/setup', requireAuth, asyncRoute(async (req, res) => {
   // The secret is returned ONCE here; afterwards only the hash is stored.

@@ -97,6 +97,15 @@ export function totpEnabled(userId) {
   return !!row?.totp_enabled;
 }
 
+/** Status for the settings UI: whether 2FA is on and how many backup codes remain. */
+export function getTotpStatus(userId) {
+  const enabled = totpEnabled(userId);
+  const row = db
+    .prepare('SELECT COUNT(*) AS n FROM totp_backup_codes WHERE user_id = ? AND used_at IS NULL')
+    .get(userId);
+  return { enabled, backup_codes_remaining: enabled ? row.n : 0 };
+}
+
 function verifyTotpCode(userId, code) {
   const user = getUserRow(userId);
   if (!user.totp_enabled || !user.totp_secret) return false;
