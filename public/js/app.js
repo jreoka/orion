@@ -947,10 +947,17 @@ function deleteChatModal(conv) {
       toast('Chat deleted');
       await loadConversationsQuiet();
       if (conv.id === S.activeId) {
-        // Fall back to the most recent remaining chat, or a fresh one.
         const next = S.conversations[0];
         if (next) await switchConversation(next.id);
-        else await newChat();
+        else {
+          // Last chat deleted: land on the empty state. A new chat is
+          // created only when the user starts one.
+          closeEventStream();
+          S.activeId = null;
+          setMessages({ messages: [], hasMoreOlder: false });
+          renderMessages();
+          updateComposer();
+        }
       }
     } catch (ex) { toast(ex.message || 'Delete failed', 'error'); }
   };
@@ -1001,12 +1008,26 @@ function closeSidebarDrawer() {
 }
 
 let sidebarWired = false;
+function setSidebarCollapsed(collapsed) {
+  document.body.classList.toggle('side-collapsed', collapsed);
+  try { localStorage.setItem('orion-sidebar-collapsed', collapsed ? '1' : '0'); } catch {}
+}
+
 function wireSidebarOnce() {
   if (sidebarWired) return;
   sidebarWired = true;
   $('#new-chat-btn')?.addEventListener('click', newChat);
-  $('#menu-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openSidebarDrawer(); });
+  $('#menu-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (window.matchMedia('(max-width: 760px)').matches) openSidebarDrawer();
+    else setSidebarCollapsed(!document.body.classList.contains('side-collapsed'));
+  });
   $('#side-backdrop')?.addEventListener('click', closeSidebarDrawer);
+  try {
+    if (localStorage.getItem('orion-sidebar-collapsed') === '1') {
+      document.body.classList.add('side-collapsed');
+    }
+  } catch {}
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && S.me) loadConversationsQuiet();
   });
@@ -1019,25 +1040,33 @@ async function renderChat() {
   if (!chatWired) { wireChat(); chatWired = true; }
   wireUserMenuOnce();
   wireSidebarOnce();
-  // Default chat: fetch (or create) it, then subscribe to its event bus.
+  // Open the most recent chat. If none exists, stay on the empty state —
+  // nothing is auto-created on page load; the first sent message (or the
+  // + button) creates the chat.
   if (!S.activeId) {
     const box = $('#messages');
     box.innerHTML = '<div class="skel" style="max-width:60%;"></div><div class="skel" style="max-width:80%;margin-left:auto"></div>';
     $('#empty-state').hidden = true;
     try {
-      const data = await api('/api/chat');
-      S.activeId = data.conversation.id;
-      setMessages(data);
+      const list = await api('/api/conversations');
+      if (list.length) {
+        const data = await api(`/api/conversations/${list[0].id}`);
+        S.activeId = list[0].id;
+        setMessages(data);
+      } else {
+        S.activeId = null;
+        setMessages({ messages: [], hasMoreOlder: false });
+      }
     } catch {
       box.innerHTML = `<div class="conv-empty">Couldn't load the chat.</div>`;
       return;
     }
   }
-  S.lastSeenAt[S.activeId] = Date.now();
+  if (S.activeId) S.lastSeenAt[S.activeId] = Date.now();
   restoreDraft();
   await loadConversationsQuiet();
   renderMessages();
-  openEventStream(S.activeId);
+  if (S.activeId) openEventStream(S.activeId);
   updateComposer();
 }
 
@@ -1118,14 +1147,17 @@ async function sendMessage() {
   if (S.pendingUploads.some((p) => p.uploading)) return; // wait for uploads
   if (!content && !staged.length) return;
 
-  // Ensure a chat is loaded before posting into it.
+  // Ensure a chat exists before posting into it: the first message
+  // creates it (nothing is auto-created on page load).
   if (!S.activeId) {
     try {
-      const data = await api('/api/chat');
-      S.activeId = data.conversation.id;
+      const conv = await api('/api/conversations', { method: 'POST', body: {} });
+      const data = await api(`/api/conversations/${conv.id}`);
+      S.activeId = conv.id;
       setMessages(data);
       renderMessages();
       openEventStream(S.activeId);
+      await loadConversationsQuiet();
     } catch (e) { toast(e.message, 'error'); return; }
   }
   const convId = S.activeId;
