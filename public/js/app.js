@@ -223,8 +223,41 @@ async function boot() {
   else if (!location.hash || location.hash === '#/' || route() === 'login') go('chat');
   wireGlobal();
   await render();
+  layoutDebugOverlay();
 }
 document.addEventListener('DOMContentLoaded', boot);
+
+/* ---------- temporary layout diagnostics (empty-state scroll) ---------- */
+function layoutDebugOverlay() {
+  if (!new URLSearchParams(location.search).has('debuglayout')) return;
+  setTimeout(() => {
+    const r = (el) => {
+      if (!el) return 'missing';
+      const cs = getComputedStyle(el);
+      return `${el.offsetHeight}px h / ${el.scrollHeight}px scrollH (display:${cs.display} hidden:${el.hidden})`;
+    };
+    const lines = [
+      `UA: ${navigator.userAgent}`,
+      `innerHeight: ${window.innerHeight} innerWidth: ${window.innerWidth}`,
+      `supports dvh: ${CSS.supports('height', '100dvh')}  supports :has: ${CSS.supports('selector(:has(*))')}`,
+      `docEl scrollH: ${document.documentElement.scrollHeight}  body scrollH: ${document.body.scrollHeight}`,
+      `#app: ${r(document.getElementById('app'))}`,
+      `#view-chat: ${r(document.getElementById('view-chat'))}`,
+      `#chat-main: ${r(document.getElementById('chat-main'))}`,
+      `#chat-header: ${r(document.getElementById('chat-header'))}`,
+      `#messages: ${r(document.getElementById('messages'))}`,
+      `#empty-state: ${r(document.getElementById('empty-state'))}`,
+      `.composer-wrap: ${r(document.querySelector('.composer-wrap'))}`,
+      `S.messages.length: ${typeof S !== 'undefined' ? S.messages.length : '?'}`,
+    ];
+    const pre = document.createElement('pre');
+    pre.textContent = lines.join('\n');
+    pre.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#000;color:#0f0;'
+      + 'font-size:11px;line-height:1.5;padding:12px;white-space:pre-wrap;margin:0;'
+      + 'max-height:80vh;overflow:auto;font-family:monospace;';
+    document.body.appendChild(pre);
+  }, 2000);
+}
 
 /* ============================================================
    Auth view
