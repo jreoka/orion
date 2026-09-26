@@ -600,6 +600,32 @@ function messageEl(m) {
     wrap.innerHTML = `<div class="upd"><span class="content">${md(m.content || '')}</span></div>`;
     return wrap;
   }
+  if (m.kind === 'vault_request') {
+    // Secure secret-input widget. The iframe is a same-origin form page;
+    // the secret is POSTed straight to the server and never touches chat.
+    wrap.classList.add('vault-request');
+    let v = {};
+    try { v = JSON.parse(m.content || '{}'); } catch { /* fall through */ }
+    const reqId = String(v.vault_request_id || '');
+    const done = v.status === 'fulfilled';
+    wrap.dataset.vaultRequest = reqId;
+    wrap.innerHTML = `
+      <div class="vault-card">
+        <div class="vault-head"><span class="vault-lock" aria-hidden="true">🔒</span>
+          <div class="vault-head-text">
+            <div class="vault-title">${esc(v.label || 'Secret')}</div>
+            ${v.hint ? `<div class="vault-hint">${esc(v.hint)}</div>` : ''}
+          </div>
+        </div>
+        <div class="vault-body">${
+          done
+            ? `<div class="vault-done">Saved to your vault ✓</div>`
+            : `<iframe class="vault-frame" title="Secure secret input" src="/vault/form/${encodeURIComponent(reqId)}" sandbox="allow-forms allow-scripts allow-same-origin" loading="lazy"></iframe>
+               <div class="vault-note">Enter it above — it goes straight to the encrypted vault, never into chat. Then tell the agent you're done.</div>`
+        }</div>
+      </div>`;
+    return wrap;
+  }
   if (m.role === 'user') {
     const imgs = (m.attachments || []).length
       ? `<div class="u-imgs">${(m.attachments || []).map(attachmentHtml).join('')}</div>` : '';
@@ -1402,6 +1428,7 @@ function openEventStream(convId) {
     if (d && d.message_id != null) applyReactions(d.message_id, d.reactions || []);
   });
   es.addEventListener('message', (e) => onBusMessage(parseBusEvent(e)?.message));
+  es.addEventListener('vault', (e) => onVaultEvent(parseBusEvent(e)));
   es.addEventListener('token', (e) => onBusToken(parseBusEvent(e)));
   es.addEventListener('tool', (e) => onBusTool(parseBusEvent(e)));
   es.addEventListener('image', (e) => onBusImage(parseBusEvent(e)));
@@ -1448,8 +1475,32 @@ async function refreshAfterReconnect(convId) {
   } catch { /* the next backoff tick retries */ }
 }
 
-function onBusMessage(m) {
-  if (!m || m.id == null || S.activeId == null) return;
+// A vault secret was saved through the secure form: flip the widget card
+// to its saved state and keep the local message copy in sync.
+function onVaultEvent(d) {
+  if (!d || !d.request_id) return;
+  const safeId = String(d.request_id).replace(/["\\]/g, '');
+  const wrapEl = document.querySelector(`[data-vault-request="${safeId}"]`);
+  if (wrapEl) {
+    const body = wrapEl.querySelector('.vault-body');
+    if (body) body.innerHTML = '<div class="vault-done">Saved to your vault ✓</div>';
+  }
+  const msg = S.messages.find((x) => {
+    if (x.kind !== 'vault_request') return false;
+    try { return JSON.parse(x.content || '{}').vault_request_id === d.request_id; }
+    catch { return false; }
+  });
+  if (msg) {
+    try {
+      const v = JSON.parse(msg.content || '{}');
+      v.status = 'fulfilled';
+      msg.content = JSON.stringify(v);
+    } catch { /* cosmetic only */ }
+  }
+  toast(d.label ? `“${d.label}” saved to vault` : 'Secret saved to vault');
+}
+
+function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return;
   let added = false;
   let msg = S.messages.find((x) => x.id === m.id);
   if (!msg) {
@@ -1937,7 +1988,7 @@ async function passkeyLogin() {
 }
 
 /* ---------- settings ---------- */
-const SETTINGS_TABS = ['security', 'sessions', 'notifications'];
+const SETTINGS_TABS = ['security', 'sessions', 'vault', 'notifications'];
 let _settingsTab = 'security';
 let _twofaStatus = null;
 let _passkeys = null;
@@ -1974,6 +2025,7 @@ async function renderSettings() {
   }
   if (_settingsTab === 'security') renderSecurityTab();
   else if (_settingsTab === 'sessions') renderSessionsTab();
+  else if (_settingsTab === 'vault') renderVaultTab();
   else if (_settingsTab === 'notifications') renderNotificationsTab();
   renderProfileCard();
   renderUsageCard();
@@ -2310,6 +2362,46 @@ function urlB64ToU8(s) {
   const out = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
+}
+
+async function renderVaultTab() {
+  const box = $('#vault-box');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  let items = [];
+  try {
+    items = await api('/api/vault/items');
+  } catch (e) {
+    box.innerHTML = `<p class="muted">Couldn't load the vault: ${esc(e.message)}</p>`;
+    return;
+  }
+  if (!items.length) {
+    box.innerHTML = '<p class="muted">No secrets stored. When the agent needs a credential, it will offer you a secure form right in the chat.</p>';
+    return;
+  }
+  box.innerHTML = items.map((i) => `
+    <div class="row-between vault-item">
+      <div>
+        <div><span aria-hidden="true">🔒</span> <strong>${esc(i.label)}</strong></div>
+        <div class="muted small">Added ${esc(new Date(i.created_at).toLocaleDateString())}</div>
+      </div>
+      <button class="btn danger-ghost" data-vault-del="${esc(i.id)}" data-vault-label="${esc(i.label)}">Delete</button>
+    </div>`).join('');
+  box.querySelectorAll('[data-vault-del]').forEach((b) => {
+    b.onclick = async () => {
+      const ok = await confirmDialog({
+        title: 'Delete secret?',
+        message: `Remove "${b.dataset.vaultLabel}" from the vault? The agent will no longer be able to use it. This can't be undone.`,
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await api(`/api/vault/items/${encodeURIComponent(b.dataset.vaultDel)}`, { method: 'DELETE' });
+        toast('Secret deleted');
+        renderVaultTab();
+      } catch (e) { toast(e.message, 'error'); }
+    };
+  });
 }
 
 async function renderNotificationsTab() {

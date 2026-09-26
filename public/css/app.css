@@ -677,6 +677,31 @@ button.avatar.lg:hover { opacity: .85; }
 .upd .content > *:first-child { margin-top: 0; }
 .upd .content > *:last-child { margin-bottom: 0; }
 .upd .content p { margin: 0 0 4px; }
+/* Secure vault request widget: a locked card with an inline same-origin form. */
+.msg.vault-request { margin: 10px 0; }
+.vault-card {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--lift);
+  padding: 14px 16px;
+  max-width: 460px;
+}
+.vault-head { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 10px; }
+.vault-lock { font-size: 20px; line-height: 1.3; }
+.vault-title { font-weight: 600; font-size: 15.5px; }
+.vault-hint { color: var(--ink-2); font-size: 13.5px; line-height: 1.5; margin-top: 2px; }
+.vault-frame {
+  width: 100%;
+  height: 240px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  display: block;
+}
+.vault-note { color: var(--ink-3); font-size: 12.5px; margin-top: 8px; line-height: 1.5; }
+.vault-done { color: var(--success); font-size: 14.5px; padding: 6px 0; }
+.vault-item { padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.vault-item:last-child { border-bottom: 0; }
 /* No reactions yet: the lone + floats in the gap under the message instead
    of reserving a full empty row. */
 .msg .bubble, .a-body { position: relative; }

@@ -23,6 +23,13 @@ import {
   sandboxPullFile,
 } from './sandbox.js';
 import { validateTaskInput, scheduleTask, unscheduleTask } from './tasks.js';
+import {
+  createVaultRequest,
+  listVaultItems,
+  deleteVaultItem,
+  resolveVaultEnv,
+  redactSecrets,
+} from './vault.js';
 
 const MAX_ITERATIONS = 12;
 const RUN_CAP_MS = 12 * 60 * 1000; // overall run budget, shared with subagents
@@ -39,6 +46,8 @@ Your tools:
 - send_update: post a progress note mid-run. It appears as a slim status line in the chat (not a full message card), so use it for meaningful milestones during long multi-step work — a sentence or two, not a narration of every tool call.
 - react_to_message: add or remove an emoji reaction on a chat message — acknowledge the user's message with ❤️, mark something done with ✅, laugh along with 😂, etc. Use sparingly: a reaction is a warm touch, not a substitute for a reply. You may react to the user's messages or your own.
 - schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in the main chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
+
+- vault_request / vault_list / vault_delete: the encrypted vault. NEVER ask the user to paste secrets (API keys, tokens, passwords) into chat — anything typed in chat is visible to the underlying AI model. When you need a credential, call vault_request with a label and a short hint; it shows the user a secure in-chat form whose contents go straight into the encrypted vault in the VM. You never see the value — only a "vault:<id>" handle. Use it through exec's env param ({"SOME_KEY": "vault:<id>"}): the value is injected server-side and scrubbed from all command output, so it never enters your context. Never echo, print, or write a vault value anywhere (no echo $KEY, no writing it to files, no putting it in task prompts).
 
 Guidelines:
 - Be concise and direct. Explain what you're doing briefly, then do it.
@@ -58,12 +67,17 @@ export const TOOLS = [
     function: {
       name: 'exec',
       description:
-        'Run a shell command inside your Linux VM (working directory /home/agent/workspace). Returns merged stdout+stderr and the exit code. Confirm with the user before destructive commands.',
+        'Run a shell command inside your Linux VM (working directory /home/agent/workspace). Returns merged stdout+stderr and the exit code. Confirm with the user before destructive commands. Optional env: extra environment variables as an object. A value of the form "vault:<id>" injects a secret from the user\u2019s encrypted vault — it is resolved server-side and scrubbed from all output, so it never enters your context; use this for API keys/tokens instead of pasting them into the command.',
       parameters: {
         type: 'object',
         properties: {
           command: { type: 'string', description: 'The shell command to run' },
           timeout: { type: 'number', description: 'Timeout in seconds (default 60, max 600)' },
+          env: {
+            type: 'object',
+            description: 'Optional extra environment variables, e.g. {"GH_TOKEN": "vault:<id>"}. Vault references are resolved server-side and redacted from output.',
+            additionalProperties: { type: 'string' },
+          },
         },
         required: ['command'],
       },
@@ -226,6 +240,45 @@ export const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'vault_request',
+      description:
+        'Ask the user for a secret (API key, token, password) through a secure in-chat form. NEVER ask the user to paste secrets into chat — anything typed in chat is visible to the underlying AI model. This shows them a locked form whose contents go straight into the encrypted vault in the VM; you never see the value, only a "vault:<id>" handle. Tell the user to fill the form and say "done", then use the handle via exec\u2019s env param (e.g. {"API_KEY": "vault:<id>"}) once they confirm.',
+      parameters: {
+        type: 'object',
+        properties: {
+          label: { type: 'string', description: 'Short name shown on the form, e.g. "GitHub token" (max 120 chars)' },
+          hint: { type: 'string', description: 'One-line hint for the user, e.g. "Create one at github.com/settings/tokens with repo scope" (max 500 chars)' },
+        },
+        required: ['label'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'vault_list',
+      description:
+        'List the secrets stored in the user\u2019s encrypted vault. Returns only metadata (id, label, date added) — values are never revealed, not even to you.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'vault_delete',
+      description: 'Permanently delete a secret from the vault by its id (see vault_list). Confirm with the user first.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The vault item id' },
+        },
+        required: ['id'],
+      },
+    },
+  },
 ];
 
 const DELEGATE_TOOL = {
@@ -281,6 +334,9 @@ function summarizeTool(name, args) {
     case 'update_task':
     case 'delete_task': return 'task ' + s(args.id, 20);
     case 'react_to_message': return (args.action === 'remove' ? 'unreact ' : 'react ') + s(args.emoji, 10);
+    case 'vault_request': return 'vault request ' + s(args.label, 40);
+    case 'vault_list': return 'list vault';
+    case 'vault_delete': return 'delete vault ' + s(args.id, 20);
     default: return name;
   }
 }
@@ -338,8 +394,11 @@ function createAgentTask(userId, args) {
 async function executeTool(userId, conversationId, assistantMessageId, name, args) {
   switch (name) {
     case 'exec': {
-      const { output, exitCode } = await sandboxExec(userId, args.command, { timeout: args.timeout });
-      let text = output.trim() ? output : '(no output)';
+      // Vault references in env are resolved server-side; the plaintext is
+      // scrubbed from the output so it never reaches the model.
+      const { env, secrets } = resolveVaultEnv(userId, args.env);
+      const { output, exitCode } = await sandboxExec(userId, args.command, { timeout: args.timeout, env });
+      let text = redactSecrets(output, secrets).trim() || '(no output)';
       if (exitCode !== 0) text = `exit code ${exitCode}\n${text}`;
       return { text };
     }
@@ -476,6 +535,46 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       });
       return { text: 'Update sent.' };
     }
+    case 'vault_request': {
+      const label = String(args.label ?? '').trim();
+      if (!label) throw new Error('vault_request: label is required');
+      const hint = String(args.hint ?? '').trim();
+      const requestId = createVaultRequest(userId, conversationId, label, hint);
+      // A widget message the client renders as a secure input form. The
+      // content carries only metadata — the secret itself never appears.
+      const content = JSON.stringify({ vault_request_id: requestId, label, hint, status: 'pending' });
+      const now = Date.now();
+      const info = db
+        .prepare('INSERT INTO messages (conversation_id, role, content, kind, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(conversationId, 'assistant', content, 'vault_request', now);
+      const id = Number(info.lastInsertRowid);
+      db.prepare('UPDATE vault_requests SET message_id = ? WHERE id = ?').run(id, requestId);
+      publish(conversationId, {
+        type: 'message',
+        message: { id, role: 'assistant', content, kind: 'vault_request', created_at: now },
+      });
+      return {
+        text: `Secure form shown to the user for "${label}" (request ${requestId}). ` +
+          `The secret goes straight into the encrypted vault — you will never see its value, so do NOT ask ` +
+          `the user to paste it into chat. Tell the user to fill the form and say "done"; when they confirm, ` +
+          `call vault_list to get the new item's handle ("vault:<id>") and use it via exec's env param.`,
+      };
+    }
+    case 'vault_list': {
+      const items = listVaultItems(userId);
+      if (!items.length) return { text: 'The vault is empty.' };
+      return {
+        text: 'Vault contents (metadata only — values are never revealed):\n' +
+          items.map((i) => `- ${i.id} — "${i.label}" (added ${new Date(i.created_at).toISOString().slice(0, 10)})`).join('\n') +
+          '\nUse a handle like "vault:<id>" in exec env to use one.',
+      };
+    }
+    case 'vault_delete': {
+      const vid = String(args.id ?? '').trim();
+      if (!vid) throw new Error('vault_delete: id is required');
+      if (!deleteVaultItem(userId, vid)) throw new Error('vault item not found');
+      return { text: 'Vault item deleted.' };
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -511,6 +610,16 @@ export async function loadHistory(conversationId, limit) {
     // attachments: readable text is embedded; images become vision parts
     // so the model genuinely sees them instead of guessing.
     let text = (r.content || '') + reactionSummary(r.id) + attachmentSummary(r.id);
+    if (r.kind === 'vault_request') {
+      // The widget payload is metadata only; replay it as a plain line so
+      // the model sees the request state without JSON noise.
+      try {
+        const v = JSON.parse(r.content || '{}');
+        text = `[secure vault request: "${v.label || 'secret'}" — ${v.status || 'pending'}]`;
+      } catch {
+        text = '[secure vault request]';
+      }
+    }
     let content = text;
     try {
       const { parts, skipped } = await imagePartsForMessage(r.id);

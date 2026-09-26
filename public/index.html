@@ -235,6 +235,7 @@
           <div class="settings-tabs" role="tablist">
             <button class="settings-tab active" data-tab="security" role="tab">Security</button>
             <button class="settings-tab" data-tab="sessions" role="tab">Sessions</button>
+            <button class="settings-tab" data-tab="vault" role="tab">Vault</button>
             <button class="settings-tab" data-tab="notifications" role="tab">Notifications</button>
           </div>
 
@@ -252,6 +253,12 @@
               <button class="btn" id="sessions-revoke-others">Sign out other sessions</button>
             </div>
             <div id="sessions-box"><p class="muted">Loading…</p></div>
+          </div>
+
+          <div class="settings-panel" id="set-panel-vault" hidden>
+            <h3 class="set-h">Vault</h3>
+            <p class="muted small">Encrypted secrets (API keys, tokens) the agent collected through its secure form. Values are never shown — not even to the agent itself. Deleting one breaks whatever the agent used it for.</p>
+            <div id="vault-box"><p class="muted">Loading…</p></div>
           </div>
 
           <div class="settings-panel" id="set-panel-notifications" hidden>

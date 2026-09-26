@@ -199,6 +199,27 @@ CREATE TABLE IF NOT EXISTS user_settings (
 CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkey_credentials(user_id);
 CREATE INDEX IF NOT EXISTS idx_backup_codes_user ON totp_backup_codes(user_id);
+CREATE TABLE IF NOT EXISTS vault_items (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  secret_enc TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vault_requests (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  conversation_id INTEGER NOT NULL,
+  message_id INTEGER,
+  label TEXT NOT NULL,
+  hint TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  item_id TEXT,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vault_items_user ON vault_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_vault_requests_user ON vault_requests(user_id);
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL,

@@ -15,6 +15,7 @@ import {
   destroySession,
   requireAuth,
   requireAdmin,
+  getUserBySession,
   setSessionCookie,
   clearSessionCookie,
   hashPassword,
@@ -43,6 +44,14 @@ import {
   deletePasskey,
 } from './passkey.js';
 import { publish, subscribe, unsubscribe } from './events.js';
+import {
+  createVaultRequest as vaultCreateRequest,
+  getVaultRequest,
+  fulfillVaultRequest,
+  listVaultItems,
+  deleteVaultItem,
+  pruneExpiredRequests,
+} from './vault.js';
 import { runConversation, startRunIfIdle, abortRun } from './runs.js';
 import { isRunLocked, requestStop } from './runlock.js';
 import {
@@ -734,6 +743,149 @@ app.post('/api/upload', requireAuth, (req, res) => {
       url: `/api/files/${id}`,
     });
   });
+});
+
+// ---- vault ------------------------------------------------------------------
+// Encrypted per-user secret storage. The agent collects credentials through
+// a same-origin form (never through chat, which the model can see) and only
+// ever handles opaque "vault:<id>" references. Plaintext is resolved
+// server-side at exec time and scrubbed from output.
+
+const vaultEsc = (s) =>
+  String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Secure input form. Session-authenticated; the request id is unguessable,
+// single-use, and expires after 15 minutes.
+app.get('/vault/form/:requestId', (req, res) => {
+  const user = getUserBySession(req.cookies?.[COOKIE_NAME]);
+  const rq = getVaultRequest(req.params.requestId);
+  if (!user || !rq || rq.user_id !== user.id) {
+    return res.status(404).type('html').send(vaultFormPage(null, 'Not found', 'This secure form link is invalid or belongs to a different account.'));
+  }
+  pruneExpiredRequests();
+  const fresh = getVaultRequest(req.params.requestId);
+  if (fresh.status === 'fulfilled') {
+    return res.type('html').send(vaultFormPage(fresh, 'Already saved ✓', 'This secret was already stored. You can close this tab.', true));
+  }
+  if (fresh.status !== 'pending') {
+    return res.type('html').send(vaultFormPage(fresh, 'Expired', 'This request expired. Ask the agent for a new secure form.', true));
+  }
+  res.type('html').send(vaultFormPage(fresh, null, null, false));
+});
+
+function vaultFormPage(rq, title, message, done) {
+  const heading = title || 'Save a secret';
+  const label = rq ? rq.label : '';
+  const hint = rq ? rq.hint : '';
+  const reqId = rq ? rq.id : '';
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${vaultEsc(heading)} — Orion vault</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: Georgia, 'Times New Roman', serif; background: #faf7f0; color: #2b2620;
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  @media (prefers-color-scheme: dark) { body { background: #171310; color: #e8e0d2; } }
+  .card { max-width: 420px; width: 100%; }
+  .lock { font-size: 28px; }
+  h1 { font-size: 22px; margin: 12px 0 4px; font-weight: 600; }
+  .label-name { color: #8a8175; font-size: 14px; margin-bottom: 16px; }
+  .hint { font-size: 14px; line-height: 1.5; color: #6b6257; margin-bottom: 16px; }
+  @media (prefers-color-scheme: dark) { .hint { color: #a89e8d; } .label-name { color: #8f8574; } }
+  .field { margin-bottom: 12px; }
+  input[type=password], input[type=text] { width: 100%; box-sizing: border-box; font-size: 16px;
+    font-family: ui-monospace, monospace; padding: 10px 12px; border: 1px solid #d8d0c0; border-radius: 8px;
+    background: #fff; color: inherit; }
+  @media (prefers-color-scheme: dark) { input[type=password], input[type=text] { background: #221d17; border-color: #3d362c; } }
+  .row { display: flex; gap: 10px; align-items: center; }
+  button.submit { flex: 1; font-size: 16px; padding: 11px; border: 0; border-radius: 8px; cursor: pointer;
+    background: #1f4fd8; color: #fff; font-family: inherit; }
+  button.submit:disabled { opacity: .6; cursor: default; }
+  .show { font-size: 13px; background: none; border: 1px solid #d8d0c0; border-radius: 8px; padding: 10px 12px;
+    cursor: pointer; color: inherit; font-family: inherit; }
+  .err { color: #b3261e; font-size: 14px; margin-top: 10px; min-height: 20px; }
+  .ok { color: #2e7d32; font-size: 15px; line-height: 1.6; }
+  .note { margin-top: 18px; font-size: 12.5px; color: #8a8175; line-height: 1.5; }
+  @media (prefers-color-scheme: dark) { .note { color: #6f6656; } }
+</style></head><body><div class="card">
+  <div class="lock">🔒</div>
+  <h1>${vaultEsc(heading)}</h1>
+  ${label ? `<div class="label-name">${vaultEsc(label)}</div>` : ''}
+  ${done
+    ? `<p class="ok">${vaultEsc(message)}</p>`
+    : `
+  ${hint ? `<p class="hint">${vaultEsc(hint)}</p>` : ''}
+  <form id="f">
+    <div class="field"><input id="v" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"
+      placeholder="Paste the secret here" aria-label="Secret value"></div>
+    <div class="row">
+      <button class="submit" type="submit" id="go">Save to vault</button>
+      <button class="show" type="button" id="sh">Show</button>
+    </div>
+    <div class="err" id="e"></div>
+  </form>
+  <p class="note">This goes straight into the encrypted vault in your VM. It is never shown to the AI model —
+  not in chat, not in any log. Only this server can use it, when the agent explicitly asks for it by name.</p>
+  <script>
+    const f = document.getElementById('f'), v = document.getElementById('v'),
+          e = document.getElementById('e'), go = document.getElementById('go');
+    document.getElementById('sh').onclick = () => {
+      const show = v.type === 'password';
+      v.type = show ? 'text' : 'password';
+      document.getElementById('sh').textContent = show ? 'Hide' : 'Show';
+    };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      e.textContent = '';
+      if (!v.value) { e.textContent = 'Paste a value first.'; return; }
+      go.disabled = true;
+      try {
+        const r = await fetch('/api/vault/requests/${vaultEsc(reqId)}/fulfill', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: v.value })
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || 'Save failed');
+        document.querySelector('.card').innerHTML =
+          '<div class="lock">🔒</div><h1>Saved ✓</h1>' +
+          '<p class="ok">“' + ${JSON.stringify(label)}.replace(/</g, '\\u003c') + '” is in your vault. ' +
+          'You can close this tab and tell the agent to continue.</p>';
+      } catch (err) { e.textContent = err.message; go.disabled = false; }
+    };
+    v.focus();
+  </script>`}
+</div></body></html>`;
+}
+
+// Fulfill a vault request. The secret travels only in this request body —
+// it is encrypted immediately and never echoed back or logged.
+app.post('/api/vault/requests/:requestId/fulfill', requireAuth, asyncRoute(async (req, res) => {
+  const { itemId, request: rq } = fulfillVaultRequest(req.user.id, req.params.requestId, req.body?.value);
+  // Flip the widget message to "fulfilled" so reloaded history reads right.
+  if (rq.message_id) {
+    try {
+      const row = db.prepare('SELECT content FROM messages WHERE id = ?').get(rq.message_id);
+      if (row) {
+        const c = JSON.parse(row.content);
+        c.status = 'fulfilled';
+        db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(JSON.stringify(c), rq.message_id);
+      }
+    } catch { /* cosmetic only */ }
+  }
+  publish(rq.conversation_id, {
+    type: 'vault', request_id: rq.id, status: 'fulfilled', item_id: itemId, label: rq.label,
+  });
+  res.json({ ok: true, item_id: itemId });
+}));
+
+// Metadata only — values never leave the vault through the API.
+app.get('/api/vault/items', requireAuth, (req, res) => {
+  res.json(listVaultItems(req.user.id));
+});
+
+app.delete('/api/vault/items/:id', requireAuth, (req, res) => {
+  if (!deleteVaultItem(req.user.id, req.params.id)) throw httpError(404, 'Vault item not found');
+  res.json({ ok: true });
 });
 
 // ---- profile avatar ---------------------------------------------------------
