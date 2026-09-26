@@ -416,6 +416,8 @@ button.avatar.lg:hover { opacity: .85; }
 .menu-sep { height: 1px; background: var(--hairline); margin: 5px 8px; }
 /* Admin users table: actions live behind a ⋯ menu. */
 .u-actions { position: relative; display: inline-block; }
+/* Fixed-position variant: escapes overflow containers (e.g. .table-wrap). */
+.menu-fixed { position: fixed; top: auto; right: auto; }
 
 .head-user .menu {
   top: calc(100% + 10px); bottom: auto; left: auto; right: 0;

@@ -1706,6 +1706,7 @@ function closeUserActionsMenu() {
   document.getElementById('user-actions-menu')?.remove();
   document.removeEventListener('click', closeUserActionsMenuOutside, true);
   document.removeEventListener('keydown', closeUserActionsMenuEsc, true);
+  document.removeEventListener('scroll', closeUserActionsMenu, true);
 }
 function closeUserActionsMenuOutside(e) {
   if (!e.target.closest('#user-actions-menu')) closeUserActionsMenu();
@@ -1801,11 +1802,22 @@ function openUserActionsMenu(u, anchor, isSelf) {
     } catch (e) { toast(e.message, 'error'); }
   }, { danger: true, disabled: isSelf, sep: true });
 
-  anchor.parentElement.appendChild(menu);
+  // Fixed positioning escapes the table's overflow-x container, which
+  // would otherwise clip the menu. Flip upward near the viewport bottom.
+  menu.classList.add('menu-fixed');
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  const left = Math.max(8, Math.min(r.right - mw, window.innerWidth - mw - 8));
+  let top = r.bottom + 8;
+  if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 8);
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
   // Skip the click that opened the menu.
   setTimeout(() => {
     document.addEventListener('click', closeUserActionsMenuOutside, true);
     document.addEventListener('keydown', closeUserActionsMenuEsc, true);
+    document.addEventListener('scroll', closeUserActionsMenu, true);
   }, 0);
 }
 
