@@ -1583,7 +1583,8 @@ async function loadProviderSettings() {
   $('#set-key').value = '';
   // "Saved ✓" behavior: placeholder shows a key exists; only a typed value is sent.
   $('#set-key').placeholder = s.has_key ? 'Saved ✓ — leave blank to keep' : 'Not set';
-  $('#set-signup').checked = !!s.signup_enabled;
+  // signup_enabled arrives as the string '1'/'0' — !!'0' is true, so compare explicitly.
+  $('#set-signup').checked = s.signup_enabled === '1' || s.signup_enabled === true;
 }
 
 let providerWired = false;
