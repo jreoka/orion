@@ -53,7 +53,7 @@ import {
   deleteVaultItem,
   pruneExpiredRequests,
 } from './vault.js';
-import { runConversation, startRunIfIdle, abortRun, recoverStrandedRuns } from './runs.js';
+import { runConversation, startRunIfIdle, abortRun, recoverStrandedRuns, setShuttingDown } from './runs.js';
 import { isRunLocked, requestStop, activeRunIds } from './runlock.js';
 import {
   validateTaskInput,
@@ -1419,6 +1419,15 @@ function gracefulShutdown(signal) {
     listener?.close();
   } catch {
     /* not listening */
+  }
+  // Must come before abortRun: aborted runs' finally blocks would
+  // otherwise chain follow-up runs for queued messages, which would then
+  // be killed mid-flight by the shutdown deadline. Boot recovery
+  // re-answers anything stranded once the new process is up.
+  try {
+    setShuttingDown();
+  } catch {
+    /* best effort */
   }
   try {
     for (const convId of activeRunIds()) {

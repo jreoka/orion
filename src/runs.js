@@ -23,6 +23,15 @@ import { notifyConversation } from './push.js';
 
 export const MAX_CHAINED_RUNS = 10;
 
+// Set when the process is shutting down (SIGTERM/SIGINT): in-flight runs
+// finish their finally blocks but must not chain follow-up runs — the
+// process is going away, and boot recovery re-answers anything stranded.
+let shuttingDown = false;
+/** Called by server.js gracefulShutdown before it aborts in-flight runs. */
+export function setShuttingDown() {
+  shuttingDown = true;
+}
+
 // conversationId -> AbortController of the currently running agent run.
 // Aborted by abortRun() (the stop endpoint).
 const controllers = new Map();
@@ -153,7 +162,7 @@ export async function runConversation(
   const pending = db
     .prepare("SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND id > ? AND role = 'user'")
     .get(id, startMaxId).c;
-  if (pending > 0 && tryAcquireRun(id)) {
+  if (pending > 0 && !shuttingDown && tryAcquireRun(id)) {
     return runConversation(id, userId, userText, chainDepth + 1, maxChain);
   }
 
@@ -188,6 +197,7 @@ export async function runConversation(
  * chain to it).
  */
 export function startRunIfIdle(conversationId, userId, userText) {
+  if (shuttingDown) return false;
   const id = Number(conversationId);
   if (!tryAcquireRun(id)) return false;
   runConversation(id, userId, userText).catch((e) => {
@@ -202,24 +212,42 @@ export function startRunIfIdle(conversationId, userId, userText) {
  * The run lock and chain state live in memory, so a deploy or crash
  * between a user message being stored and the agent run answering it
  * leaves the message hanging: the POST handler already returned and
- * nothing re-chains after a restart. On boot, any conversation whose
- * latest message is a recent user message is handed to the normal run
- * driver, so the question gets answered instead of hanging forever.
+ * nothing re-chains after a restart. On boot, two shapes are recovered:
+ *
+ *  1. The latest message is a recent user message — the run died before
+ *     (or without) creating its reply placeholder.
+ *  2. The latest message is an EMPTY assistant placeholder preceded by a
+ *     recent user message — a chained run died after creating its
+ *     placeholder but before producing any content. At boot no run is
+ *     alive in this process, so the placeholder is definitionally
+ *     abandoned: it is deleted and the user message is answered fresh.
+ *
  * Anything older than a couple of hours is left alone — answering
  * ancient questions unprompted is worse than leaving them; the
- * heartbeat will surface them if they still matter.
+ * heartbeat will surface them if they still matter. Conversations owned
+ * by a scheduled task (task_id set) are excluded: the task scheduler
+ * owns those and has its own retry logic, so recovery must not
+ * double-execute them.
  */
 export function recoverStrandedRuns() {
   const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+  const last = (col) =>
+    `(SELECT ${col} FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1)`;
+  const prev = (col) =>
+    `(SELECT ${col} FROM messages WHERE conversation_id = c.id AND id < (SELECT MAX(id) FROM messages WHERE conversation_id = c.id) ORDER BY id DESC LIMIT 1)`;
   let rows = [];
   try {
     rows = db
       .prepare(
         `SELECT c.id AS conversation_id, c.user_id,
-                (SELECT content FROM messages WHERE conversation_id = c.id AND role = 'user' ORDER BY id DESC LIMIT 1) AS last_user_text
+                ${last('role')} AS last_role,
+                ${last('id')} AS last_id,
+                ${last('content')} AS last_content,
+                ${prev('role')} AS prev_role,
+                ${prev('content')} AS prev_content
          FROM conversations c
-         WHERE (SELECT role FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) = 'user'
-           AND (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) > ?`
+         WHERE c.task_id IS NULL
+           AND ${last('created_at')} > ?`
       )
       .all(cutoff);
   } catch (e) {
@@ -228,7 +256,21 @@ export function recoverStrandedRuns() {
   }
   for (const r of rows) {
     try {
-      if (startRunIfIdle(r.conversation_id, r.user_id, String(r.last_user_text || ''))) {
+      const userText =
+        r.last_role === 'user'
+          ? String(r.last_content || '')
+          : r.last_role === 'assistant' &&
+              (r.last_content === '' || r.last_content == null) &&
+              r.prev_role === 'user'
+            ? String(r.prev_content || '')
+            : null;
+      if (!userText || !userText.trim()) continue;
+      if (r.last_role === 'assistant') {
+        // Abandoned chained-run placeholder: drop it so the fresh run's
+        // own placeholder is the only one.
+        db.prepare('DELETE FROM messages WHERE id = ?').run(r.last_id);
+      }
+      if (startRunIfIdle(r.conversation_id, r.user_id, userText)) {
         console.log(`[orion] boot recovery: answering stranded message in conversation ${r.conversation_id}`);
       }
     } catch (e) {
