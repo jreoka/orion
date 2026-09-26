@@ -16,6 +16,7 @@
     "cron-parser": "^5.10.1",
     "dockerode": "^4.0.2",
     "express": "^4.21.2",
+    "multer": "^2.4.0",
     "node-cron": "^4.6.0",
     "otpauth": "^9.5.2",
     "web-push": "^3.6.7"

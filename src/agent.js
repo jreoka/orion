@@ -10,7 +10,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, groupedReactions } from './db.js';
+import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, attachmentSummary, groupedReactions } from './db.js';
 import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
 import { publish } from './events.js';
 import { recordUsage, isOverLimit, LIMIT_REACHED_MESSAGE } from './usage.js';
@@ -503,8 +503,9 @@ function loadHistory(conversationId, limit) {
         return { role: 'tool', tool_call_id: r.tool_call_id, content: r.content || '' };
       }
       // Reactions ride along as a plain-text suffix so the model sees who
-      // reacted to what without any schema changes.
-      const m = { role: r.role, content: (r.content || '') + reactionSummary(r.id) };
+      // reacted to what without any schema changes. Same for file
+      // attachments: readable text is embedded, images get a note.
+      const m = { role: r.role, content: (r.content || '') + reactionSummary(r.id) + attachmentSummary(r.id) };
       if (r.tool_calls) {
         try {
           m.tool_calls = JSON.parse(r.tool_calls);

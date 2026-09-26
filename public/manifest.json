@@ -1,1 +1,37 @@
-{"background_color":"#faf7f0","description":"Your own sandboxed AI agent — chat, build, browse.","display":"standalone","icons":[{"purpose":"maskable","sizes":"192x192","src":"/icons/icon-192.png","type":"image/png"},{"purpose":"maskable","sizes":"512x512","src":"/icons/icon-512.png","type":"image/png"}],"name":"Orion","orientation":"portrait-primary","scope":"/","short_name":"Orion","start_url":"/","theme_color":"#faf7f0"}
+{
+  "background_color": "#faf7f0",
+  "description": "Your own sandboxed AI agent \u2014 chat, build, browse.",
+  "display": "standalone",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "name": "Orion",
+  "scope": "/",
+  "short_name": "Orion",
+  "start_url": "/",
+  "theme_color": "#faf7f0",
+  "id": "/"
+}

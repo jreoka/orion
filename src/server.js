@@ -2,6 +2,8 @@
 // management, file serving, and the admin panel API.
 import express from 'express';
 import cookieParser from 'cookie-parser';
+import multer from 'multer';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -365,7 +367,10 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
   const conv = getConv(req.params.id, req.user.id);
   if (!conv) return res.status(404).json({ error: 'Not found' });
   const content = String(req.body?.content || '').trim();
-  if (!content) throw httpError(400, 'Empty message');
+  const attachmentIds = Array.isArray(req.body?.attachment_ids)
+    ? req.body.attachment_ids.map(Number).filter((n) => Number.isFinite(n)).slice(0, 10)
+    : [];
+  if (!content && !attachmentIds.length) throw httpError(400, 'Empty message');
 
   // Persist + publish the user message first. Runs always replay history
   // from the DB, so the insert is the single source of truth.
@@ -373,7 +378,20 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
   const info = db
     .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
     .run(conv.id, 'user', content, now);
-  const message = { id: Number(info.lastInsertRowid), role: 'user', content, created_at: now };
+  const messageId = Number(info.lastInsertRowid);
+  // Claim this user's staged uploads for the new message.
+  if (attachmentIds.length) {
+    const ph = attachmentIds.map(() => '?').join(',');
+    db.prepare(
+      `UPDATE attachments SET message_id = ?, staged = 0
+       WHERE id IN (${ph}) AND staged = 1 AND user_id = ?`
+    ).run(messageId, ...attachmentIds, req.user.id);
+  }
+  const attachments = db
+    .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
+    .all(messageId)
+    .map((a) => ({ id: a.id, filename: a.filename, url: `/api/files/${a.id}` }));
+  const message = { id: messageId, role: 'user', content, created_at: now, attachments };
   db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, conv.id);
   publish(conv.id, { type: 'message', message });
 
@@ -442,6 +460,15 @@ app.post('/api/reset', requireAuth, asyncRoute(async (req, res) => {
   }
   db.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?').run('Main chat', Date.now(), convId);
   deleteConversationFiles(convId);
+  // Drop this user's staged (unclaimed) uploads too.
+  const stagedPaths = db
+    .prepare('SELECT path FROM attachments WHERE staged = 1 AND user_id = ?')
+    .all(req.user.id)
+    .map((r) => r.path);
+  db.prepare('DELETE FROM attachments WHERE staged = 1 AND user_id = ?').run(req.user.id);
+  for (const p of stagedPaths) {
+    try { fs.rmSync(path.resolve(DATA_DIR, p), { force: true }); } catch { /* gone */ }
+  }
   publish(convId, { type: 'chat_cleared' });
   await sandboxReset(req.user.id);
   res.json({ ok: true });
@@ -571,17 +598,85 @@ app.get('/api/usage', requireAuth, (req, res) => {
 });
 
 // ---- files ----------------------------------------------------------------
+// User uploads land staged (message_id = 0) until a message claims them.
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, _file, cb) => {
+      const dir = path.join(DATA_DIR, 'files', 'uploads', String(req.user.id));
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname || '').slice(0, 12).replace(/[^a-zA-Z0-9.]/g, '');
+      cb(null, crypto.randomUUID() + ext);
+    },
+  }),
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB per file
+});
+
+function formatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+app.post('/api/upload', requireAuth, (req, res) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE' ? 'File is over the 100 MB limit.' : 'Upload failed.';
+      return res.status(400).json({ error: msg });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No file received.' });
+    // Sweep this user's abandoned staged uploads (older than 2 hours).
+    const stale = db
+      .prepare('SELECT id, path FROM attachments WHERE user_id = ? AND staged = 1 AND created_at < ?')
+      .all(req.user.id, Date.now() - 2 * 3600 * 1000);
+    for (const s of stale) {
+      try { fs.rmSync(path.resolve(DATA_DIR, s.path), { force: true }); } catch { /* gone */ }
+      db.prepare('DELETE FROM attachments WHERE id = ?').run(s.id);
+    }
+    const now = Date.now();
+    const info = db
+      .prepare(
+        `INSERT INTO attachments (message_id, kind, filename, mime, path, size, user_id, staged, created_at)
+         VALUES (0, 'upload', ?, ?, ?, ?, ?, 1, ?)`
+      )
+      .run(
+        (req.file.originalname || 'file').slice(0, 255),
+        req.file.mimetype || 'application/octet-stream',
+        `files/uploads/${req.user.id}/${req.file.filename}`,
+        req.file.size,
+        req.user.id,
+        now
+      );
+    const id = Number(info.lastInsertRowid);
+    res.json({
+      id,
+      filename: req.file.originalname || 'file',
+      mime: req.file.mimetype,
+      size: req.file.size,
+      url: `/api/files/${id}`,
+    });
+  });
+});
 
 app.get('/api/files/:id', requireAuth, (req, res) => {
-  const att = db
-    .prepare(
-      `SELECT a.* FROM attachments a
-       JOIN messages m ON m.id = a.message_id
-       JOIN conversations c ON c.id = m.conversation_id
-       WHERE a.id = ? AND c.user_id = ?`
-    )
-    .get(req.params.id, req.user.id);
+  const att = db.prepare('SELECT * FROM attachments WHERE id = ?').get(req.params.id);
   if (!att) return res.status(404).json({ error: 'Not found' });
+  // Staged uploads belong to the uploader alone; claimed ones follow their
+  // message's conversation ownership.
+  let allowed = att.staged === 1 && att.user_id === req.user.id;
+  if (!allowed && att.message_id) {
+    allowed = !!db
+      .prepare(
+        `SELECT 1 FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE m.id = ? AND c.user_id = ?`
+      )
+      .get(att.message_id, req.user.id);
+  }
+  if (!allowed) return res.status(404).json({ error: 'Not found' });
   const fp = path.resolve(DATA_DIR, att.path);
   if (!fp.startsWith(path.resolve(DATA_DIR) + path.sep)) {
     return res.status(400).json({ error: 'Bad file path' });

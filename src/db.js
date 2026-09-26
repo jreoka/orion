@@ -98,6 +98,12 @@ addColumn('users', 'abuse_locked', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'abuse_reason', 'TEXT');
 addColumn('users', 'abuse_locked_at', 'INTEGER');
 addColumn('users', 'weekly_token_limit', 'INTEGER DEFAULT 1000000');
+// User file uploads: rows are staged (message_id = 0, staged = 1) at
+// upload time and claimed by a user message at send time.
+addColumn('attachments', 'user_id', 'INTEGER');
+addColumn('attachments', 'staged', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('attachments', 'size', 'INTEGER');
+addColumn('attachments', 'created_at', 'INTEGER');
 
 // Repair: phase-3 briefly declared weekly_token_limit NOT NULL, which made
 // "unlimited" (NULL) impossible to store. If that constraint is present,
@@ -290,6 +296,52 @@ export function reactionSummary(messageId) {
     return `${r.emoji}${r.n > 1 ? ' ×' + r.n : ''} (${who} reacted)`;
   });
   return `\n\n[reactions on this message: ${parts.join('; ')}]`;
+}
+
+/** Plain-text summary of a message's file attachments for the model. Text
+ * files are embedded (bounded); images and binaries get a short note. */
+export function attachmentSummary(messageId) {
+  const rows = db
+    .prepare('SELECT filename, mime, size, path FROM attachments WHERE message_id = ? AND staged = 0')
+    .all(messageId);
+  if (!rows.length) return '';
+  const dataRoot = path.resolve(DATA_DIR) + path.sep;
+  let budget = 120 * 1024;
+  const parts = [];
+  for (const a of rows) {
+    const name = a.filename || 'file';
+    const mime = String(a.mime || '').toLowerCase();
+    const isText =
+      mime.startsWith('text/') ||
+      ['application/json', 'application/x-sh', 'application/javascript'].includes(mime) ||
+      /\.(txt|md|markdown|json|jsonl|csv|tsv|log|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|c|cpp|cc|h|hpp|cs|php|swift|kt|kts|sh|bash|zsh|sql|ya?ml|toml|ini|cfg|conf|xml|html?|css|scss|vue|svelte|diff|patch)$/i.test(name);
+    if (isText && budget > 0) {
+      try {
+        const fp = path.resolve(DATA_DIR, a.path);
+        if (fp.startsWith(dataRoot)) {
+          const buf = fs.readFileSync(fp);
+          if (buf.length <= 1024 * 1024) {
+            const n = Math.min(buf.length, 40 * 1024, budget);
+            let text = buf.slice(0, n).toString('utf8');
+            if (n < buf.length) text += '\n…[truncated]';
+            parts.push(`[attached file: ${name}]\n${text}`);
+            budget -= n;
+            continue;
+          }
+        }
+      } catch { /* fall through to the plain note */ }
+    }
+    const size = a.size ? ` (${formatBytes(a.size)})` : '';
+    const kind = mime.startsWith('image/') ? 'image' : 'file';
+    parts.push(`[attached ${kind}: ${name} (${mime || 'unknown type'}${size})]`);
+  }
+  return `\n\n${parts.join('\n\n')}`;
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 /** Validate a reaction emoji: one emoji-ish token, no whitespace, bounded. */

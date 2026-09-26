@@ -50,7 +50,9 @@ const S = {
   buffers: new Map(),  // message id -> accumulated streamed text
   toolRows: new Map(), // message id -> [{name, el, open}]
   adminSettings: null,
-  adminUsers: []
+  adminUsers: [],
+  pendingUploads: [],  // staged file uploads waiting to be sent [{id, filename, mime, size, url, uploading}]
+  jumpUnread: 0        // new messages arrived while the user was scrolled up
 };
 
 /* ---------- toasts ---------- */
@@ -233,6 +235,10 @@ function wireGlobal() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { $('#lightbox').hidden = true; closeModal(); closeUserMenu(); }
   });
+
+  // Chat extras
+  wireJumpPill();
+  wireUploads();
 }
 
 function openLightbox(url) {
@@ -292,10 +298,117 @@ function attachmentHtml(a) {
 }
 
 /* ---------- messages ---------- */
-function scrollBottom(force) {
+function distFromBottom() {
   const box = $('#messages');
-  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-  if (force || near) box.scrollTop = box.scrollHeight;
+  return box.scrollHeight - box.scrollTop - box.clientHeight;
+}
+function nearBottom() { return distFromBottom() < 120; }
+function hideJump() {
+  S.jumpUnread = 0;
+  $('#jump-latest').hidden = true;
+  $('#jump-count').hidden = true;
+}
+function paintJump() {
+  const btn = $('#jump-latest'), count = $('#jump-count');
+  btn.hidden = false;
+  if (S.jumpUnread > 0) { count.textContent = S.jumpUnread; count.hidden = false; }
+  else count.hidden = true;
+}
+// Explicit scroll: force always goes to the bottom.
+function scrollBottom(force) {
+  if (force || nearBottom()) {
+    $('#messages').scrollTop = $('#messages').scrollHeight;
+    hideJump();
+  }
+}
+// A whole new message landed: scroll if we're at the bottom, otherwise
+// stay put and raise the "jump to latest" pill with a count.
+function noteNewMessage() {
+  if (nearBottom()) {
+    $('#messages').scrollTop = $('#messages').scrollHeight;
+    hideJump();
+  } else {
+    S.jumpUnread++;
+    paintJump();
+  }
+}
+// Streamed content grew (tokens, tool rows): follow only if already at
+// the bottom — never yank the user's scroll position.
+function keepPlace() {
+  if (nearBottom()) $('#messages').scrollTop = $('#messages').scrollHeight;
+  else paintJump();
+}
+
+function wireJumpPill() {
+  $('#jump-latest').addEventListener('click', () => scrollBottom(true));
+  $('#messages').addEventListener('scroll', () => {
+    if (nearBottom()) hideJump();
+    else if (!$('#jump-latest').hidden) paintJump();
+  }, { passive: true });
+}
+
+/* ---------- file uploads ---------- */
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function renderAttachTray() {
+  const tray = $('#attach-tray');
+  tray.hidden = S.pendingUploads.length === 0;
+  tray.innerHTML = '';
+  for (const p of S.pendingUploads) {
+    const chip = document.createElement('div');
+    chip.className = 'attach-chip' + (p.uploading ? ' uploading' : '');
+    const thumb = p.uploading
+      ? '<span class="attach-spin"></span>'
+      : isImageFile(p.filename)
+        ? `<img class="attach-thumb" src="${esc(p.url)}" alt="">`
+        : '<span class="attach-file-ico">📎</span>';
+    chip.innerHTML = `${thumb}<span class="attach-name">${esc(p.filename)}</span><span class="attach-size">${fmtBytes(p.size)}</span><button type="button" class="attach-x" aria-label="Remove attachment">×</button>`;
+    chip.querySelector('.attach-x').addEventListener('click', () => {
+      S.pendingUploads = S.pendingUploads.filter((x) => x !== p);
+      renderAttachTray();
+      updateComposer();
+    });
+    tray.appendChild(chip);
+  }
+}
+
+async function handleFiles(files) {
+  for (const file of files) {
+    if (S.pendingUploads.length >= 10) { toast('At most 10 files per message.', 'error'); break; }
+    const p = { id: null, filename: file.name, size: file.size, mime: file.type, url: '', uploading: true };
+    S.pendingUploads.push(p);
+    renderAttachTray();
+    updateComposer();
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await fetch('/api/upload', { method: 'POST', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Upload failed');
+      Object.assign(p, { id: d.id, filename: d.filename, mime: d.mime, size: d.size, url: d.url, uploading: false });
+    } catch (e) {
+      S.pendingUploads = S.pendingUploads.filter((x) => x !== p);
+      toast(`Couldn't upload ${file.name}: ${e.message}`, 'error');
+    }
+    renderAttachTray();
+    updateComposer();
+  }
+  $('#file-input').value = '';
+}
+
+function wireUploads() {
+  $('#attach-btn').addEventListener('click', () => $('#file-input').click());
+  $('#file-input').addEventListener('change', (e) => handleFiles(e.target.files));
+  // Pasting a file (e.g. a screenshot) into the composer attaches it.
+  $('#composer-input').addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length) { e.preventDefault(); handleFiles(files); }
+  });
 }
 
 function renderMessages() {
@@ -335,7 +448,9 @@ function messageEl(m) {
   wrap.className = 'msg ' + (m.role === 'user' ? 'user' : 'assistant');
   wrap.dataset.mid = m.id || '';
   if (m.role === 'user') {
-    wrap.innerHTML = `<div class="bubble">${md(m.content)}<div class="rx-row" data-rxrow>${rxRowInner(m)}</div></div>`;
+    const imgs = (m.attachments || []).length
+      ? `<div class="u-imgs">${(m.attachments || []).map(attachmentHtml).join('')}</div>` : '';
+    wrap.innerHTML = `<div class="bubble">${md(m.content)}${imgs}<div class="rx-row" data-rxrow>${rxRowInner(m)}</div></div>`;
   } else {
     wrap.innerHTML = `
       <div class="a-avatar">
@@ -434,8 +549,8 @@ function openRxPicker(btn) {
   setTimeout(() => document.addEventListener('click', closeRxPickerOutside, true), 0);
 }
 
-function appendUserMessage(content) {
-  const m = { id: 'local-' + Date.now(), role: 'user', content };
+function appendUserMessage(content, attachments) {
+  const m = { id: 'local-' + Date.now(), role: 'user', content, attachments: attachments || [] };
   S.messages.push(m);
   $('#messages').appendChild(messageEl(m));
   $('#empty-state').hidden = true;
@@ -561,10 +676,12 @@ function wireChat() {
 function updateComposer() {
   const input = $('#composer-input');
   const hasText = input.value.trim().length > 0;
+  const uploading = S.pendingUploads.some((p) => p.uploading);
+  const hasFiles = S.pendingUploads.some((p) => !p.uploading && p.id != null);
   // Sending mid-run is allowed — the message is queued server-side.
-  // Keep the send button visible/enabled based on text even while a run is
-  // active; the stop button appears alongside it.
-  $('#send-btn').disabled = !hasText;
+  // Keep the send button visible/enabled based on text or staged files even
+  // while a run is active; the stop button appears alongside it.
+  $('#send-btn').disabled = uploading || (!hasText && !hasFiles);
   $('#send-btn').hidden = false;
   $('#stop-btn').hidden = !S.runActive;
 }
@@ -572,7 +689,9 @@ function updateComposer() {
 async function sendMessage() {
   const input = $('#composer-input');
   const content = input.value.trim();
-  if (!content) return;
+  const staged = S.pendingUploads.filter((p) => !p.uploading && p.id != null);
+  if (S.pendingUploads.some((p) => p.uploading)) return; // wait for uploads
+  if (!content && !staged.length) return;
 
   // Ensure the main chat is loaded before posting into it.
   if (!S.activeId) {
@@ -588,19 +707,26 @@ async function sendMessage() {
 
   input.value = '';
   input.style.height = 'auto';
+  S.pendingUploads = [];
+  renderAttachTray();
   updateComposer();
 
   // Optimistic bubble, reconciled with the real row id below. The server
   // also publishes the row on the bus, which can arrive before the POST
   // response — upsertMessage dedupes by id either way.
-  const local = appendUserMessage(content);
+  const local = appendUserMessage(content, staged.map((p) => ({ filename: p.filename, url: p.url })));
 
   let resp;
   try {
-    resp = await api(`/api/conversations/${convId}/messages`, { method: 'POST', body: { content } });
+    resp = await api(`/api/conversations/${convId}/messages`, {
+      method: 'POST',
+      body: { content, attachment_ids: staged.map((p) => p.id) },
+    });
   } catch (e) {
     removeMessage(local);
     input.value = content; // restore the draft
+    S.pendingUploads = staged; // keep the files staged so they can resend
+    renderAttachTray();
     updateComposer();
     toast(e.message || 'Send failed', 'error');
     return;
@@ -644,6 +770,7 @@ function reconcileLocal(local, real) {
   local.id = real.id;
   local.content = real.content;
   local.created_at = real.created_at;
+  if (real.attachments) local.attachments = real.attachments;
   if (el) el.dataset.mid = String(real.id);
 }
 
@@ -737,6 +864,7 @@ async function refreshAfterReconnect(convId) {
 
 function onBusMessage(m) {
   if (!m || m.id == null || S.activeId == null) return;
+  let added = false;
   let msg = S.messages.find((x) => x.id === m.id);
   if (!msg) {
     // Optimistic local user bubble? Reconcile instead of duplicating.
@@ -752,6 +880,7 @@ function onBusMessage(m) {
     S.messages.push(msg);
     $('#messages').appendChild(messageEl(msg));
     $('#empty-state').hidden = true;
+    added = true;
   } else if (msg.role === 'assistant' && S.liveIds.has(msg.id) && typeof m.content === 'string') {
     // Authoritative full-row republish (covers onNote appends the token
     // stream never carried). Only accept it when it isn't older than what
@@ -775,7 +904,7 @@ function onBusMessage(m) {
       contentEl.appendChild(t);
     }
   }
-  scrollBottom();
+  if (added) noteNewMessage(); else keepPlace();
 }
 
 function onBusToken(d) {
@@ -793,7 +922,7 @@ function onBusToken(d) {
   contentEl.querySelector('.typing-dots')?.remove();
   contentEl.innerHTML = md(buf);
   contentEl.classList.add('caret');
-  scrollBottom();
+  keepPlace();
 }
 
 function onBusTool(d) {
@@ -832,7 +961,7 @@ function onBusTool(d) {
   } else {
     sum.textContent = sum.textContent || 'Running…';
   }
-  scrollBottom();
+  keepPlace();
 }
 
 function onBusImage(d) {
@@ -848,7 +977,7 @@ function onBusImage(d) {
   imgsEl.appendChild(img);
   const msg = S.messages.find((x) => x.id === d.message_id);
   if (msg) (msg.attachments = msg.attachments || []).push({ url: d.url, filename: d.filename });
-  scrollBottom();
+  keepPlace();
 }
 
 /* ============================================================
