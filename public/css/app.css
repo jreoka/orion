@@ -300,7 +300,10 @@ button.avatar.lg:hover { opacity: .85; }
 .usage-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .usage-pct { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 /* ---------- Main column ---------- */
-#chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+#chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+/* When the empty state is showing, the messages list must take no space —
+   pure CSS so it holds even if the JS visibility toggle ever misfires. */
+#chat-main:has(#empty-state:not([hidden])) #messages { display: none !important; }
 
 /* ---------- Sidebar (main chat + side chats) ---------- */
 #sidebar {
