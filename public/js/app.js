@@ -618,6 +618,10 @@ function renderMessages() {
   box.appendChild(ensureOlderSpinner());
   const empty = $('#empty-state');
   empty.hidden = S.messages.length > 0;
+  // When the empty state shows, hide the (empty) messages container too —
+  // otherwise it keeps its flex share plus padding and squeezes the empty
+  // state into a scrollable half-screen on mobile.
+  box.hidden = S.messages.length === 0;
   // Windowed: only the latest RENDER_WINDOW messages hit the DOM.
   const win = S.messages.slice(-RENDER_WINDOW);
   for (const m of win) box.appendChild(messageEl(m));
@@ -940,6 +944,7 @@ function appendUserMessage(content, attachments) {
   S.messages.push(m);
   $('#messages').appendChild(messageEl(m));
   trimRenderedTop();
+  $('#messages').hidden = false;
   $('#empty-state').hidden = true;
   scrollBottom(true);
   return m;
@@ -1340,6 +1345,7 @@ async function renderChat() {
   if (!S.activeId) {
     const box = $('#messages');
     box.innerHTML = '<div class="skel" style="max-width:60%;"></div><div class="skel" style="max-width:80%;margin-left:auto"></div>';
+    box.hidden = false;
     $('#empty-state').hidden = true;
     try {
       const list = await api('/api/conversations');
@@ -1703,6 +1709,7 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
     if (isEmptyPlaceholder(msg)) el.classList.add('msg-empty');
     $('#messages').appendChild(el);
     trimRenderedTop();
+    $('#messages').hidden = false;
     $('#empty-state').hidden = true;
     added = true;
   } else if (msg.role === 'assistant' && S.liveIds.has(msg.id) && typeof m.content === 'string') {
