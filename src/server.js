@@ -1051,6 +1051,22 @@ function vaultFormPage(rq, title, message, done) {
       } catch (err) { e.textContent = err.message; go.disabled = false; }
     };
     v.focus();
+    // Report the content height to the embedding page (the chat widget) so
+    // the iframe can size itself — no inner scrollbar. Skipped when opened
+    // as a standalone tab (no parent to report to).
+    let lastH = 0;
+    const reportH = () => {
+      const card = document.querySelector('.card');
+      if (!card || window.parent === window) return;
+      const h = Math.ceil(card.getBoundingClientRect().height) + 56; // body padding + slack
+      if (h !== lastH) {
+        lastH = h;
+        try { window.parent.postMessage({ type: 'orion-vault-form-height', height: h }, window.location.origin); } catch {}
+      }
+    };
+    if ('ResizeObserver' in window) new ResizeObserver(reportH).observe(document.body);
+    window.addEventListener('load', reportH);
+    reportH();
   </script>`}
 </div></body></html>`;
 }

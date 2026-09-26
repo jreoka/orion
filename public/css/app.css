@@ -741,7 +741,24 @@ button.avatar.lg:hover { opacity: .85; }
   border: 1px solid var(--hairline); border-radius: 99px;
   background: var(--paper); color: var(--ink);
   cursor: pointer;
-  transition: background .12s, border-color .12s;
+  transition: background .12s, border-color .12s, transform .12s;
+}
+.rx-chip:active { transform: scale(.88); }
+/* Reaction micro-animations: new chips pop in with a soft spring, a grown
+   count bumps its number, removed chips shrink-fade out. */
+.rx-chip.rx-new { animation: rx-chip-in .3s cubic-bezier(.2, 1.35, .4, 1); }
+@keyframes rx-chip-in {
+  from { transform: scale(.35); opacity: 0; }
+  60% { transform: scale(1.14); opacity: 1; }
+  to { transform: scale(1); opacity: 1; }
+}
+.rx-chip.rx-leave { animation: rx-chip-out .18s ease-in forwards; pointer-events: none; }
+@keyframes rx-chip-out {
+  to { transform: scale(.45); opacity: 0; }
+}
+.rx-chip.rx-bump .rx-n { display: inline-block; animation: rx-chip-bump .32s cubic-bezier(.2, 1.6, .4, 1); }
+@keyframes rx-chip-bump {
+  40% { transform: scale(1.5); }
 }
 .rx-chip:hover { background: var(--paper-2); }
 .rx-chip.mine { border-color: var(--accent); background: var(--accent-soft); }

@@ -725,11 +725,67 @@ function rxRowInner(m) {
 }
 
 // Refresh one message's reaction row from a grouped-reactions payload.
+// Keyed update: only the delta animates — new chips pop in, removed chips
+// shrink out, and a grown count bumps its number. Unchanged chips are left
+// alone so the row never flashes on re-render.
 function applyReactions(messageId, reactions) {
   const msg = S.messages.find((x) => x.id === messageId);
   if (msg) msg.reactions = reactions;
   const row = msgElById(messageId)?.querySelector('[data-rxrow]');
-  if (row) row.innerHTML = rxRowInner({ reactions });
+  if (!row) return;
+  const next = reactions || [];
+  const current = new Map();
+  row.querySelectorAll('.rx-chip').forEach((c) => current.set(c.dataset.rx, c));
+  const seen = new Set();
+  const frag = document.createDocumentFragment();
+  for (const r of next) {
+    const key = r.emoji;
+    seen.add(key);
+    let chip = current.get(key);
+    if (chip) {
+      chip.classList.remove('rx-leave'); // survived a re-render mid-leave
+      const nEl = chip.querySelector('.rx-n');
+      const newCount = r.count > 1 ? String(r.count) : null;
+      const oldCount = nEl ? nEl.textContent : null;
+      if (newCount !== oldCount) {
+        if (newCount) {
+          if (nEl) nEl.textContent = newCount;
+          else chip.insertAdjacentHTML('beforeend', `<span class="rx-n">${esc(newCount)}</span>`);
+        } else nEl?.remove();
+        if ((r.count || 1) > parseInt(oldCount || '1', 10)) {
+          chip.classList.remove('rx-bump');
+          void chip.offsetWidth; // restart the bump animation
+          chip.classList.add('rx-bump');
+          const onBumpEnd = (e) => {
+            if (e.animationName !== 'rx-chip-bump') return;
+            chip.classList.remove('rx-bump');
+            chip.removeEventListener('animationend', onBumpEnd);
+          };
+          chip.addEventListener('animationend', onBumpEnd);
+        }
+      }
+      chip.classList.toggle('mine', !!r.mine);
+      chip.title = r.agent ? 'Reacted by Orion' : 'Reacted by you';
+      chip.setAttribute('aria-label', `Toggle ${key} reaction`);
+    } else {
+      const t = document.createElement('template');
+      t.innerHTML = rxChipHtml(r).trim();
+      chip = t.content.firstElementChild;
+      if (!chip) continue;
+      chip.classList.add('rx-new');
+      chip.addEventListener('animationend', () => chip.classList.remove('rx-new'), { once: true });
+    }
+    frag.appendChild(chip); // moves existing chips into server order
+  }
+  current.forEach((chip, key) => {
+    if (!seen.has(key)) {
+      chip.classList.add('rx-leave');
+      setTimeout(() => { if (chip.classList.contains('rx-leave')) chip.remove(); }, 190);
+    }
+  });
+  const anchor = row.querySelector('.rx-copy');
+  if (anchor) row.insertBefore(frag, anchor);
+  else row.appendChild(frag);
 }
 
 async function toggleReaction(chip) {
@@ -1586,6 +1642,21 @@ async function refreshAfterReconnect(convId) {
 
 // A vault secret was saved through the secure form: flip the widget card
 // to its saved state and keep the local message copy in sync.
+// Vault iframes report their content height so the widget never needs an
+// inner scrollbar. Same-origin only, and the source must be a live vault
+// frame; the height is clamped so a misbehaving frame can't blow out layout.
+window.addEventListener('message', (event) => {
+  if (event.origin !== window.location.origin) return;
+  const d = event.data;
+  if (!d || d.type !== 'orion-vault-form-height' || typeof d.height !== 'number' || !(d.height > 0)) return;
+  const frames = document.querySelectorAll('iframe.vault-frame');
+  for (const f of frames) {
+    if (f.contentWindow === event.source) {
+      f.style.height = Math.max(140, Math.min(640, Math.round(d.height))) + 'px';
+      break;
+    }
+  }
+});
 function onVaultEvent(d) {
   if (!d || !d.request_id) return;
   const safeId = CSS.escape(String(d.request_id));
