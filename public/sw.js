@@ -1,7 +1,7 @@
 // Orion service worker — offline-capable app shell, never caches the API.
 'use strict';
 
-const VERSION = 'orion-v2';
+const VERSION = 'orion-v3';
 const SHELL = [
   '/',
   '/index.html',
@@ -11,6 +11,10 @@ const SHELL = [
   '/icons/icon-192.png',
   '/icons/icon-512.png'
 ];
+// App code: always try the network first so deploys land without a hard
+// refresh; fall back to cache when offline. Icons are immutable blobs,
+// so they stay cache-first.
+const NETWORK_FIRST = new Set(['/', '/index.html', '/css/app.css', '/js/app.js', '/manifest.json']);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -33,6 +37,22 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   // API traffic is always live — never serve or store it.
   if (url.pathname.startsWith('/api/')) return;
+  // Never cache-bust the query string off cache lookups for versioned assets.
+  if (NETWORK_FIRST.has(url.pathname)) {
+    event.respondWith(
+      fetch(event.request).then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(VERSION).then((cache) => cache.put(event.request, copy));
+        }
+        return res;
+      }).catch(() => caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        throw new Error('offline');
+      }))
+    );
+    return;
+  }
   event.respondWith(
     caches.match(event.request, { ignoreSearch: false }).then((cached) => {
       if (cached) return cached;

@@ -76,7 +76,17 @@ const app = express();
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  setHeaders(res, filePath) {
+    // App code and the service worker must revalidate every load so deploys
+    // take effect without a hard refresh. Icons are immutable build assets.
+    if (/\.(html|js|css)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+    }
+  },
+}));
 
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 

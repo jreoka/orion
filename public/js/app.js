@@ -93,6 +93,44 @@ function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = fals
   });
 }
 
+/* Native prompt dialog (replaces window.prompt). Resolves with the entered
+   string, or null when cancelled. */
+function promptDialog({ title, message = '', placeholder = '', value = '', okLabel = 'Save' }) {
+  return new Promise((resolve) => {
+    const bd = openModal(`
+      <h3>${esc(title)}</h3>
+      ${message ? `<p class="muted">${esc(message)}</p>` : ''}
+      <form id="pd-form" autocomplete="off">
+        <label class="fld">
+          <input id="pd-input" type="text" value="${esc(value)}" placeholder="${esc(placeholder)}">
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-x="cancel">Cancel</button>
+          <button type="submit" class="btn primary">${esc(okLabel)}</button>
+        </div>
+      </form>`);
+    const done = (v) => { closeModal(); resolve(v); };
+    bd.querySelector('[data-x=cancel]').onclick = () => done(null);
+    const input = bd.querySelector('#pd-input');
+    input.focus();
+    if (value) input.select();
+    bd.querySelector('#pd-form').onsubmit = (e) => { e.preventDefault(); done(input.value); };
+  });
+}
+
+/* Parse a token limit: plain numbers or shorthand like 1K / 1M / 10M / 1B / 3T.
+   Empty string means unlimited (null). */
+function parseTokenLimit(v) {
+  const s = String(v ?? '').trim();
+  if (s === '') return { ok: true, value: null };
+  const m = /^(\d+(?:\.\d+)?)\s*([kmbt])?$/i.exec(s);
+  if (!m) return { ok: false, error: 'Use a number like 1000000 — or shorthand like 1K, 1M, 10M, 1B, 3T.' };
+  const mult = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 }[(m[2] || '').toLowerCase()] || 1;
+  const n = Math.floor(Number(m[1]) * mult);
+  if (n <= 0) return { ok: false, error: 'The limit must be a positive number.' };
+  return { ok: true, value: n };
+}
+
 /* ---------- routing ---------- */
 const ROUTES = ['login', 'chat', 'admin', 'settings'];
 const VIEW_ID = { login: 'view-auth', chat: 'view-chat', admin: 'view-admin', settings: 'view-settings' };
@@ -121,6 +159,12 @@ window.addEventListener('hashchange', render);
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
+    // When a new service worker takes over (e.g. a fresh deploy), reload
+    // once so the tab runs the new code without a manual hard refresh.
+    let swReloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!swReloaded) { swReloaded = true; location.reload(); }
+    });
     // A push-notification tap while a tab is open: the service worker
     // focuses it and asks it to navigate to the conversation.
     navigator.serviceWorker.addEventListener('message', (event) => {
@@ -590,6 +634,7 @@ async function refreshMe() {
   S.me = await api('/api/auth/me');
   renderUserChip();
   renderProfileCard();
+  renderUsageCard();
 }
 
 function wireProfileCard() {
@@ -1131,9 +1176,22 @@ function renderAdminUsers() {
   for (const u of S.adminUsers) {
     const isSelf = S.me && u.id === S.me.id;
     const usage = usageById[u.id];
-    const used = usage ? usage.total_tokens : 0;
-    const lim = u.weekly_token_limit;
-    const usageText = `${fmtTokens(used)} / ${lim === null || lim === undefined ? '∞' : fmtTokens(lim)}`;
+/* Usage cell with a progress bar: "used / limit" plus a fill that turns hot
+   near the cap. Unlimited users get the ∞ label with no bar. */
+function usageCell(used, lim) {
+  const usageText = `${fmtTokens(used)} / ${lim === null || lim === undefined ? '∞' : fmtTokens(lim)}`;
+  if (lim === null || lim === undefined) {
+    return `<td class="muted"><span title="tokens used this week / no limit">${esc(usageText)}</span></td>`;
+  }
+  const pct = Math.min(100, (used / lim) * 100);
+  const cls = pct >= 100 ? 'usage-fill full' : pct >= 90 ? 'usage-fill hot' : 'usage-fill';
+  return `<td class="muted">
+    <div class="usage-line" title="tokens used this week / weekly limit">
+      <span>${esc(usageText)}</span><span class="usage-pct">${pct.toFixed(0)}%</span>
+    </div>
+    <div class="usage-bar"><div class="${cls}" style="width:${pct.toFixed(1)}%"></div></div>
+  </td>`;
+}
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><span class="u-name ${u.disabled ? 'u-disabled' : ''}">
@@ -1145,7 +1203,7 @@ function renderAdminUsers() {
         ${u.abuse_locked ? `<span class="pill danger" title="${esc(u.abuse_reason || 'locked for abuse')}">locked</span>` : ''}
       </td>
       <td class="muted">${Number(u.message_count) || 0}</td>
-      <td class="muted" title="tokens used this week / weekly limit">${esc(usageText)}</td>
+      ${usageCell(used, lim)}
       <td class="muted">${esc(fmtDate(u.created_at))}</td>
       <td><div class="u-actions"></div></td>`;
     const acts = tr.querySelector('.u-actions');
@@ -1177,14 +1235,18 @@ function renderAdminUsers() {
 
     mkBtn('Limit', async () => {
       const cur = u.weekly_token_limit;
-      const v = window.prompt(
-        `Weekly token limit for ${u.username} (tokens). Empty = unlimited.`,
-        cur === null || cur === undefined ? '' : String(cur)
-      );
+      const v = await promptDialog({
+        title: 'Weekly token limit',
+        message: `For ${u.username}. Accepts 1K, 1M, 10M, 1B, 3T … Empty = unlimited.`,
+        value: cur === null || cur === undefined ? '' : String(cur),
+        placeholder: 'e.g. 1M',
+        okLabel: 'Save limit',
+      });
       if (v === null) return; // cancelled
+      const parsed = parseTokenLimit(v);
+      if (!parsed.ok) { toast(parsed.error, 'error'); return; }
       try {
-        const body = v.trim() === '' ? { weekly_token_limit: null } : { weekly_token_limit: Number(v) };
-        await api(`/api/admin/users/${u.id}/limit`, { method: 'PATCH', body });
+        await api(`/api/admin/users/${u.id}/limit`, { method: 'PATCH', body: { weekly_token_limit: parsed.value } });
         await loadAdminUsers();
         toast(`Limit updated for ${u.username}`);
       } catch (e) { toast(e.message, 'error'); }
@@ -1334,6 +1396,29 @@ let _settingsTab = 'security';
 let _twofaStatus = null;
 let _passkeys = null;
 
+/* ---------- own weekly usage (settings card) ---------- */
+async function renderUsageCard() {
+  const card = $('#usage-card');
+  if (!card) return;
+  try {
+    const u = await api('/api/usage');
+    const used = u.total_tokens || 0;
+    const lim = u.limit;
+    if (lim === null || lim === undefined) {
+      $('#usage-text').textContent = `${fmtTokens(used)} used this week — no limit set.`;
+      $('#usage-bar-wrap').hidden = true;
+    } else {
+      const pct = Math.min(100, (used / lim) * 100);
+      $('#usage-text').textContent = `${fmtTokens(used)} of ${fmtTokens(lim)} used this week`;
+      const fill = $('#usage-fill');
+      fill.style.width = pct.toFixed(1) + '%';
+      fill.className = 'usage-fill' + (pct >= 100 ? ' full' : pct >= 90 ? ' hot' : '');
+      $('#usage-bar-wrap').hidden = false;
+    }
+  } catch {
+    card.hidden = true;
+  }
+}
 async function renderSettings() {
   document.querySelectorAll('.settings-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.tab === _settingsTab));
@@ -1345,6 +1430,7 @@ async function renderSettings() {
   else if (_settingsTab === 'sessions') renderSessionsTab();
   else if (_settingsTab === 'notifications') renderNotificationsTab();
   renderProfileCard();
+  renderUsageCard();
 }
 function wireSettings() {
   document.querySelectorAll('.settings-tab').forEach(t => {
@@ -1593,7 +1679,14 @@ function renderPasskeyBox() {
 
 async function registerPasskey() {
   if (!waSupported()) { toast('This browser doesn’t support passkeys'); return; }
-  const name = prompt('Name this passkey (e.g. “iPhone”):', '') ?? '';
+  const v = await promptDialog({
+    title: 'Name this passkey',
+    message: 'Something you’ll recognize, like the device it’s on.',
+    placeholder: 'e.g. iPhone',
+    okLabel: 'Continue',
+  });
+  if (v === null) return;
+  const name = v;
   try {
     const { token, options } = await api('/api/auth/passkey/register/options', { method: 'POST' });
     const cred = await navigator.credentials.create({ publicKey: webauthnOptionsFromJson(options) });

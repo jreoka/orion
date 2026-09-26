@@ -278,13 +278,27 @@ button.avatar.lg:hover { opacity: .85; }
 .profile-meta { min-width: 0; }
 .profile-name { font-family: var(--serif); font-size: 20px; font-weight: 700; }
 .profile-sub { font-family: var(--sans); font-size: 13px; color: var(--ink-3); margin-top: 4px; }
-.link-btn {
+.text-btn {
   background: none; border: none; padding: 0; cursor: pointer;
   color: var(--accent); font: inherit; text-decoration: underline;
   text-underline-offset: 2px;
 }
-.link-btn:hover { color: var(--ink); }
-.link-btn.danger { color: var(--danger); }
+.text-btn:hover { color: var(--ink); }
+.text-btn.danger { color: var(--danger); }
+
+/* ---------- usage bars ---------- */
+.usage-bar {
+  height: 6px; border-radius: 3px; background: var(--hairline);
+  overflow: hidden; margin-top: 6px; max-width: 420px;
+}
+.usage-fill {
+  height: 100%; background: var(--accent); border-radius: 3px;
+  transition: width .3s var(--ease);
+}
+.usage-fill.hot { background: #c07a1e; }
+.usage-fill.full { background: var(--danger); }
+.usage-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.usage-pct { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 /* ---------- Main column ---------- */
 #chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 #chat-header {

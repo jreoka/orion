@@ -193,8 +193,14 @@
           <input type="file" id="profile-avatar-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
           <div class="profile-meta">
             <div class="profile-name" id="profile-name">…</div>
-            <div class="profile-sub"><span id="profile-role"></span> · <button type="button" id="profile-avatar-change" class="link-btn">Change picture</button><span id="profile-avatar-sep" hidden> · </span><button type="button" id="profile-avatar-remove" class="link-btn danger" hidden>Remove</button></div>
+            <div class="profile-sub"><span id="profile-role"></span> · <button type="button" id="profile-avatar-change" class="text-btn">Change picture</button><span id="profile-avatar-sep" hidden> · </span><button type="button" id="profile-avatar-remove" class="text-btn danger" hidden>Remove</button></div>
           </div>
+        </div>
+
+        <div class="card" id="usage-card">
+          <h2>Weekly usage</h2>
+          <p class="muted small" id="usage-text">Loading…</p>
+          <div class="usage-bar" id="usage-bar-wrap"><div class="usage-fill" id="usage-fill"></div></div>
         </div>
 
         <div class="card">
