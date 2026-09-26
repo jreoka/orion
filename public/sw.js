@@ -1,7 +1,7 @@
 // Orion service worker — offline-capable app shell, never caches the API.
 'use strict';
 
-const VERSION = 'orion-v1';
+const VERSION = 'orion-v2';
 const SHELL = [
   '/',
   '/index.html',

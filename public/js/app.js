@@ -559,6 +559,11 @@ function wireChat() {
   $('#stop-btn').addEventListener('click', stopStream);
   $('#new-chat').onclick = newConversation;
 
+  // Bottom nav (mobile, in-flow below the composer)
+  $('#bn-chats').onclick = openSidebar;
+  $('#bn-new').onclick = () => { newConversation(); };
+  $('#bn-settings').onclick = () => go('settings');
+
   // Suggestion chips fill the composer.
   document.addEventListener('click', (e) => {
     const chip = e.target.closest('[data-suggest]');
@@ -609,7 +614,13 @@ async function sendMessage() {
   const contentEl = el.querySelector('.content');
   const toolsEl = el.querySelector('.tools');
   const imgsEl = el.querySelector('.imgs');
-  contentEl.classList.add('caret');
+  // Typing indicator while waiting for the first token; caret takes over once streaming.
+  const typingEl = document.createElement('div');
+  typingEl.className = 'typing-dots';
+  typingEl.setAttribute('aria-label', 'Orion is thinking');
+  typingEl.innerHTML = '<span></span><span></span><span></span>';
+  contentEl.appendChild(typingEl);
+  let gotToken = false;
   scrollBottom(true);
 
   S.streaming = true;
@@ -652,6 +663,7 @@ async function sendMessage() {
   };
 
   const finish = () => {
+    typingEl.remove();
     contentEl.classList.remove('caret');
     S.streaming = false;
     S.aborter = null;
@@ -665,6 +677,11 @@ async function sendMessage() {
   try {
     await streamEvents(`/api/conversations/${S.activeId}/messages`, content, S.aborter.signal, {
       token: (d) => {
+        if (!gotToken) {
+          gotToken = true;
+          typingEl.remove();
+          contentEl.classList.add('caret');
+        }
         text += d.text || '';
         contentEl.innerHTML = md(text);
         contentEl.classList.add('caret');
@@ -684,6 +701,7 @@ async function sendMessage() {
         scrollBottom();
       },
       error: (d) => {
+        typingEl.remove();
         contentEl.classList.remove('caret');
         contentEl.innerHTML = `<div class="msg-error">${esc(d.message || 'Something went wrong.')}</div>`;
       }
