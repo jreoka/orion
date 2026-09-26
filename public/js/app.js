@@ -90,6 +90,7 @@ function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = fals
 
 /* ---------- routing ---------- */
 const ROUTES = ['login', 'chat', 'admin'];
+const VIEW_ID = { login: 'view-auth', chat: 'view-chat', admin: 'view-admin' };
 function route() {
   const h = (location.hash || '').replace(/^#\/?/, '');
   return ROUTES.includes(h) ? h : 'chat';
@@ -101,7 +102,7 @@ async function render() {
   if (!S.me && r !== 'login') { go('login'); return; }
   if (S.me && r === 'login') { go('chat'); return; }
   if (r === 'admin' && S.me && S.me.role !== 'admin') { go('chat'); return; }
-  for (const v of ROUTES) $('#view-' + v).hidden = v !== r;
+  for (const v of ROUTES) $('#' + VIEW_ID[v]).hidden = v !== r;
   closeSidebar();
   if (r === 'login') renderAuth();
   else if (r === 'chat') renderChat();
