@@ -586,6 +586,7 @@ function renderMessages() {
   // Windowed: only the latest RENDER_WINDOW messages hit the DOM.
   const win = S.messages.slice(-RENDER_WINDOW);
   for (const m of win) box.appendChild(messageEl(m));
+  applyCollapseGroups();
   scrollBottom(true);
 }
 
@@ -1435,11 +1436,9 @@ function setRunActive(on) {
   }
   if (!on) {
     hideRunStatus(); // the single live status line never survives a run
-    for (const id of S.liveIds) {
-      const el = msgElById(id);
-      el?.querySelector('.typing-dots')?.remove();
-      el?.querySelector('.content')?.classList.remove('caret');
-    }
+    // The streaming caret never survives a run either — it may sit on a
+    // nested paragraph, not just .content, so clear it everywhere.
+    document.querySelectorAll('#messages .caret').forEach((el) => el.classList.remove('caret'));
     S.liveIds.clear();
     loadConversationsQuiet(); // pick up the server-side title
   } else {
@@ -1465,7 +1464,14 @@ function openEventStream(convId) {
     setRunActive(running);
   });
   es.addEventListener('run_started', () => setRunActive(true));
-  es.addEventListener('run_ended', () => setRunActive(false));
+  es.addEventListener('run_ended', (e) => {
+    const d = parseBusEvent(e) || {};
+    setRunActive(false);
+    // Finished runs read as one answer: collapse the intermediate turns.
+    if (Array.isArray(d.intermediate_ids) && d.intermediate_ids.length) {
+      addCollapseGroup(S.activeId, d.intermediate_ids);
+    }
+  });
   es.addEventListener('chat_cleared', () => clearChatState()); // another client reset the chat
   es.addEventListener('reaction', (e) => {
     const d = parseBusEvent(e);
@@ -1574,19 +1580,10 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
       paintContent(msg);
     }
   }
-  if (m.role === 'assistant' && S.runActive && !m.content) {
-    // Fresh in-flight assistant row: typing indicator until tokens arrive.
-    S.liveIds.add(m.id);
-    const contentEl = msgElById(m.id)?.querySelector('.content');
-    if (contentEl && !contentEl.querySelector('.typing-dots')) {
-      const t = document.createElement('div');
-      t.className = 'typing-dots';
-      t.setAttribute('aria-label', 'Orion is thinking');
-      t.innerHTML = '<span></span><span></span><span></span>';
-      contentEl.appendChild(t);
-    }
-  }
-  if (added) noteNewMessage(); else keepPlace();
+  if (added) {
+    applyCollapseGroups(); // a late row may belong to an already-collapsed run
+    noteNewMessage();
+  } else keepPlace();
 }
 
 function onBusToken(d) {
@@ -1604,9 +1601,12 @@ function onBusToken(d) {
   S.liveIds.add(d.message_id);
   const contentEl = msgElById(d.message_id)?.querySelector('.content');
   if (!contentEl) return;
-  contentEl.querySelector('.typing-dots')?.remove();
   contentEl.innerHTML = md(buf);
-  contentEl.classList.add('caret');
+  // Exactly one caret: it marks the end of the currently streaming text,
+  // sitting after the last word rather than on a line of its own.
+  document.querySelectorAll('#messages .caret').forEach((el) => el.classList.remove('caret'));
+  const last = contentEl.lastElementChild;
+  (last && last.tagName === 'P' ? last : contentEl).classList.add('caret');
   keepPlace();
 }
 
@@ -1640,20 +1640,82 @@ function showRunStatus(text) {
     el = document.createElement('div');
     el.id = 'run-status';
     el.innerHTML = '<span class="dot running"></span><span class="ttext"></span>';
-    box.appendChild(el);
   }
   el.querySelector('.ttext').textContent = text;
+  box.appendChild(el); // (re-)append: always last, never splitting the message group
   keepPlace();
 }
 function hideRunStatus() {
   document.getElementById('run-status')?.remove();
 }
+
+// Collapsed intermediate runs: conversation id -> [{ ids: [...] }].
+// A finished multi-turn run reads as one answer; the earlier turns hide
+// behind a slim "N earlier steps" toggle. Persisted so the cleanup survives
+// a reload. History in the DB is untouched — the model still sees it all.
+let collapseGroups = {};
+try { collapseGroups = JSON.parse(localStorage.getItem('orion-collapsed-v1') || '{}'); } catch { collapseGroups = {}; }
+function saveCollapseGroups() {
+  try {
+    let total = 0;
+    for (const cid of Object.keys(collapseGroups)) total += collapseGroups[cid].length;
+    if (total > 200) {
+      for (const cid of Object.keys(collapseGroups)) {
+        while (collapseGroups[cid].length && total > 200) { collapseGroups[cid].shift(); total--; }
+        if (!collapseGroups[cid].length) delete collapseGroups[cid];
+      }
+    }
+    localStorage.setItem('orion-collapsed-v1', JSON.stringify(collapseGroups));
+  } catch { /* storage unavailable — the collapse just won't survive a reload */ }
+}
+function addCollapseGroup(convId, ids) {
+  if (!convId || !ids?.length) return;
+  const key = String(convId);
+  const idSet = new Set(ids.map(Number).filter((n) => n > 0));
+  if (!idSet.size) return;
+  const groups = (collapseGroups[key] ||= []);
+  if (groups.some((g) => g.ids.some((id) => idSet.has(id)))) return; // already collapsed
+  groups.push({ ids: [...idSet] });
+  saveCollapseGroups();
+  applyCollapseGroups();
+}
+function applyCollapseGroups() {
+  const groups = collapseGroups[String(S.activeId)] || [];
+  for (const g of groups) {
+    const key = g.ids.join(',');
+    let firstEl = null;
+    for (const id of g.ids) {
+      const el = msgElById(id);
+      if (!el) continue;
+      if (!firstEl) firstEl = el;
+      el.style.display = 'none';
+    }
+    if (!firstEl) continue;
+    if (firstEl.parentElement.querySelector(`.intermediate-toggle[data-g="${CSS.escape(key)}"]`)) continue;
+    const n = g.ids.length;
+    const t = document.createElement('div');
+    t.className = 'intermediate-toggle';
+    t.dataset.g = key;
+    t.textContent = `\u22EF ${n} earlier step${n === 1 ? '' : 's'}`;
+    t.title = 'Show the intermediate steps';
+    t.addEventListener('click', () => expandCollapseGroup(g));
+    firstEl.before(t);
+  }
+}
+function expandCollapseGroup(g) {
+  const key = String(S.activeId);
+  collapseGroups[key] = (collapseGroups[key] || []).filter((x) => x !== g);
+  if (!collapseGroups[key].length) delete collapseGroups[key];
+  saveCollapseGroups();
+  for (const id of g.ids) {
+    const el = msgElById(id);
+    if (el) el.style.display = '';
+  }
+  document.querySelector(`.intermediate-toggle[data-g="${CSS.escape(g.ids.join(','))}"]`)?.remove();
+}
 function onBusTool(d) {
   if (!d || d.status !== 'start') return;
   if (d.name === 'send_update') return; // the agent's own update line; no redundant status
-  // Tool-only turns never stream tokens, so their typing dots would linger
-  // forever — the status line says what's happening instead.
-  if (d.message_id != null) msgElById(d.message_id)?.querySelector('.typing-dots')?.remove();
   showRunStatus(TOOL_STATUS_PHRASES[d.name] || 'Working…');
 }
 
