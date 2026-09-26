@@ -258,7 +258,7 @@ function layoutDebugOverlay() {
     // Report back to the server so the developer can read it from logs.
     fetch('/api/debug/layout', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       body: JSON.stringify(metrics),
     }).catch(() => {});
     const lines = Object.entries(metrics).map(([k, v]) => `${k}: ${v}`);
