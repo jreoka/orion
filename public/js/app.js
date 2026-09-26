@@ -565,6 +565,20 @@ $('#messages').addEventListener('click', async (e) => {
   const chip = e.target.closest('[data-rx]');
   if (chip) { toggleReaction(chip); return; }
   if (e.target.closest('[data-rxadd]')) { openRxPicker(e.target.closest('[data-rxadd]')); return; }
+  const msgCopy = e.target.closest('[data-copy]');
+  if (msgCopy) { copyMessage(msgCopy.closest('.msg')?.dataset.mid); return; }
+});
+
+// Right-click (or long-press) a message: Copy / React. Native menu is kept
+// for links, images, and active text selections.
+$('#messages').addEventListener('contextmenu', (e) => {
+  if (e.target.closest('a, img')) return;
+  const msgEl = e.target.closest('.msg');
+  if (!msgEl) return;
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && msgEl.contains(sel.anchorNode)) return;
+  e.preventDefault();
+  openMsgMenu(msgEl, e.clientX, e.clientY);
 });
 
 function messageEl(m) {
@@ -602,7 +616,7 @@ function rxChipHtml(r) {
 
 function rxRowInner(m) {
   const chips = (m.reactions || []).map(rxChipHtml).join('');
-  return `${chips}<button class="rx-add" data-rxadd aria-label="Add reaction" title="Add reaction">+</button>`;
+  return `${chips}<button class="rx-copy" data-copy aria-label="Copy message" title="Copy"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5v5A1.5 1.5 0 0 0 4 10h1.5"/></svg></button><button class="rx-add" data-rxadd aria-label="Add reaction" title="Add reaction">+</button>`;
 }
 
 // Refresh one message's reaction row from a grouped-reactions payload.
@@ -647,19 +661,26 @@ function openRxPicker(btn) {
   if (wasOpen) return; // tapping the + again dismisses
   const mid = btn.closest('.msg')?.dataset.mid;
   if (!mid || String(mid).startsWith('local-')) return;
+  const r = btn.getBoundingClientRect();
+  openRxPickerAt(mid, r.left + r.width / 2, r.top, r.bottom);
+}
+
+// Emoji picker anchored at a point (used by the message context menu).
+function openRxPickerAt(mid, x, topEdge, bottomEdge) {
+  if (!mid || String(mid).startsWith('local-')) return;
+  closeRxPicker();
   const p = document.createElement('div');
   p.className = 'rx-picker';
   p.id = 'rx-picker';
   p.setAttribute('role', 'menu');
   p.innerHTML = RX_EMOJI.map((e) => `<button data-pick="${e}" role="menuitem" aria-label="React ${e}">${e}</button>`).join('');
   document.body.appendChild(p);
-  // Anchor above the button, clamped to the viewport.
-  const r = btn.getBoundingClientRect();
+  // Anchor above the point, clamped to the viewport.
   p.style.visibility = 'hidden';
   const pw = p.offsetWidth, ph = p.offsetHeight;
-  let left = Math.min(Math.max(8, r.left + r.width / 2 - pw / 2), window.innerWidth - pw - 8);
-  let top = r.top - ph - 10;
-  if (top < 8) top = Math.min(r.bottom + 10, window.innerHeight - ph - 8);
+  let left = Math.min(Math.max(8, x - pw / 2), window.innerWidth - pw - 8);
+  let top = topEdge - ph - 10;
+  if (top < 8) top = Math.min((bottomEdge ?? topEdge) + 10, window.innerHeight - ph - 8);
   p.style.left = left + 'px';
   p.style.top = Math.max(8, top) + 'px';
   p.style.visibility = '';
@@ -671,6 +692,76 @@ function openRxPicker(btn) {
   });
   // Skip the click that opened the picker.
   setTimeout(() => document.addEventListener('click', closeRxPickerOutside, true), 0);
+}
+
+/* ---------- message actions: copy + right-click menu ---------- */
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch { return false; }
+  }
+}
+
+function messageText(mid) {
+  const m = S.messages.find((x) => String(x.id) === String(mid));
+  return m?.content || '';
+}
+
+async function copyMessage(mid) {
+  const ok = await copyText(messageText(mid));
+  toast(ok ? 'Copied' : 'Copy failed', ok ? undefined : 'error');
+}
+
+function closeMsgMenu() {
+  document.getElementById('msg-menu')?.remove();
+  document.removeEventListener('click', closeMsgMenuOutside, true);
+  document.removeEventListener('keydown', closeMsgMenuEsc, true);
+}
+function closeMsgMenuOutside(e) {
+  if (!e.target.closest('#msg-menu')) closeMsgMenu();
+}
+function closeMsgMenuEsc(e) {
+  if (e.key === 'Escape') closeMsgMenu();
+}
+
+function openMsgMenu(msgEl, x, y) {
+  closeMsgMenu();
+  const mid = msgEl?.dataset.mid;
+  if (!mid) return;
+  const isLocal = String(mid).startsWith('local-');
+  const menu = document.createElement('div');
+  menu.id = 'msg-menu';
+  menu.className = 'menu';
+  menu.style.position = 'fixed';
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = `
+    <button data-act="copy" role="menuitem">Copy text</button>
+    ${isLocal ? '' : '<button data-act="react" role="menuitem">Add reaction…</button>'}`;
+  document.body.appendChild(menu);
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  menu.style.left = Math.min(Math.max(8, x), window.innerWidth - mw - 8) + 'px';
+  menu.style.top = Math.min(Math.max(8, y), window.innerHeight - mh - 8) + 'px';
+  menu.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (!act) return;
+    closeMsgMenu();
+    if (act === 'copy') copyMessage(mid);
+    else if (act === 'react') openRxPickerAt(mid, x, y, y);
+  });
+  // Skip the click that opened the menu.
+  setTimeout(() => {
+    document.addEventListener('click', closeMsgMenuOutside, true);
+    document.addEventListener('keydown', closeMsgMenuEsc, true);
+  }, 0);
 }
 
 function appendUserMessage(content, attachments) {

@@ -676,7 +676,7 @@ button.avatar.lg:hover { opacity: .85; }
 .rx-chip:hover { background: var(--paper-2); }
 .rx-chip.mine { border-color: var(--accent); background: var(--accent-soft); }
 .rx-n { font-size: 12px; font-family: var(--sans); font-weight: 600; color: var(--ink-2); }
-.rx-add {
+.rx-add, .rx-copy {
   display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; padding: 0 0 2px;
   border-radius: 50%; border: 1px solid var(--ink-3);
@@ -685,16 +685,19 @@ button.avatar.lg:hover { opacity: .85; }
   font-size: 17px; line-height: 1; cursor: pointer;
   opacity: 0; transition: opacity .15s, background .12s;
 }
-.msg:hover .rx-add, .rx-row:focus-within .rx-add { opacity: 1; }
-.rx-add:hover { background: var(--paper-2); color: var(--ink); border-color: var(--ink-2); }
-@media (hover: none) { .rx-add { opacity: .5; } }
+.rx-copy { padding: 0; }
+.rx-copy svg { display: block; }
+.msg:hover .rx-add, .msg:hover .rx-copy,
+.rx-row:focus-within .rx-add, .rx-row:focus-within .rx-copy { opacity: 1; }
+.rx-add:hover, .rx-copy:hover { background: var(--paper-2); color: var(--ink); border-color: var(--ink-2); }
+@media (hover: none) { .rx-add, .rx-copy { opacity: .5; } }
 /* Chips inside the ink user bubble. */
 .msg.user .rx-chip { background: rgba(244, 240, 232, .13); border-color: transparent; color: var(--paper); }
 .msg.user .rx-chip:hover { background: rgba(244, 240, 232, .22); }
 .msg.user .rx-chip.mine { background: rgba(244, 240, 232, .26); }
 .msg.user .rx-n { color: var(--paper); opacity: .8; }
-.msg.user .rx-add { border-color: rgba(244, 240, 232, .55); color: var(--paper); background: rgba(244, 240, 232, .1); }
-.msg.user .rx-add:hover { background: rgba(244, 240, 232, .15); }
+.msg.user .rx-add, .msg.user .rx-copy { border-color: rgba(244, 240, 232, .55); color: var(--paper); background: rgba(244, 240, 232, .1); }
+.msg.user .rx-add:hover, .msg.user .rx-copy:hover { background: rgba(244, 240, 232, .15); }
 .rx-picker {
   position: fixed; z-index: 200;
   display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
