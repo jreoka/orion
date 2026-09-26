@@ -350,7 +350,11 @@ button.avatar.lg:hover { opacity: .85; }
 #menu-btn { display: inline-flex; }
 /* Desktop sidebar collapse (mobile keeps the slide-over drawer). */
 @media (min-width: 761px) {
-  body.side-collapsed #sidebar { display: none; }
+  #sidebar {
+    flex-shrink: 0;
+    transition: margin-left .28s cubic-bezier(.4, 0, .2, 1);
+  }
+  body.side-collapsed #sidebar { margin-left: -272px; }
 }
 .chat-title {
   font-family: var(--serif); font-size: 16px; font-weight: 700;
