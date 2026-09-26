@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Orion">
   <link rel="manifest" href="/manifest.json">
-  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%2732%27%20x2%3D%2732%27%20y2%3D%270%27%20gradientUnits%3D%27userSpaceOnUse%27%3E%3Cstop%20offset%3D%270%27%20stop-color%3D%27%236366f1%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23a855f7%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%277%27%20fill%3D%27%230b0d17%27%2F%3E%3Ccircle%20cx%3D%279.5%27%20cy%3D%2721.5%27%20r%3D%272.7%27%20fill%3D%27url%28%23g%29%27%2F%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%273.3%27%20fill%3D%27url%28%23g%29%27%2F%3E%3Ccircle%20cx%3D%2722.5%27%20cy%3D%2710.5%27%20r%3D%272.7%27%20fill%3D%27url%28%23g%29%27%2F%3E%3C%2Fsvg%3E">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <title>Orion</title>
   <link rel="stylesheet" href="/css/app.css">
@@ -33,9 +33,9 @@
         <div class="auth-card">
           <div class="orion-mark lg">
             <svg viewBox="0 0 32 32" aria-hidden="true">
-              <circle cx="16" cy="16" r="5.5" fill="url(#orion-grad)"/>
-              <ellipse cx="16" cy="16" rx="13" ry="5.2" transform="rotate(-24 16 16)" fill="none" stroke="url(#orion-grad)" stroke-width="2" stroke-linecap="round"/>
-              <circle cx="26.5" cy="10.5" r="1.6" fill="url(#orion-grad)"/>
+              <circle cx="9.5" cy="21.5" r="2.7" fill="url(#orion-grad)"/>
+              <circle cx="16" cy="16" r="3.3" fill="url(#orion-grad)"/>
+              <circle cx="22.5" cy="10.5" r="2.7" fill="url(#orion-grad)"/>
             </svg>
             <span class="wordmark">Orion</span>
           </div>
@@ -55,7 +55,20 @@
             </label>
             <p id="auth-error" class="form-error" hidden></p>
             <button type="submit" class="btn primary block" id="auth-submit">Log in</button>
+            <button type="button" class="btn block" id="passkey-btn" hidden>Sign in with passkey</button>
           </form>
+          <div id="auth-2fa-step" hidden>
+            <p class="auth-sub">Enter the 6-digit code from your authenticator app.</p>
+            <form id="auth-2fa-form" autocomplete="off">
+              <label class="field">
+                <span>Authentication code</span>
+                <input id="auth-2fa-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456">
+              </label>
+              <p id="auth-2fa-error" class="form-error" hidden></p>
+              <button type="submit" class="btn primary block">Verify</button>
+              <button type="button" class="btn block" id="auth-2fa-back" style="margin-top:10px">Back</button>
+            </form>
+          </div>
           <p class="auth-note">The first account created becomes the administrator.</p>
         </div>
       </div>
@@ -68,9 +81,9 @@
         <div class="side-head">
           <div class="orion-mark sm">
             <svg viewBox="0 0 32 32" aria-hidden="true">
-              <circle cx="16" cy="16" r="5.5" fill="url(#orion-grad)"/>
-              <ellipse cx="16" cy="16" rx="13" ry="5.2" transform="rotate(-24 16 16)" fill="none" stroke="url(#orion-grad)" stroke-width="2" stroke-linecap="round"/>
-              <circle cx="26.5" cy="10.5" r="1.6" fill="url(#orion-grad)"/>
+              <circle cx="9.5" cy="21.5" r="2.7" fill="url(#orion-grad)"/>
+              <circle cx="16" cy="16" r="3.3" fill="url(#orion-grad)"/>
+              <circle cx="22.5" cy="10.5" r="2.7" fill="url(#orion-grad)"/>
             </svg>
             <span class="wordmark">Orion</span>
           </div>
@@ -90,6 +103,7 @@
             <span class="chevron">▴</span>
           </button>
           <div id="user-menu" class="menu" hidden role="menu">
+            <button data-act="settings" role="menuitem">Settings</button>
             <button data-act="password" role="menuitem">Change password</button>
             <button data-act="sandbox" role="menuitem">Reset sandbox</button>
             <button data-act="admin" role="menuitem" id="menu-admin" hidden>Admin panel</button>
@@ -109,9 +123,9 @@
         <div id="empty-state" class="empty-state" hidden>
           <div class="orion-mark xl">
             <svg viewBox="0 0 32 32" aria-hidden="true">
-              <circle cx="16" cy="16" r="5.5" fill="url(#orion-grad)"/>
-              <ellipse cx="16" cy="16" rx="13" ry="5.2" transform="rotate(-24 16 16)" fill="none" stroke="url(#orion-grad)" stroke-width="2" stroke-linecap="round"/>
-              <circle cx="26.5" cy="10.5" r="1.6" fill="url(#orion-grad)"/>
+              <circle cx="9.5" cy="21.5" r="2.7" fill="url(#orion-grad)"/>
+              <circle cx="16" cy="16" r="3.3" fill="url(#orion-grad)"/>
+              <circle cx="22.5" cy="10.5" r="2.7" fill="url(#orion-grad)"/>
             </svg>
           </div>
           <h1>What should we build?</h1>
@@ -187,6 +201,114 @@
               </thead>
               <tbody id="users-body"></tbody>
             </table>
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- ============ SETTINGS ============ -->
+    <section id="view-settings" class="view" hidden>
+      <div class="admin-wrap">
+        <header class="admin-head">
+          <a href="#/chat" class="back-link">← Back to chat</a>
+          <h1>Settings</h1>
+        </header>
+
+        <div class="card">
+          <div class="settings-tabs" role="tablist">
+            <button class="settings-tab active" data-tab="security" role="tab">Security</button>
+            <button class="settings-tab" data-tab="sessions" role="tab">Sessions</button>
+            <button class="settings-tab" data-tab="tasks" role="tab">Tasks</button>
+            <button class="settings-tab" data-tab="heartbeat" role="tab">Heartbeat</button>
+          </div>
+
+          <div class="settings-panel" id="set-panel-security">
+            <h3 class="set-h">Two-factor authentication</h3>
+            <div id="twofa-box"><p class="muted">Loading…</p></div>
+            <h3 class="set-h">Passkeys</h3>
+            <p class="muted small">Sign in without a password, using this device.</p>
+            <div id="passkey-box"><p class="muted">Loading…</p></div>
+          </div>
+
+          <div class="settings-panel" id="set-panel-sessions" hidden>
+            <div class="row-between" style="margin-bottom:8px">
+              <h3 class="set-h" style="margin:0">Active sessions</h3>
+              <button class="btn" id="sessions-revoke-others">Sign out other sessions</button>
+            </div>
+            <div id="sessions-box"><p class="muted">Loading…</p></div>
+          </div>
+
+          <div class="settings-panel" id="set-panel-tasks" hidden>
+            <h3 class="set-h">Scheduled tasks</h3>
+            <p class="muted small">Tasks run your agent automatically on a schedule, each in its own chat.</p>
+            <div id="tasks-box"><p class="muted">Loading…</p></div>
+            <h3 class="set-h">New task</h3>
+            <form id="task-form">
+              <label class="field">
+                <span>Name</span>
+                <input id="task-name" type="text" maxlength="80" placeholder="Morning briefing" required>
+              </label>
+              <div class="field">
+                <span>Schedule</span>
+                <div class="radio-row">
+                  <label><input type="radio" name="task-kind" value="cron" checked> Repeating</label>
+                  <label><input type="radio" name="task-kind" value="once"> One-time</label>
+                </div>
+              </div>
+              <div id="task-cron-wrap">
+                <div class="field">
+                  <span>Preset</span>
+                  <div class="chip-row" id="cron-presets">
+                    <button type="button" class="chip sm" data-cron="0 * * * *">Hourly</button>
+                    <button type="button" class="chip sm" data-cron="0 9 * * *">Daily 9am</button>
+                    <button type="button" class="chip sm" data-cron="0 9 * * 1">Weekly Mon 9am</button>
+                  </div>
+                </div>
+                <label class="field">
+                  <span>Cron expression</span>
+                  <input id="task-cron" type="text" class="mono" value="0 9 * * *" maxlength="64">
+                </label>
+              </div>
+              <div id="task-once-wrap" hidden>
+                <label class="field">
+                  <span>Run at</span>
+                  <input id="task-runat" type="datetime-local">
+                </label>
+              </div>
+              <label class="field">
+                <span>Prompt</span>
+                <textarea id="task-prompt" rows="3" placeholder="What should the agent do when this runs?" required></textarea>
+              </label>
+              <button type="submit" class="btn primary">Create task</button>
+            </form>
+          </div>
+
+          <div class="settings-panel" id="set-panel-heartbeat" hidden>
+            <h3 class="set-h">Heartbeat</h3>
+            <p class="muted small">Periodically wake the agent to check whether anything needs your attention. It stays quiet when there's nothing to say.</p>
+            <form id="heartbeat-form">
+              <label class="toggle-row">
+                <span>Enable heartbeat</span>
+                <span class="toggle"><input id="hb-enabled" type="checkbox"><span class="knob"></span></span>
+              </label>
+              <label class="field">
+                <span>Check every</span>
+                <select id="hb-interval">
+                  <option value="1">1 hour</option>
+                  <option value="3">3 hours</option>
+                  <option value="6" selected>6 hours</option>
+                  <option value="12">12 hours</option>
+                  <option value="24">24 hours</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Custom instructions (optional)</span>
+                <textarea id="hb-prompt" rows="3" placeholder="e.g. Also remind me about anything on my calendar tomorrow."></textarea>
+              </label>
+              <div class="form-row">
+                <button type="submit" class="btn primary">Save</button>
+                <span id="hb-saved" class="saved-note" hidden>Saved ✓</span>
+              </div>
+            </form>
           </div>
         </div>
       </div>

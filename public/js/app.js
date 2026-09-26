@@ -1,6 +1,6 @@
 /* ============================================================
    Orion — single-page app
-   Vanilla JS. Hash routing: #/login, #/chat, #/admin.
+   Vanilla JS. Hash routing: #/login, #/chat, #/admin, #/settings.
    All server state flows through the /api/* contract.
    ============================================================ */
 'use strict';
@@ -89,8 +89,8 @@ function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = fals
 }
 
 /* ---------- routing ---------- */
-const ROUTES = ['login', 'chat', 'admin'];
-const VIEW_ID = { login: 'view-auth', chat: 'view-chat', admin: 'view-admin' };
+const ROUTES = ['login', 'chat', 'admin', 'settings'];
+const VIEW_ID = { login: 'view-auth', chat: 'view-chat', admin: 'view-admin', settings: 'view-settings' };
 function route() {
   const h = (location.hash || '').replace(/^#\/?/, '');
   return ROUTES.includes(h) ? h : 'chat';
@@ -102,11 +102,12 @@ async function render() {
   if (!S.me && r !== 'login') { go('login'); return; }
   if (S.me && r === 'login') { go('chat'); return; }
   if (r === 'admin' && S.me && S.me.role !== 'admin') { go('chat'); return; }
-  for (const v of ROUTES) $('#' + VIEW_ID[v]).hidden = v !== r;
+  for (const v of ROUTES) { const el = document.getElementById(VIEW_ID[v]); if (el) el.hidden = v !== r; }
   closeSidebar();
   if (r === 'login') renderAuth();
   else if (r === 'chat') renderChat();
   else if (r === 'admin') renderAdmin();
+  else if (r === 'settings') renderSettings();
 }
 window.addEventListener('hashchange', render);
 
@@ -141,6 +142,13 @@ let authMode = 'login'; // or 'signup'
 function renderAuth() {
   setAuthMode(authMode);
   $('#auth-error').hidden = true;
+  hide2faStep();
+  updatePasskeyBtn();
+}
+
+function updatePasskeyBtn() {
+  const pk = $('#passkey-btn');
+  if (pk) pk.hidden = !(authMode === 'login' && waSupported());
 }
 
 function setAuthMode(mode) {
@@ -150,6 +158,7 @@ function setAuthMode(mode) {
   $('#auth-submit').textContent = mode === 'login' ? 'Log in' : 'Create account';
   $('#auth-password').setAttribute('autocomplete', mode === 'login' ? 'current-password' : 'new-password');
   $('#auth-error').hidden = true;
+  updatePasskeyBtn();
 }
 
 function wireGlobal() {
@@ -166,9 +175,11 @@ function wireGlobal() {
     btn.disabled = true;
     err.hidden = true;
     try {
-      S.me = await api(authMode === 'login' ? '/api/auth/login' : '/api/auth/signup', {
+      const res = await api(authMode === 'login' ? '/api/auth/login' : '/api/auth/signup', {
         method: 'POST', body: { username, password }
       });
+      if (res && res.need_2fa) { show2faStep(res.challenge); return; }
+      S.me = res;
       $('#auth-password').value = '';
       go('chat');
     } catch (ex) {
@@ -178,6 +189,14 @@ function wireGlobal() {
       btn.disabled = false;
     }
   });
+
+  // 2FA step + passkey login
+  $('#passkey-btn').onclick = passkeyLogin;
+  $('#auth-2fa-form').addEventListener('submit', submit2fa);
+  $('#auth-2fa-back').onclick = hide2faStep;
+
+  // Settings view
+  wireSettings();
 
   // Sidebar drawer (mobile)
   $('#hamburger').onclick = openSidebar;
@@ -284,10 +303,14 @@ function renderConvList() {
   for (const c of S.conversations) {
     const el = document.createElement('div');
     el.className = 'conv-item' + (c.id === S.activeId ? ' active' : '');
-    el.innerHTML = `<span class="conv-title">${esc(c.title || 'New chat')}</span><button class="conv-del" title="Delete chat">✕</button>`;
+    el.innerHTML = `<span class="conv-title">${esc(c.title || 'New chat')}</span><button class="conv-edit" title="Rename chat">✎</button><button class="conv-del" title="Delete chat">✕</button>`;
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.conv-del')) return;
+      if (e.target.closest('.conv-del') || e.target.closest('.conv-edit') || e.target.closest('.conv-rename')) return;
       openConversation(c.id);
+    });
+    el.querySelector('.conv-edit').addEventListener('click', (e) => {
+      e.stopPropagation();
+      startRename(c, el);
     });
     const del = el.querySelector('.conv-del');
     del.addEventListener('click', async (e) => {
@@ -437,7 +460,8 @@ function wireUserMenu() {
       try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
       S.me = null; S.conversations = []; S.activeId = null; S.messages = [];
       go('login');
-    } else if (act === 'password') changePasswordModal();
+    } else if (act === 'settings') go('settings');
+    else if (act === 'password') changePasswordModal();
     else if (act === 'sandbox') resetSandboxModal();
     else if (act === 'admin') go('admin');
   });
@@ -874,5 +898,542 @@ function renderAdminUsers() {
     }, { danger: true, disabled: isSelf });
 
     body.appendChild(tr);
+  }
+}
+
+/* ---------- WebAuthn helpers ---------- */
+function waSupported() { return !!window.PublicKeyCredential; }
+function b64urlToBuf(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4;
+  if (pad) s += '='.repeat(4 - pad);
+  const bin = atob(s);
+  const b = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+  return b;
+}
+function bufToB64url(buf) {
+  const b = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf;
+  let bin = '';
+  for (let i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function webauthnOptionsFromJson(o) {
+  o = { ...o };
+  if (o.challenge) o.challenge = b64urlToBuf(o.challenge);
+  if (o.user && o.user.id) o.user = { ...o.user, id: b64urlToBuf(o.user.id) };
+  if (o.allowCredentials) o.allowCredentials = o.allowCredentials.map(c => ({ ...c, id: b64urlToBuf(c.id) }));
+  if (o.excludeCredentials) o.excludeCredentials = o.excludeCredentials.map(c => ({ ...c, id: b64urlToBuf(c.id) }));
+  return o;
+}
+function webauthnCredToJson(cred) {
+  const r = cred.response;
+  const out = {
+    id: cred.id,
+    rawId: bufToB64url(cred.rawId),
+    type: cred.type,
+    response: {
+      clientDataJSON: bufToB64url(r.clientDataJSON),
+      attestationObject: r.attestationObject ? bufToB64url(r.attestationObject) : undefined,
+      authenticatorData: r.authenticatorData ? bufToB64url(r.authenticatorData) : undefined,
+      signature: r.signature ? bufToB64url(r.signature) : undefined,
+      userHandle: r.userHandle ? bufToB64url(r.userHandle) : undefined,
+    },
+  };
+  for (const k of Object.keys(out.response)) if (out.response[k] === undefined) delete out.response[k];
+  return out;
+}
+
+/* ---------- 2FA login flow ---------- */
+let _twofaChallenge = null;
+function show2faStep(challenge) {
+  _twofaChallenge = challenge;
+  $('#auth-form').hidden = true;
+  $('#passkey-btn').hidden = true;
+  $('#auth-2fa-step').hidden = false;
+  $('#auth-2fa-error').hidden = true;
+  $('#auth-2fa-code').value = '';
+  setTimeout(() => $('#auth-2fa-code').focus(), 30);
+}
+function hide2faStep() {
+  _twofaChallenge = null;
+  $('#auth-2fa-step').hidden = true;
+  $('#auth-form').hidden = false;
+  updatePasskeyBtn();
+}
+async function submit2fa(e) {
+  e.preventDefault();
+  const code = $('#auth-2fa-code').value.trim();
+  if (!code) return;
+  const errEl = $('#auth-2fa-error');
+  errEl.hidden = true;
+  try {
+    const d = await api('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ challenge: _twofaChallenge, code }) });
+    if (d.need_2fa) {
+      show2faStep(d.challenge);
+      errEl.textContent = 'Try again — that code didn’t match.';
+      errEl.hidden = false;
+      return;
+    }
+    S.me = d.user;
+    S.conversations = [];
+    S.activeId = null;
+    S.messages = [];
+    hide2faStep();
+    go('chat');
+  } catch (err) {
+    errEl.textContent = err.message || 'That code didn’t work.';
+    errEl.hidden = false;
+  }
+}
+async function passkeyLogin() {
+  if (!waSupported()) return;
+  const errEl = $('#auth-error');
+  errEl.hidden = true;
+  try {
+    const { options } = await api('/api/auth/passkey/login/options', { method: 'POST' });
+    const cred = await navigator.credentials.get({ publicKey: webauthnOptionsFromJson(options) });
+    const d = await api('/api/auth/passkey/login/verify', { method: 'POST', body: JSON.stringify(webauthnCredToJson(cred)) });
+    if (d.need_2fa) { show2faStep(d.challenge); return; }
+    S.me = d.user;
+    S.conversations = [];
+    S.activeId = null;
+    S.messages = [];
+    go('chat');
+  } catch (err) {
+    if (err && (err.name === 'NotAllowedError' || err.name === 'AbortError')) return; // user cancelled
+    errEl.textContent = err.message || 'Passkey sign-in failed.';
+    errEl.hidden = false;
+  }
+}
+
+/* ---------- conversation rename ---------- */
+function startRename(c, el) {
+  const titleEl = el.querySelector('.conv-title');
+  const old = c.title || 'New chat';
+  const input = document.createElement('input');
+  input.className = 'conv-rename';
+  input.value = old;
+  titleEl.replaceWith(input);
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const val = input.value.trim();
+    if (save && val && val !== old) {
+      try {
+        const d = await api(`/api/conversations/${c.id}`, { method: 'PATCH', body: JSON.stringify({ title: val }) });
+        c.title = d.title || val;
+      } catch (err) { toast('Rename failed: ' + err.message); }
+    }
+    renderConvList();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', (e) => e.stopPropagation());
+}
+
+
+/* ---------- settings ---------- */
+const SETTINGS_TABS = ['security', 'sessions', 'tasks', 'heartbeat'];
+let _settingsTab = 'security';
+let _twofaStatus = null;
+let _passkeys = null;
+
+async function renderSettings() {
+  document.querySelectorAll('.settings-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === _settingsTab));
+  for (const t of SETTINGS_TABS) {
+    const el = document.getElementById('set-panel-' + t);
+    if (el) el.hidden = t !== _settingsTab;
+  }
+  if (_settingsTab === 'security') renderSecurityTab();
+  else if (_settingsTab === 'sessions') renderSessionsTab();
+  else if (_settingsTab === 'tasks') renderTasksTab();
+  else if (_settingsTab === 'heartbeat') renderHeartbeatTab();
+}
+function wireSettings() {
+  document.querySelectorAll('.settings-tab').forEach(t => {
+    t.onclick = () => { _settingsTab = t.dataset.tab; renderSettings(); };
+  });
+  wireSessionsTab();
+  wireTasksTab();
+  wireHeartbeatTab();
+}
+
+/* ----- security ----- */
+async function renderSecurityTab() {
+  const box = $('#twofa-box');
+  const pkBox = $('#passkey-box');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  pkBox.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    _twofaStatus = await api('/api/auth/2fa/status');
+  } catch (err) {
+    box.innerHTML = `<p class="form-error">${esc(err.message)}</p>`;
+    _twofaStatus = null;
+  }
+  try {
+    const d = await api('/api/auth/passkey/list');
+    _passkeys = d.passkeys || [];
+  } catch (err) {
+    pkBox.innerHTML = `<p class="form-error">${esc(err.message)}</p>`;
+    _passkeys = null;
+  }
+  if (_twofaStatus) render2faBox();
+  if (_passkeys !== null) renderPasskeyBox();
+}
+
+function render2faBox() {
+  const box = $('#twofa-box');
+  if (_twofaStatus.enabled) {
+    box.innerHTML = `
+      <div class="status-row"><span class="badge ok">Enabled</span>
+      <span class="muted">${_twofaStatus.backup_codes_remaining != null ? esc(String(_twofaStatus.backup_codes_remaining)) + ' backup codes left' : ''}</span></div>
+      <button id="twofa-disable-btn" class="btn danger">Disable 2FA</button>`;
+    $('#twofa-disable-btn').onclick = () => disable2faModal();
+    return;
+  }
+  box.innerHTML = `
+    <p class="muted">Two-factor authentication adds a second step to sign-in using an authenticator app.</p>
+    <button id="twofa-setup-btn" class="btn">Set up 2FA</button>
+    <div id="twofa-setup" hidden>
+      <p class="muted">Scan this with your authenticator app, then enter a code to confirm.</p>
+      <div class="secret-row"><code id="twofa-secret" class="secret"></code><button id="twofa-copy" class="btn small">Copy</button></div>
+      <form id="twofa-confirm-form" class="row-form">
+        <input id="twofa-confirm-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="6-digit code" class="input">
+        <button class="btn primary" type="submit">Confirm</button>
+      </form>
+      <p id="twofa-setup-error" class="form-error" hidden></p>
+    </div>`;
+  $('#twofa-setup-btn').onclick = async () => {
+    const wrap = $('#twofa-setup');
+    wrap.hidden = false;
+    $('#twofa-setup-btn').hidden = true;
+    try {
+      const d = await api('/api/auth/2fa/setup', { method: 'POST' });
+      $('#twofa-secret').textContent = d.secret || '';
+      $('#twofa-copy').onclick = async () => {
+        try { await navigator.clipboard.writeText(d.secret || ''); toast('Copied'); }
+        catch { toast('Copy failed — long-press the code'); }
+      };
+      $('#twofa-confirm-form').onsubmit = async (e) => {
+        e.preventDefault();
+        const code = $('#twofa-confirm-code').value.trim();
+        const errEl = $('#twofa-setup-error');
+        errEl.hidden = true;
+        try {
+          const r = await api('/api/auth/2fa/confirm', { method: 'POST', body: JSON.stringify({ code }) });
+          showBackupCodes(r.backup_codes || []);
+          _twofaStatus = await api('/api/auth/2fa/status');
+          render2faBox();
+        } catch (err) { errEl.textContent = err.message; errEl.hidden = false; }
+      };
+    } catch (err) {
+      const errEl = $('#twofa-setup-error');
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    }
+  };
+}
+
+function showBackupCodes(codes) {
+  let wrap = $('#backup-codes-wrap');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'backup-codes-wrap';
+    wrap.innerHTML = `
+      <h3 class="set-h">Backup codes</h3>
+      <p class="muted small">Save these somewhere safe — each works once if you lose your authenticator.</p>
+      <div class="backup-codes" id="backup-codes-list"></div>
+      <div class="row-form">
+        <button id="backup-codes-copy" class="btn small">Copy all</button>
+        <button id="backup-codes-close" class="btn small">Done</button>
+      </div>`;
+    $('#twofa-box').appendChild(wrap);
+  }
+  $('#backup-codes-list').innerHTML = codes.map(c => `<code class="secret">${esc(c)}</code>`).join('');
+  wrap.hidden = false;
+  $('#backup-codes-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(codes.join('\n')); toast('Copied'); }
+    catch { toast('Copy failed — long-press the codes'); }
+  };
+  $('#backup-codes-close').onclick = () => { wrap.hidden = true; };
+}
+
+function passwordConfirmModal(title, message) {
+  return new Promise((resolve) => {
+    const root = $('#modal-root') || document.body;
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+        <h3>${esc(title)}</h3>
+        <p class="muted">${esc(message)}</p>
+        <form class="modal-form">
+          <input type="password" class="input" autocomplete="current-password" placeholder="Password" required>
+          <div class="modal-actions">
+            <button type="button" class="btn cancel">Cancel</button>
+            <button type="submit" class="btn danger">Confirm</button>
+          </div>
+        </form>
+      </div>`;
+    root.appendChild(wrap);
+    const close = (v) => { wrap.remove(); resolve(v); };
+    const form = wrap.querySelector('form');
+    wrap.querySelector('.cancel').onclick = () => close(null);
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) close(null); });
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      close(form.querySelector('input').value);
+    };
+    setTimeout(() => form.querySelector('input').focus(), 30);
+  });
+}
+
+async function disable2faModal() {
+  const pw = await passwordConfirmModal('Disable 2FA', 'Enter your password to turn off two-factor authentication.');
+  if (!pw) return;
+  try {
+    await api('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: pw }) });
+    _twofaStatus = await api('/api/auth/2fa/status');
+    render2faBox();
+    toast('2FA disabled');
+  } catch (err) { toast('Disable failed: ' + err.message); }
+}
+
+function renderPasskeyBox() {
+  const box = $('#passkey-box');
+  box.innerHTML = '';
+  const list = document.createElement('div');
+  box.appendChild(list);
+  if (!_passkeys.length) {
+    list.innerHTML = '<p class="muted">No passkeys yet. Register one to sign in without a password.</p>';
+  } else {
+    for (const pk of _passkeys) {
+      const row = document.createElement('div');
+      row.className = 'row-item';
+      const name = pk.name || 'Passkey';
+      const when = pk.created_at ? new Date(pk.created_at).toLocaleDateString() : '';
+      row.innerHTML = `
+        <div class="row-main"><span class="row-title">${esc(name)}</span>
+        <span class="row-sub">${esc(when)}${pk.aaguid ? ' · ' + esc(String(pk.aaguid).slice(0, 8)) : ''}</span></div>
+        <button class="btn small danger">Remove</button>`;
+      row.querySelector('button').onclick = async () => {
+        if (!await confirmDialog({ title: 'Remove passkey', message: `Remove “${name}”?`, confirmLabel: 'Remove', danger: true })) return;
+        try {
+          await api(`/api/auth/passkey/${pk.id}`, { method: 'DELETE' });
+          _passkeys = _passkeys.filter(x => x.id !== pk.id);
+          renderPasskeyBox();
+        } catch (err) { toast('Remove failed: ' + err.message); }
+      };
+      list.appendChild(row);
+    }
+  }
+  if (waSupported()) {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.style.marginTop = '8px';
+    btn.textContent = 'Register a passkey';
+    btn.onclick = registerPasskey;
+    box.appendChild(btn);
+  }
+}
+
+async function registerPasskey() {
+  if (!waSupported()) { toast('This browser doesn’t support passkeys'); return; }
+  const name = prompt('Name this passkey (e.g. “iPhone”):', '') ?? '';
+  try {
+    const { options } = await api('/api/auth/passkey/register/options', { method: 'POST' });
+    const cred = await navigator.credentials.create({ publicKey: webauthnOptionsFromJson(options) });
+    await api('/api/auth/passkey/register/verify', {
+      method: 'POST',
+      body: JSON.stringify({ ...webauthnCredToJson(cred), name: name.trim() || undefined }),
+    });
+    const d = await api('/api/auth/passkey/list');
+    _passkeys = d.passkeys || [];
+    renderPasskeyBox();
+    toast('Passkey registered');
+  } catch (err) {
+    if (err && (err.name === 'NotAllowedError' || err.name === 'AbortError')) return;
+    toast('Registration failed: ' + err.message);
+  }
+}
+
+/* ----- sessions ----- */
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+function truncUA(ua, n = 60) {
+  if (!ua) return '';
+  return ua.length > n ? ua.slice(0, n) + '…' : ua;
+}
+function wireSessionsTab() {
+  $('#sessions-revoke-others').onclick = async () => {
+    if (!await confirmDialog({ title: 'Sign out other sessions', message: 'Sign out every other device?', confirmLabel: 'Sign out', danger: true })) return;
+    try {
+      await api('/api/auth/sessions/others', { method: 'DELETE' });
+      renderSessionsTab();
+      toast('Other sessions signed out');
+    } catch (err) { toast('Failed: ' + err.message); }
+  };
+}
+async function renderSessionsTab() {
+  const box = $('#sessions-box');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const d = await api('/api/auth/sessions');
+    const sessions = d.sessions || [];
+    if (!sessions.length) { box.innerHTML = '<p class="muted">No sessions.</p>'; return; }
+    box.innerHTML = '';
+    for (const s of sessions) {
+      const row = document.createElement('div');
+      row.className = 'row-item';
+      row.innerHTML = `
+        <div class="row-main">
+          <span class="row-title">${s.is_current ? '<span class="badge ok">This device</span> ' : ''}${esc(truncUA(s.user_agent, 40) || 'Unknown device')}</span>
+          <span class="row-sub">${esc(s.ip || '')} · last active ${esc(fmtDateTime(s.last_active_at || s.created_at))}</span>
+        </div>
+        ${s.is_current ? '' : '<button class="btn small danger">Revoke</button>'}`;
+      const btn = row.querySelector('button');
+      if (btn) {
+        btn.onclick = async () => {
+          try {
+            await api(`/api/auth/sessions/${s.id}`, { method: 'DELETE' });
+            renderSessionsTab();
+          } catch (err) { toast('Revoke failed: ' + err.message); }
+        };
+      }
+      box.appendChild(row);
+    }
+  } catch (err) {
+    box.innerHTML = `<p class="form-error">${esc(err.message)}</p>`;
+  }
+}
+
+/* ----- tasks ----- */
+function wireTasksTab() {
+  document.querySelectorAll('input[name="task-kind"]').forEach(r => {
+    r.addEventListener('change', () => {
+      const kind = document.querySelector('input[name="task-kind"]:checked').value;
+      $('#task-cron-wrap').hidden = kind !== 'cron';
+      $('#task-once-wrap').hidden = kind !== 'once';
+    });
+  });
+  document.querySelectorAll('#cron-presets .chip').forEach(ch => {
+    ch.onclick = () => {
+      $('#task-cron').value = ch.dataset.cron;
+      document.querySelectorAll('#cron-presets .chip').forEach(c => c.classList.remove('active'));
+      ch.classList.add('active');
+    };
+  });
+  $('#task-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('#task-name').value.trim();
+    const prompt = $('#task-prompt').value.trim();
+    if (!name || !prompt) { toast('Name and prompt are required'); return; }
+    const kind = document.querySelector('input[name="task-kind"]:checked').value;
+    const body = { name, prompt };
+    if (kind === 'once') {
+      const at = $('#task-runat').value;
+      if (!at) { toast('Pick a date and time'); return; }
+      body.run_at = new Date(at).toISOString();
+    } else {
+      body.cron = $('#task-cron').value.trim();
+      if (!body.cron) { toast('Enter a cron expression'); return; }
+    }
+    try {
+      await api('/api/tasks', { method: 'POST', body: JSON.stringify(body) });
+      $('#task-name').value = '';
+      $('#task-prompt').value = '';
+      $('#task-runat').value = '';
+      await renderTasksTab();
+      toast('Task created');
+    } catch (err) { toast('Create failed: ' + err.message); }
+  });
+}
+function taskScheduleLabel(t) {
+  if (t.run_at && !t.cron) return 'once · ' + fmtDateTime(t.run_at);
+  if (t.cron) {
+    const presets = { '0 * * * *': 'hourly', '0 9 * * *': 'daily 9am', '0 9 * * 1': 'weekly Mon 9am' };
+    return 'repeats · ' + (presets[t.cron] || t.cron);
+  }
+  return t.run_at ? 'once · ' + fmtDateTime(t.run_at) : '';
+}
+async function renderTasksTab() {
+  const box = $('#tasks-box');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const d = await api('/api/tasks');
+    const tasks = d.tasks || [];
+    if (!tasks.length) { box.innerHTML = '<p class="muted">No scheduled tasks yet.</p>'; return; }
+    box.innerHTML = '';
+    for (const t of tasks) {
+      const row = document.createElement('div');
+      row.className = 'row-item task-row' + (t.enabled ? '' : ' disabled');
+      row.innerHTML = `
+        <label class="toggle" title="Enable/disable"><input type="checkbox"${t.enabled ? ' checked' : ''}><span class="knob"></span></label>
+        <div class="row-main">
+          <span class="row-title">${esc(t.name)}</span>
+          <span class="row-sub">${esc(taskScheduleLabel(t))}${t.last_run_at ? ' · last ran ' + esc(fmtDateTime(t.last_run_at)) : ''}${t.last_status ? ' · ' + esc(t.last_status) : ''}</span>
+        </div>
+        <button class="btn small run">Run now</button>
+        <button class="btn small danger del">Delete</button>`;
+      row.querySelector('input').onchange = async (e) => {
+        try {
+          await api(`/api/tasks/${t.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: e.target.checked }) });
+          t.enabled = e.target.checked;
+          row.classList.toggle('disabled', !t.enabled);
+        } catch (err) { toast('Update failed: ' + err.message); e.target.checked = t.enabled; }
+      };
+      row.querySelector('.run').onclick = async () => {
+        try { await api(`/api/tasks/${t.id}/run`, { method: 'POST' }); toast('Task run started'); renderTasksTab(); }
+        catch (err) { toast('Run failed: ' + err.message); }
+      };
+      row.querySelector('.del').onclick = async () => {
+        if (!await confirmDialog({ title: 'Delete task', message: `Delete “${t.name}”?`, confirmLabel: 'Delete', danger: true })) return;
+        try { await api(`/api/tasks/${t.id}`, { method: 'DELETE' }); renderTasksTab(); }
+        catch (err) { toast('Delete failed: ' + err.message); }
+      };
+      box.appendChild(row);
+    }
+  } catch (err) {
+    box.innerHTML = `<p class="form-error">${esc(err.message)}</p>`;
+  }
+}
+
+/* ----- heartbeat ----- */
+function wireHeartbeatTab() {
+  $('#heartbeat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('#hb-saved').hidden = true;
+    const body = {
+      enabled: $('#hb-enabled').checked,
+      interval_hours: parseInt($('#hb-interval').value, 10),
+      prompt: $('#hb-prompt').value.trim(),
+    };
+    try {
+      await api('/api/heartbeat', { method: 'PUT', body: JSON.stringify(body) });
+      $('#hb-saved').hidden = false;
+      setTimeout(() => { $('#hb-saved').hidden = true; }, 2500);
+    } catch (err) { toast('Save failed: ' + err.message); }
+  });
+}
+async function renderHeartbeatTab() {
+  $('#hb-saved').hidden = true;
+  try {
+    const d = await api('/api/heartbeat');
+    const hb = d.heartbeat || d;
+    $('#hb-enabled').checked = !!hb.enabled;
+    if (hb.interval_hours) $('#hb-interval').value = String(hb.interval_hours);
+    $('#hb-prompt').value = hb.prompt || '';
+  } catch (err) {
+    toast('Couldn’t load heartbeat: ' + err.message);
   }
 }
