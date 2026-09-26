@@ -300,7 +300,8 @@ export function reactionSummary(messageId) {
 }
 
 /** Plain-text summary of a message's file attachments for the model. Text
- * files are embedded (bounded); images and binaries get a short note. */
+ * files are embedded (bounded); other non-image files get a short note.
+ * Images are NOT summarized here — agent.js passes them as vision parts. */
 export function attachmentSummary(messageId) {
   const rows = db
     .prepare('SELECT filename, mime, size, path FROM attachments WHERE message_id = ? AND staged = 0')
@@ -312,6 +313,7 @@ export function attachmentSummary(messageId) {
   for (const a of rows) {
     const name = a.filename || 'file';
     const mime = String(a.mime || '').toLowerCase();
+    if (mime.startsWith('image/') || a.kind === 'image') continue; // vision parts, not text
     const isText =
       mime.startsWith('text/') ||
       ['application/json', 'application/x-sh', 'application/javascript'].includes(mime) ||
@@ -333,8 +335,7 @@ export function attachmentSummary(messageId) {
       } catch { /* fall through to the plain note */ }
     }
     const size = a.size ? ` (${formatBytes(a.size)})` : '';
-    const kind = mime.startsWith('image/') ? 'image' : 'file';
-    parts.push(`[attached ${kind}: ${name} (${mime || 'unknown type'}${size})]`);
+    parts.push(`[attached file: ${name} (${mime || 'unknown type'}${size})]`);
   }
   return `\n\n${parts.join('\n\n')}`;
 }

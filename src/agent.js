@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, attachmentSummary, groupedReactions } from './db.js';
 import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
+import { imagePartsForMessage, imagePartFromFile, messageHasImages, stripImageParts } from './vision.js';
 import { publish } from './events.js';
 import { recordUsage, isOverLimit, LIMIT_REACHED_MESSAGE } from './usage.js';
 import {
@@ -33,7 +34,7 @@ Your tools:
 - exec: run any shell command in the VM (install packages with apt-get, run python/node scripts, curl APIs, process files, …). Prefer non-interactive commands; long jobs should finish within the timeout you set.
 - read_file / write_file / list_files: work with files in /home/agent/workspace (paths are confined there).
 - web_fetch: fetch a URL and get its readable text back. Use it for docs, articles, API responses — anything on the web.
-- browser_shot: take a real screenshot of a URL with headless Chromium and show it to the user as an image attachment. Use it when the user wants to SEE a page, or to verify how a page you built looks.
+- browser_shot: take a real screenshot of a URL with headless Chromium and attach it to your reply so the user can see it. You receive the screenshot as vision too — actually look at it and describe or verify what it genuinely shows. Use it when the user wants to SEE a page, or to verify how a page you built looks.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
 - send_update: speak to the user mid-run. Use it for meaningful progress updates during long multi-step work — a sentence or two, not a narration of every tool call.
 - react_to_message: add or remove an emoji reaction on a chat message — acknowledge the user's message with ❤️, mark something done with ✅, laugh along with 😂, etc. Use sparingly: a reaction is a warm touch, not a substitute for a reply. You may react to the user's messages or your own.
@@ -41,6 +42,7 @@ Your tools:
 
 Guidelines:
 - Be concise and direct. Explain what you're doing briefly, then do it.
+- Images attached to messages (user uploads, your browser_shot captures) are passed to you as vision — you can genuinely see them. Never claim you can't see an attached image, and never describe image contents you haven't actually been shown: if no image came through, say so plainly instead of guessing.
 - When a task needs several steps, just do them — don't narrate every keystroke or ask permission for routine, reversible actions.
 - CONFIRM FIRST before anything destructive or hard to undo: deleting files (rm -rf), overwriting important data, sending emails/messages, making purchases, or running commands that affect systems outside the VM.
 - If a command fails, read the error and try a different approach before giving up.
@@ -387,6 +389,7 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       return {
         text: `Screenshot captured and shown to the user (attachment ${info.lastInsertRowid}).`,
         image: { url, filename },
+        imagePath: path.join(dir, filename),
       };
     }
     case 'schedule_task': {
@@ -478,7 +481,7 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
   }
 }
 
-function loadHistory(conversationId, limit) {
+export async function loadHistory(conversationId, limit) {
   let rows;
   if (limit && Number.isFinite(limit) && limit > 0) {
     rows = db
@@ -497,25 +500,37 @@ function loadHistory(conversationId, limit) {
       )
       .all(conversationId);
   }
-  return rows
-    .map((r) => {
-      if (r.role === 'tool') {
-        return { role: 'tool', tool_call_id: r.tool_call_id, content: r.content || '' };
+  const out = [];
+  for (const r of rows) {
+    if (r.role === 'tool') {
+      out.push({ role: 'tool', tool_call_id: r.tool_call_id, content: r.content || '' });
+      continue;
+    }
+    // Reactions ride along as a plain-text suffix so the model sees who
+    // reacted to what without any schema changes. Same for file
+    // attachments: readable text is embedded; images become vision parts
+    // so the model genuinely sees them instead of guessing.
+    let text = (r.content || '') + reactionSummary(r.id) + attachmentSummary(r.id);
+    let content = text;
+    try {
+      const { parts, skipped } = await imagePartsForMessage(r.id);
+      if (skipped.length) text += `\n\n[attached images not shown to you: ${skipped.join(', ')}]`;
+      if (parts.length) content = [{ type: 'text', text }, ...parts];
+      else content = text;
+    } catch {
+      content = text; // vision must never break history replay
+    }
+    const m = { role: r.role, content };
+    if (r.tool_calls) {
+      try {
+        m.tool_calls = JSON.parse(r.tool_calls);
+      } catch {
+        /* corrupted row: treat as plain text */
       }
-      // Reactions ride along as a plain-text suffix so the model sees who
-      // reacted to what without any schema changes. Same for file
-      // attachments: readable text is embedded, images get a note.
-      const m = { role: r.role, content: (r.content || '') + reactionSummary(r.id) + attachmentSummary(r.id) };
-      if (r.tool_calls) {
-        try {
-          m.tool_calls = JSON.parse(r.tool_calls);
-        } catch {
-          /* corrupted row: treat as plain text */
-        }
-      }
-      return m;
-    })
-    .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool');
+    }
+    if (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') out.push(m);
+  }
+  return out;
 }
 
 /**
@@ -663,22 +678,40 @@ async function runToolLoop({
       break;
     }
 
-    const { content, toolCalls, usage } = await streamChatCompletion({
-      baseUrl,
-      apiKey,
-      model,
-      messages: convo,
-      tools,
-      onToken: (text) => {
-        finalText += text;
-        try {
-          emit('token', { text });
-        } catch {
-          /* ignore */
+    // If the configured model rejects vision input (HTTP 400), strip the
+    // image parts and retry the turn text-only once — the placeholder
+    // note keeps the model honest about not seeing the images.
+    let content, toolCalls, usage, visionStripped = false;
+    for (;;) {
+      try {
+        ({ content, toolCalls, usage } = await streamChatCompletion({
+          baseUrl,
+          apiKey,
+          model,
+          messages: convo,
+          tools,
+          onToken: (text) => {
+            finalText += text;
+            try {
+              emit('token', { text });
+            } catch {
+              /* ignore */
+            }
+          },
+          signal,
+        }));
+        break;
+      } catch (e) {
+        const msg = String(e && e.message ? e.message : e);
+        if (!visionStripped && /HTTP 400/.test(msg) && convo.some(messageHasImages)) {
+          visionStripped = true;
+          stripImageParts(convo);
+          console.warn('[orion] model rejected image input; retrying text-only');
+          continue;
         }
-      },
-      signal,
-    });
+        throw e;
+      }
+    }
     // Attribute this call's tokens to the run's owner (chat, subagent,
     // task, and heartbeat runs all flow through here).
     recordUsage(userId, usage);
@@ -761,6 +794,24 @@ async function runToolLoop({
         /* ignore */
       }
       convo.push({ role: 'tool', tool_call_id: tc.id, content: text });
+      // A tool that produced an image (browser_shot): feed it back as
+      // vision so the agent genuinely sees it instead of guessing.
+      if (result.imagePath) {
+        try {
+          const part = await imagePartFromFile(result.imagePath);
+          if (part) {
+            convo.push({
+              role: 'user',
+              content: [
+                { type: 'text', text: `Image produced by ${tc.function.name} (also attached for the user to see):` },
+                part,
+              ],
+            });
+          }
+        } catch {
+          /* vision must never break the tool loop */
+        }
+      }
       try {
         onTool(text, tc.id);
       } catch {
@@ -819,7 +870,7 @@ export async function runAgentLoop({
   shouldAbort, signal, systemExtra, historyLimit,
 }) {
   const deadlineAt = Date.now() + RUN_CAP_MS;
-  const prior = loadHistory(conversationId, historyLimit);
+  const prior = await loadHistory(conversationId, historyLimit);
 
   // The assistant row is created by onTurnStart at the top of the first
   // loop iteration, so partial text always lands in the in-flight row.
