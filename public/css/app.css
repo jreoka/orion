@@ -682,6 +682,14 @@ button.avatar.lg:hover { opacity: .85; }
   flex-wrap: nowrap; /* one line, extending left — never a wrapped column */
 }
 .msg.user:has(.rx-chip) .bubble { margin-bottom: 40px; }
+/* Touch devices: the copy/+ buttons are always semi-visible (opacity .5),
+   so the floating button row needs reserved space even with no reaction
+   chips — otherwise it overlaps the message below. Desktop keeps the
+   hover-only float with no reserved space. */
+@media (hover: none) {
+  .msg.user .bubble { margin-bottom: 40px; }
+  .msg.assistant:not(:has(+ .msg.assistant)) .a-body { padding-bottom: 40px; }
+}
 /* Consecutive assistant messages belong to one run: tuck them into a single
    visual group and keep one + for the group instead of one per message. */
 .msg.assistant + .msg.assistant { margin-top: -8px; }

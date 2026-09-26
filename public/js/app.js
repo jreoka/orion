@@ -261,6 +261,14 @@ function setAuthMode(mode) {
 }
 
 function wireGlobal() {
+  // Profile (incl. avatar) is fetched once at boot; re-fetch when the tab
+  // becomes visible again so changes made on another device appear
+  // without a manual reload.
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (S.me && Date.now() - hiddenAt > 10000) refreshMe().catch(() => {});
+  });
   // Theme toggle (Settings → Appearance), persisted across visits.
   const themeToggle = $('#theme-toggle');
   const applyTheme = (dark) => {
