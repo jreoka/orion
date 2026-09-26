@@ -506,6 +506,13 @@ function noteNewMessage() {
 }
 // Streamed content grew (tokens, tool rows): follow only if already at
 // the bottom — never yank the user's scroll position.
+// A model turn that only made tool calls arrives as an assistant row with no
+// text (and no attachments). Rendered hidden until text streams in, so it
+// takes no layout space — see .msg-empty.
+function isEmptyPlaceholder(m) {
+  return m.role === 'assistant' && (m.kind || 'message') === 'message' &&
+    !m.content && !(m.attachments || []).length;
+}
 function keepPlace() {
   if (nearBottom()) $('#messages').scrollTop = $('#messages').scrollHeight;
   else paintJump();
@@ -1617,7 +1624,11 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
     }
     msg = { id: m.id, role: m.role, content: m.content || '', kind: m.kind || 'message', attachments: m.attachments || [], reactions: m.reactions || [] };
     S.messages.push(msg);
-    $('#messages').appendChild(messageEl(msg));
+    const el = messageEl(msg);
+    // Tool-only turns arrive as empty assistant rows. Hide them so they take
+    // no space (flex gap included); unhidden when text streams in.
+    if (isEmptyPlaceholder(msg)) el.classList.add('msg-empty');
+    $('#messages').appendChild(el);
     trimRenderedTop();
     $('#empty-state').hidden = true;
     added = true;
@@ -1629,6 +1640,7 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
     if (m.content.length >= buf.length) {
       S.buffers.set(msg.id, m.content);
       msg.content = m.content;
+      if (m.content) msgElById(msg.id)?.classList.remove('msg-empty');
       paintContent(msg);
     }
   }
@@ -1651,6 +1663,8 @@ function onBusToken(d) {
   S.buffers.set(d.message_id, buf);
   msg.content = buf;
   S.liveIds.add(d.message_id);
+  // The turn has real text now: unhide its placeholder row if it was hidden.
+  if (buf) msgElById(d.message_id)?.classList.remove('msg-empty');
   const contentEl = msgElById(d.message_id)?.querySelector('.content');
   if (!contentEl) return;
   contentEl.innerHTML = md(buf);

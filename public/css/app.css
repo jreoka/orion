@@ -534,6 +534,12 @@ button.avatar.lg:hover { opacity: .85; }
   margin: 0 0 10px; padding: 7px 4px;
   font-family: var(--sans); font-size: 13px; color: var(--ink-3);
 }
+/* A model turn that only made tool calls arrives as an assistant row with no
+   text yet. Keep it out of layout entirely — otherwise the list's flex gap
+   gives every such turn ~20px of invisible height, and the live status line
+   sinks a little lower each time it reappears. Unhidden by JS when text
+   actually starts streaming. */
+.msg.msg-empty { display: none; }
 #run-status .dot {
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); flex-shrink: 0;
