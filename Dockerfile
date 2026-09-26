@@ -4,6 +4,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY src ./src
 COPY public ./public
+COPY sandbox ./sandbox
 ENV NODE_ENV=production PORT=3000 DATA_DIR=/app/data
 VOLUME ["/app/data"]
 EXPOSE 3000
