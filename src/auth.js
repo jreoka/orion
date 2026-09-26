@@ -10,6 +10,10 @@ export const SESSION_TTL_MS = 30 * 24 * 3600 * 1000; // 30 days
 
 const USERNAME_RE = /^[a-zA-Z0-9_-]{3,24}$/;
 
+// Burned on unknown-username logins so the response time doesn't reveal
+// whether an account exists (see login()).
+const DUMMY_HASH = bcrypt.hashSync('orion-nonexistent-user-dummy', 10);
+
 export function httpError(status, message) {
   return Object.assign(new Error(message), { status });
 }
@@ -46,7 +50,13 @@ export function signup(username, password) {
 
 export function login(username, password) {
   const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-  if (!row || !bcrypt.compareSync(password || '', row.password_hash)) {
+  // Don't reveal whether the username exists via bcrypt timing: always pay
+  // the compare cost, even for unknown users.
+  if (!row) {
+    bcrypt.compareSync(password || '', DUMMY_HASH);
+    throw httpError(401, 'Invalid username or password');
+  }
+  if (!bcrypt.compareSync(password || '', row.password_hash)) {
     throw httpError(401, 'Invalid username or password');
   }
   if (row.abuse_locked) {
@@ -78,9 +88,10 @@ export function loginStep1(username, password) {
 
 export function createSession(userId) {
   const token = crypto.randomBytes(48).toString('hex');
+  const publicId = crypto.randomBytes(16).toString('hex');
   const now = Date.now();
-  db.prepare('INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)')
-    .run(token, userId, now, now + SESSION_TTL_MS);
+  db.prepare('INSERT INTO sessions (id, public_id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+    .run(token, publicId, userId, now, now + SESSION_TTL_MS);
   return token;
 }
 
@@ -105,18 +116,23 @@ export function destroySession(token) {
   if (token) db.prepare('DELETE FROM sessions WHERE id = ?').run(token);
 }
 
+// Production is HTTPS-only (Caddy terminates TLS). Local HTTP dev can set
+// ORION_INSECURE_COOKIES=1 — otherwise the browser would refuse the cookie.
+const SECURE_COOKIES = process.env.ORION_INSECURE_COOKIES !== '1';
+
 export function setSessionCookie(res, token) {
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
+    secure: SECURE_COOKIES,
     sameSite: 'lax',
     maxAge: SESSION_TTL_MS,
     path: '/',
-    // NOTE: set secure: true here if you always serve Orion over HTTPS.
   });
 }
 
 export function clearSessionCookie(res) {
-  res.clearCookie(COOKIE_NAME, { path: '/' });
+  // Clearing must mirror the cookie's flags or the browser won't overwrite it.
+  res.clearCookie(COOKIE_NAME, { path: '/', secure: SECURE_COOKIES, sameSite: 'lax' });
 }
 
 // Session telemetry: refresh last_seen_at/ip/user_agent at most every 5 min
@@ -167,17 +183,26 @@ export function requireAdmin(req, res, next) {
 
 // ---- session management ---------------------------------------------------
 
+// Lists sessions by their PUBLIC id — the bearer token (sessions.id) is
+// never exposed. Revocation also goes through the public id.
 export function listSessions(userId, currentId) {
   return db
     .prepare(
-      'SELECT id, created_at, last_seen_at, ip, user_agent FROM sessions WHERE user_id = ? ORDER BY created_at DESC'
+      'SELECT id AS token, public_id, created_at, last_seen_at, ip, user_agent FROM sessions WHERE user_id = ? ORDER BY created_at DESC'
     )
     .all(userId)
-    .map((s) => ({ ...s, current: s.id === currentId }));
+    .map((s) => ({
+      id: s.public_id,
+      created_at: s.created_at,
+      last_seen_at: s.last_seen_at,
+      ip: s.ip,
+      user_agent: s.user_agent,
+      current: s.token === currentId,
+    }));
 }
 
-export function revokeSession(userId, sessionId) {
-  const info = db.prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?').run(sessionId, userId);
+export function revokeSession(userId, publicId) {
+  const info = db.prepare('DELETE FROM sessions WHERE public_id = ? AND user_id = ?').run(publicId, userId);
   if (!info.changes) throw httpError(404, 'Session not found');
 }
 

@@ -102,14 +102,14 @@ function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = fals
 
 /* Native prompt dialog (replaces window.prompt). Resolves with the entered
    string, or null when cancelled. */
-function promptDialog({ title, message = '', placeholder = '', value = '', okLabel = 'Save' }) {
+function promptDialog({ title, message = '', placeholder = '', value = '', okLabel = 'Save', password = false }) {
   return new Promise((resolve) => {
     const bd = openModal(`
       <h3>${esc(title)}</h3>
       ${message ? `<p class="muted">${esc(message)}</p>` : ''}
       <form id="pd-form" autocomplete="off">
         <label class="fld">
-          <input id="pd-input" type="text" value="${esc(value)}" placeholder="${esc(placeholder)}">
+          <input id="pd-input" type="${password ? 'password' : 'text'}" ${password ? 'autocomplete="current-password"' : ''} value="${esc(value)}" placeholder="${esc(placeholder)}">
         </label>
         <div class="modal-actions">
           <button type="button" class="btn" data-x="cancel">Cancel</button>
@@ -677,7 +677,6 @@ function messageEl(m) {
         </svg>
       </div>
       <div class="a-body">
-        <div class="tools"></div>
         <div class="content">${m.content ? md(m.content) : ''}</div>
         <div class="imgs">${(m.attachments || []).map(attachmentHtml).join('')}</div>
         <div class="rx-row" data-rxrow>${rxRowInner(m)}</div>
@@ -1129,6 +1128,7 @@ function deleteChatModal(conv) {
           // Last chat deleted: land on the empty state. A new chat is
           // created only when the user starts one.
           closeEventStream();
+          setRunActive(false); // no stream left to deliver run_ended; clear Stop now
           S.activeId = null;
           setMessages({ messages: [], hasMoreOlder: false });
           renderMessages();
@@ -1149,6 +1149,9 @@ async function switchConversation(id) {
     const data = await api(`/api/conversations/${id}`);
     closeEventStream();
     S.activeId = id;
+    // Seed the Stop-button state synchronously — the SSE hello that corrects
+    // it can lag, and without this the previous chat's run state leaks over.
+    S.runActive = !!S.runByConv[id];
     setMessages(data);
     S.lastSeenAt[id] = Date.now();
     renderSidebar();
@@ -1431,7 +1434,7 @@ function setRunActive(on) {
     else delete S.runByConv[S.activeId];
   }
   if (!on) {
-    clearToolStatus(); // the single live status line never survives a run
+    hideRunStatus(); // the single live status line never survives a run
     for (const id of S.liveIds) {
       const el = msgElById(id);
       el?.querySelector('.typing-dots')?.remove();
@@ -1439,6 +1442,8 @@ function setRunActive(on) {
     }
     S.liveIds.clear();
     loadConversationsQuiet(); // pick up the server-side title
+  } else {
+    showRunStatus('Working…'); // refined by the first tool event
   }
   renderSidebar();
   updateComposer();
@@ -1586,6 +1591,9 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
 
 function onBusToken(d) {
   if (!d || d.message_id == null) return;
+  // The run is now visibly producing text — the status line yields to it.
+  // (The next tool-start event re-shows it if the run goes back to tools.)
+  hideRunStatus();
   const msg = S.messages.find((x) => x.id === d.message_id);
   if (!msg) return;
   let buf = S.buffers.get(d.message_id);
@@ -1602,9 +1610,11 @@ function onBusToken(d) {
   keepPlace();
 }
 
-// One quiet status line per in-flight assistant message: a general phrase
-// about what the run is doing, updated in place — never a row per tool.
-// Removed when the run ends (see setRunActive).
+// One quiet status line for the whole in-flight run: a general phrase
+// about what the run is doing, updated in place. A run spans many model
+// turns and the server creates one assistant message per turn, so the line
+// lives outside any single message — it can never multiply. Hidden when
+// the run ends (see setRunActive).
 const TOOL_STATUS_PHRASES = {
   exec: 'Running a command…',
   read_file: 'Reading files…',
@@ -1622,24 +1632,29 @@ const TOOL_STATUS_PHRASES = {
   update_task: 'Updating a scheduled task…',
   delete_task: 'Removing a scheduled task…',
 };
-function onBusTool(d) {
-  if (!d || d.message_id == null || d.status !== 'start') return;
-  if (d.name === 'send_update') return; // the agent's own update line; no redundant status
-  const toolsEl = msgElById(d.message_id)?.querySelector('.tools');
-  if (!toolsEl) return;
-  let st = toolsEl.querySelector('.tool-status');
-  if (!st) {
-    st = document.createElement('div');
-    st.className = 'tool-status';
-    st.innerHTML = '<span class="dot running"></span><span class="ttext"></span>';
-    toolsEl.appendChild(st);
+function showRunStatus(text) {
+  const box = $('#messages');
+  if (!box) return;
+  let el = $('#run-status');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'run-status';
+    el.innerHTML = '<span class="dot running"></span><span class="ttext"></span>';
+    box.appendChild(el);
   }
-  st.querySelector('.ttext').textContent = TOOL_STATUS_PHRASES[d.name] || 'Working…';
+  el.querySelector('.ttext').textContent = text;
   keepPlace();
 }
-
-function clearToolStatus() {
-  document.querySelectorAll('.tool-status').forEach((el) => el.remove());
+function hideRunStatus() {
+  document.getElementById('run-status')?.remove();
+}
+function onBusTool(d) {
+  if (!d || d.status !== 'start') return;
+  if (d.name === 'send_update') return; // the agent's own update line; no redundant status
+  // Tool-only turns never stream tokens, so their typing dots would linger
+  // forever — the status line says what's happening instead.
+  if (d.message_id != null) msgElById(d.message_id)?.querySelector('.typing-dots')?.remove();
+  showRunStatus(TOOL_STATUS_PHRASES[d.name] || 'Working…');
 }
 
 function onBusImage(d) {
@@ -1705,7 +1720,10 @@ function wireProviderFormOnce() {
     // Send the key only when the admin typed a new one.
     if (key) body.api_key = key;
     try {
-      S.adminSettings = await api('/api/admin/settings', { method: 'PUT', body });
+      // The save response is { ok: true } — merge it so has_key (fetched at
+      // load) survives and the key placeholder doesn't flip to "Not set".
+      const r = await api('/api/admin/settings', { method: 'PUT', body });
+      S.adminSettings = { ...S.adminSettings, ...r };
       $('#set-key').value = '';
       $('#set-key').placeholder = S.adminSettings.has_key ? 'Saved ✓ — leave blank to keep' : 'Not set';
       saved.hidden = false;
@@ -1771,9 +1789,10 @@ function renderAdminUsers() {
     const used = usage ? usage.total_tokens : 0;
     const lim = u.weekly_token_limit;
     const tr = document.createElement('tr');
-    const initial = esc((u.username[0] || '?').toUpperCase());
+    const rawInitial = (u.username[0] || '?').toUpperCase();
+    const initial = esc(rawInitial);
     const avatarHtml = u.avatar_path
-      ? `<span class="avatar"><img src="/api/admin/users/${u.id}/avatar" alt="" onerror="this.replaceWith(document.createTextNode('${initial}'))"></span>`
+      ? `<span class="avatar"><img src="/api/admin/users/${u.id}/avatar" alt=""></span>`
       : `<span class="avatar">${initial}</span>`;
     tr.innerHTML = `
       <td><span class="u-name ${u.disabled ? 'u-disabled' : ''}">
@@ -1788,6 +1807,16 @@ function renderAdminUsers() {
       ${usageCell(used, lim)}
       <td class="muted">${esc(fmtDate(u.created_at))}</td>
       <td><div class="u-actions"></div></td>`;
+    if (u.avatar_path) {
+      // Avatar fallback via a real listener instead of inline onerror:
+      // HTML entity-decoding happens before JS parsing, so an initial of
+      // ' or \ would break the inline-handler string. The raw (unescaped)
+      // initial is safe here via closure + createTextNode.
+      const img = tr.querySelector('.avatar img');
+      const showInitial = () => img.replaceWith(document.createTextNode(rawInitial));
+      if (img.complete && img.naturalWidth === 0) showInitial();
+      else img.addEventListener('error', showInitial, { once: true });
+    }
     const acts = tr.querySelector('.u-actions');
     const menuBtn = document.createElement('button');
     menuBtn.className = 'icon-btn';
@@ -2182,11 +2211,21 @@ function render2faBox() {
       <p id="twofa-setup-error" class="form-error" hidden></p>
     </div>`;
   $('#twofa-setup-btn').onclick = async () => {
+    // Enrolling a second factor re-authenticates with the password first —
+    // a hijacked session alone must not be able to lock the user out.
+    const pw = await promptDialog({
+      title: 'Confirm it’s you',
+      message: 'Enter your current password to set up two-factor authentication.',
+      placeholder: 'Current password',
+      okLabel: 'Continue',
+      password: true,
+    });
+    if (pw === null) return;
     const wrap = $('#twofa-setup');
     wrap.hidden = false;
     $('#twofa-setup-btn').hidden = true;
     try {
-      const d = await api('/api/auth/2fa/setup', { method: 'POST' });
+      const d = await api('/api/auth/2fa/setup', { method: 'POST', body: { password: pw } });
       $('#twofa-secret').textContent = d.secret || '';
       $('#twofa-copy').onclick = async () => {
         try { await navigator.clipboard.writeText(d.secret || ''); toast('Copied'); }
@@ -2325,8 +2364,20 @@ async function registerPasskey() {
   });
   if (v === null) return;
   const name = v;
+  // Adding a login method re-authenticates with the password first.
+  const pw = await promptDialog({
+    title: 'Confirm it’s you',
+    message: 'Enter your current password to register this passkey.',
+    placeholder: 'Current password',
+    okLabel: 'Continue',
+    password: true,
+  });
+  if (pw === null) return;
   try {
-    const { token, options } = await api('/api/auth/passkey/register/options', { method: 'POST' });
+    const { token, options } = await api('/api/auth/passkey/register/options', {
+      method: 'POST',
+      body: { password: pw },
+    });
     const cred = await navigator.credentials.create({ publicKey: webauthnOptionsFromJson(options) });
     await api('/api/auth/passkey/register/verify', {
       method: 'POST',

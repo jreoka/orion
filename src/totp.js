@@ -1,10 +1,12 @@
 // Orion TOTP 2FA: setup/confirm/verify plus single-use backup codes.
 // Secrets are base32 TOTP secrets; backup codes are stored as SHA-256 hashes
 // and only ever shown in plaintext once, at confirm time.
+import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { TOTP, Secret } from 'otpauth';
 import { db } from './db.js';
 import { httpError } from './auth.js';
+import { encryptSecret, decryptSecret } from './vault.js';
 
 const ISSUER = 'Orion';
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -43,7 +45,7 @@ export function beginTotpSetup(userId) {
   const secret = new Secret({ size: 20 });
   const secretBase32 = secret.base32;
   const url = makeTotp(secretBase32, user.username).toString();
-  db.prepare('UPDATE users SET totp_pending_secret = ? WHERE id = ?').run(secretBase32, userId);
+  db.prepare('UPDATE users SET totp_pending_secret = ? WHERE id = ?').run(encryptSecret(secretBase32), userId);
   return { secret: secretBase32, otpauth_url: url };
 }
 
@@ -57,16 +59,35 @@ function randomBackupCodes(n = 10) {
 
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
+/**
+ * TOTP secrets at rest: sealed with the server vault key (AES-256-GCM).
+ * Legacy rows may hold plaintext — openTotpSecret handles both.
+ */
+function openTotpSecret(stored) {
+  if (!stored) return null;
+  const s = String(stored);
+  if (s.startsWith('v1:')) {
+    try {
+      return decryptSecret(s);
+    } catch {
+      return null;
+    }
+  }
+  return s; // legacy plaintext
+}
+
 /** Confirm setup with a code from the authenticator app. Returns backup codes (plaintext, once). */
 export function confirmTotpSetup(userId, code) {
   const user = getUserRow(userId);
   if (user.totp_enabled) throw httpError(400, '2FA is already enabled');
-  if (!user.totp_pending_secret) throw httpError(400, 'No 2FA setup in progress');
-  const delta = makeTotp(user.totp_pending_secret, user.username).validate({
+  const pendingSecret = openTotpSecret(user.totp_pending_secret);
+  if (!pendingSecret) throw httpError(400, 'No 2FA setup in progress');
+  const delta = makeTotp(pendingSecret, user.username).validate({
     token: String(code || '').replace(/\s+/g, ''),
     window: 1,
   });
   if (delta === null) throw httpError(401, 'Invalid code — check your authenticator app and try again');
+  const pending = pendingSecret;
   const now = Date.now();
   const codes = randomBackupCodes(10);
   const insert = db.prepare(
@@ -74,9 +95,9 @@ export function confirmTotpSetup(userId, code) {
   );
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(userId);
-    for (const c of codes) insert.run(userId, sha256(c), now);
-    db.prepare('UPDATE users SET totp_secret = totp_pending_secret, totp_enabled = 1, totp_pending_secret = NULL WHERE id = ?')
-      .run(userId);
+    for (const c of codes) insert.run(userId, bcrypt.hashSync(c, 10), now);
+    db.prepare('UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_pending_secret = NULL WHERE id = ?')
+      .run(encryptSecret(pending), userId);
   });
   tx();
   return { backup_codes: codes };
@@ -108,8 +129,9 @@ export function getTotpStatus(userId) {
 
 function verifyTotpCode(userId, code) {
   const user = getUserRow(userId);
-  if (!user.totp_enabled || !user.totp_secret) return false;
-  const delta = makeTotp(user.totp_secret, user.username).validate({
+  const secret = openTotpSecret(user.totp_secret);
+  if (!user.totp_enabled || !secret) return false;
+  const delta = makeTotp(secret, user.username).validate({
     token: String(code || '').replace(/\s+/g, ''),
     window: 1, // ±30s clock skew
   });
@@ -119,13 +141,25 @@ function verifyTotpCode(userId, code) {
 /** Accept a TOTP code or an unused backup code (marks it used). */
 export function verifySecondFactor(userId, code) {
   if (verifyTotpCode(userId, code)) return { method: 'totp' };
-  const hash = sha256(String(code || '').replace(/\s+/g, ''));
-  const row = db
-    .prepare('SELECT id FROM totp_backup_codes WHERE user_id = ? AND code_hash = ? AND used_at IS NULL')
-    .get(userId, hash);
-  if (row) {
-    db.prepare('UPDATE totp_backup_codes SET used_at = ? WHERE id = ?').run(Date.now(), row.id);
-    return { method: 'backup_code' };
+  const clean = String(code || '').replace(/\s+/g, '');
+  // Backup codes are bcrypt hashes; legacy rows are unsalted SHA-256 and get
+  // upgraded to bcrypt on first successful use.
+  const candidates = db
+    .prepare('SELECT id, code_hash FROM totp_backup_codes WHERE user_id = ? AND used_at IS NULL')
+    .all(userId);
+  for (const r of candidates) {
+    let ok = false;
+    if (String(r.code_hash).startsWith('$2')) {
+      ok = bcrypt.compareSync(clean, r.code_hash);
+    } else if (sha256(clean) === r.code_hash) {
+      ok = true;
+      db.prepare('UPDATE totp_backup_codes SET code_hash = ? WHERE id = ?')
+        .run(bcrypt.hashSync(clean, 10), r.id);
+    }
+    if (ok) {
+      db.prepare('UPDATE totp_backup_codes SET used_at = ? WHERE id = ?').run(Date.now(), r.id);
+      return { method: 'backup_code' };
+    }
   }
   return null;
 }

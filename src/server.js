@@ -79,9 +79,19 @@ import {
   resetWeeklyUsage,
   allWeeklyUsage,
 } from './usage.js';
+import {
+  checkLimit,
+  recordFailure,
+  recordSuccess,
+  limitErrorMessage,
+} from './ratelimit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+
+// Behind Caddy (the only ingress — the app container publishes no ports),
+// so X-Forwarded-For is trustworthy and req.ip is the real client IP.
+app.set('trust proxy', true);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
@@ -99,6 +109,31 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
 
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// ---- brute-force protection --------------------------------------------
+// Per-account AND per-IP failure buckets (see src/ratelimit.js). The account
+// bucket is the real defense — the IP bucket only slows distributed guessing.
+// A success clears the account bucket; the IP bucket expires on its own so a
+// legitimate user sharing an IP can't hand an attacker a fresh window.
+function authLimitKeys(req, kind, account) {
+  const keys = [`${kind}:ip:${req.ip || 'unknown'}`];
+  if (account) keys.push(`${kind}:user:${String(account).toLowerCase()}`);
+  return keys;
+}
+
+function checkAuthLimit(req, res, kind, account, opts) {
+  for (const k of authLimitKeys(req, kind, account)) {
+    const hit = checkLimit(k, opts);
+    if (hit) {
+      res.set('Retry-After', String(Math.ceil(hit.retryAfterMs / 1000)));
+      throw httpError(429, limitErrorMessage(hit.retryAfterMs));
+    }
+  }
+}
+
+function authFailed(req, kind, account, opts) {
+  for (const k of authLimitKeys(req, kind, account)) recordFailure(k, opts);
+}
+
 // ---- auth ---------------------------------------------------------------
 
 // Public: lets the login page hide the signup tab when public signups are
@@ -113,13 +148,31 @@ app.post('/api/auth/signup', asyncRoute(async (req, res) => {
   if (userCount > 0 && getSetting('signup_enabled', '1') !== '1') {
     throw httpError(403, 'Sign-ups are disabled');
   }
-  const user = signup(req.body?.username, req.body?.password);
+  // Account-creation spam: 5/hour per IP.
+  checkAuthLimit(req, res, 'signup', null, { max: 5, windowMs: 60 * 60 * 1000 });
+  let user;
+  try {
+    user = signup(req.body?.username, req.body?.password);
+  } catch (e) {
+    authFailed(req, 'signup', null, { max: 5, windowMs: 60 * 60 * 1000 });
+    throw e;
+  }
   setSessionCookie(res, createSession(user.id));
   res.json(user);
 }));
 
 app.post('/api/auth/login', asyncRoute(async (req, res) => {
-  const result = loginStep1(req.body?.username, req.body?.password);
+  checkAuthLimit(req, res, 'login', req.body?.username);
+  let result;
+  try {
+    result = loginStep1(req.body?.username, req.body?.password);
+  } catch (e) {
+    authFailed(req, 'login', req.body?.username);
+    throw e;
+  }
+  // Success clears the per-account bucket only — a shared-IP attacker
+  // doesn't get a fresh window from someone else's login.
+  recordSuccess(`login:user:${String(req.body?.username || '').toLowerCase()}`);
   if (result.need_2fa) {
     // No cookie yet — the second factor completes the login.
     return res.json({ need_2fa: true, challenge: result.challenge });
@@ -155,6 +208,8 @@ app.patch('/api/auth/me', requireAuth, asyncRoute(async (req, res) => {
     }
     if (String(password).length < 8) throw httpError(400, 'Password must be at least 8 characters');
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), req.user.id);
+    // A password change may mean compromise — drop every other session.
+    revokeOtherSessions(req.user.id, req.sessionId);
   }
   res.json({ ok: true });
 }));
@@ -166,7 +221,12 @@ app.get('/api/auth/2fa/status', requireAuth, (req, res) => {
 });
 
 app.post('/api/auth/2fa/setup', requireAuth, asyncRoute(async (req, res) => {
-  // The secret is returned ONCE here; afterwards only the hash is stored.
+  // Enrolling a second factor is sensitive: re-authenticate with the
+  // password first, so a hijacked session alone can't lock the user out.
+  if (!verifyPassword(req.user.id, req.body?.password || '')) {
+    throw httpError(401, 'Incorrect password');
+  }
+  // The secret is returned ONCE here; afterwards only the encrypted secret is stored.
   res.json(beginTotpSetup(req.user.id));
 }));
 
@@ -180,14 +240,26 @@ app.post('/api/auth/2fa/disable', requireAuth, asyncRoute(async (req, res) => {
     throw httpError(401, 'Incorrect password');
   }
   disableTotp(req.user.id);
+  // Removing the second factor is sensitive — drop every other session.
+  revokeOtherSessions(req.user.id, req.sessionId);
   res.json({ ok: true });
 }));
 
 app.post('/api/auth/2fa/verify', asyncRoute(async (req, res) => {
   const userId = consumeLoginChallenge(req.body?.challenge);
   if (!userId) throw httpError(401, 'Login challenge expired — please sign in again');
+  // The account may have been locked/disabled after the password step.
+  const acct = db.prepare('SELECT disabled, abuse_locked FROM users WHERE id = ?').get(userId);
+  if (!acct) throw httpError(401, 'Login challenge expired — please sign in again');
+  if (acct.abuse_locked) throw httpError(403, 'Account locked — contact your administrator.');
+  if (acct.disabled) throw httpError(403, 'This account has been disabled');
+  checkAuthLimit(req, res, '2fa', `id:${userId}`);
   const check = verifySecondFactor(userId, req.body?.code);
-  if (!check) throw httpError(401, 'Invalid code');
+  if (!check) {
+    authFailed(req, '2fa', `id:${userId}`);
+    throw httpError(401, 'Invalid code');
+  }
+  recordSuccess(`2fa:user:id:${userId}`);
   const row = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
   setSessionCookie(res, createSession(userId));
   res.json({ id: row.id, username: row.username, role: row.role });
@@ -196,6 +268,11 @@ app.post('/api/auth/2fa/verify', asyncRoute(async (req, res) => {
 // ---- passkeys ---------------------------------------------------------------
 
 app.post('/api/auth/passkey/register/options', requireAuth, asyncRoute(async (req, res) => {
+  // Registering a passkey is sensitive: re-authenticate with the password
+  // first, so a hijacked session alone can't add a login method.
+  if (!verifyPassword(req.user.id, req.body?.password || '')) {
+    throw httpError(401, 'Incorrect password');
+  }
   res.json(await registrationOptions(req, req.user));
 }));
 
@@ -217,8 +294,15 @@ app.post('/api/auth/passkey/login/options', asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/auth/passkey/login/verify', asyncRoute(async (req, res) => {
-  // A verified passkey is a full login — it bypasses TOTP.
-  const user = await verifyAuthentication(req, req.body?.token, req.body?.response);
+  checkAuthLimit(req, res, 'passkey-login', req.body?.username);
+  let user;
+  try {
+    // A verified passkey is a full login — it bypasses TOTP.
+    user = await verifyAuthentication(req, req.body?.token, req.body?.response);
+  } catch (e) {
+    authFailed(req, 'passkey-login', req.body?.username);
+    throw e;
+  }
   setSessionCookie(res, createSession(user.id));
   res.json(user);
 }));
@@ -235,9 +319,10 @@ app.delete('/api/auth/sessions/others', requireAuth, (req, res) => {
 });
 
 app.delete('/api/auth/sessions/:id', requireAuth, (req, res) => {
-  const sid = req.params.id;
+  const sid = req.params.id; // public session id (never the bearer token)
+  const cur = db.prepare('SELECT public_id FROM sessions WHERE id = ?').get(req.sessionId);
   revokeSession(req.user.id, sid);
-  if (sid === req.sessionId) clearSessionCookie(res); // revoked our own session
+  if (cur && sid === cur.public_id) clearSessionCookie(res); // revoked our own session
   res.json({ ok: true });
 });
 

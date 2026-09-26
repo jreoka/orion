@@ -33,9 +33,15 @@ function takeChallenge(token, type) {
 
 /** rpID from the Host header (no port); origin http for localhost, https otherwise. */
 export function rpParams(req) {
-  const host = String(req.headers.host || '').split(':')[0] || 'localhost';
-  const local = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
-  return { rpID: host, expectedOrigin: `${local ? 'http' : 'https'}://${req.headers.host}` };
+  const rawHost = String(req.headers.host || '') || 'localhost';
+  // Strip the port — careful with IPv6 literals like [::1]:8080, where a
+  // naive split(':')[0] yields '['.
+  const host = rawHost.startsWith('[')
+    ? rawHost.slice(0, rawHost.indexOf(']') + 1)
+    : rawHost.split(':')[0];
+  const bare = host.replace(/^\[|\]$/g, '');
+  const local = bare === 'localhost' || bare === '127.0.0.1' || bare === '::1';
+  return { rpID: bare, expectedOrigin: `${local ? 'http' : 'https'}://${rawHost}` };
 }
 
 function userCredentials(userId) {
@@ -142,7 +148,12 @@ export async function authenticationOptions(req, username) {
   const options = await generateAuthenticationOptions({
     rpID,
     allowCredentials,
-    userVerification: 'preferred',
+    // Accounts with TOTP enabled opted into stronger auth: require the
+    // authenticator's user verification (biometric/PIN) so a bare passkey
+    // tap can't silently bypass the second factor.
+    userVerification: userId && db.prepare('SELECT totp_enabled FROM users WHERE id = ?').get(userId)?.totp_enabled
+      ? 'required'
+      : 'preferred',
   });
   const token = crypto.randomBytes(32).toString('hex');
   challenges.set(token, { challenge: options.challenge, userId, type: 'login', expiresAt: Date.now() + CHALLENGE_TTL_MS });
@@ -165,6 +176,9 @@ export async function verifyAuthentication(req, token, response) {
     ).get(rawId);
   }
   if (!row || row.disabled) throw httpError(401, 'Unknown passkey');
+  // TOTP-enabled accounts require real user verification on the passkey —
+  // otherwise the passkey would silently bypass the second factor.
+  const preUser = db.prepare('SELECT totp_enabled FROM users WHERE id = ?').get(row.user_id);
   let verification;
   try {
     verification = await verifyAuthenticationResponse({
@@ -173,7 +187,7 @@ export async function verifyAuthentication(req, token, response) {
       expectedOrigin,
       expectedRPID: rpID,
       credential: toAuthCredential(row),
-      requireUserVerification: false,
+      requireUserVerification: !!preUser?.totp_enabled,
     });
   } catch (e) {
     throw httpError(401, `Passkey verification failed: ${e.message}`);
@@ -183,5 +197,6 @@ export async function verifyAuthentication(req, token, response) {
   db.prepare('UPDATE passkey_credentials SET counter = ? WHERE id = ?').run(newCounter, row.id);
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
   if (!user || user.disabled) throw httpError(401, 'Account unavailable');
+  if (user.abuse_locked) throw httpError(403, 'Account locked — contact your administrator.');
   return { id: user.id, username: user.username, role: user.role };
 }

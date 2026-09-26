@@ -1,30 +1,53 @@
 // Orion push notifications: Web Push (VAPID) for mobile + desktop.
-// VAPID keys are generated once on first use and stored in the settings
-// table (the private key is never exposed via the API).
+// VAPID keys are generated once on first use and stored in a 0600 file in
+// the data dir (NOT the settings table — a DB read must never yield the
+// private key). The private key is never exposed via the API.
+import fs from 'node:fs';
+import path from 'node:path';
 import webpush from 'web-push';
-import { db, getSetting, setSetting } from './db.js';
+import { db, DATA_DIR, getSetting, deleteSetting } from './db.js';
 import { httpError } from './auth.js';
 import { subscriberCount } from './events.js';
+
+const VAPID_PATH = path.join(DATA_DIR, 'vapid.json');
 
 let vapidReady = false;
 
 /** Generate (once) and cache the VAPID keypair; returns { publicKey }. */
 export function ensureVapidKeys() {
-  let pub = getSetting('vapid_public_key', '');
-  let priv = getSetting('vapid_private_key', '');
-  if (!pub || !priv) {
-    const keys = webpush.generateVAPIDKeys();
-    setSetting('vapid_public_key', keys.publicKey);
-    setSetting('vapid_private_key', keys.privateKey);
-    pub = keys.publicKey;
-    priv = keys.privateKey;
+  let keys = null;
+  try {
+    keys = JSON.parse(fs.readFileSync(VAPID_PATH, 'utf8'));
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+  }
+  // Migrate from the old settings-table storage (pre-hardening), then drop
+  // the private key from the DB so a settings read can never yield it.
+  if (!keys?.publicKey || !keys?.privateKey) {
+    const pub = getSetting('vapid_public_key', '');
+    const priv = getSetting('vapid_private_key', '');
+    if (pub && priv) {
+      keys = { publicKey: pub, privateKey: priv };
+      try {
+        deleteSetting('vapid_private_key');
+      } catch { /* best effort */ }
+    }
+  }
+  if (!keys?.publicKey || !keys?.privateKey) {
+    keys = webpush.generateVAPIDKeys();
     console.log('[orion] generated VAPID keypair for push notifications');
   }
+  try {
+    fs.writeFileSync(VAPID_PATH, JSON.stringify(keys), { mode: 0o600 });
+    try { fs.chmodSync(VAPID_PATH, 0o600); } catch { /* best effort */ }
+  } catch (e) {
+    console.warn('[orion] could not persist VAPID keys:', e?.message || e);
+  }
   if (!vapidReady) {
-    webpush.setVapidDetails('mailto:orion@localhost', pub, priv);
+    webpush.setVapidDetails('mailto:orion@localhost', keys.publicKey, keys.privateKey);
     vapidReady = true;
   }
-  return { publicKey: pub };
+  return { publicKey: keys.publicKey };
 }
 
 export function getVapidPublicKey() {
@@ -48,11 +71,19 @@ export function saveSubscription(userId, subscription) {
     throw httpError(400, 'Invalid push subscription');
   }
   const now = Date.now();
+  // An endpoint belongs to whoever registered it first: another user
+  // re-submitting the same endpoint must NOT steal the row (that would
+  // reroute the victim's notifications to the attacker's account).
+  const existing = db
+    .prepare('SELECT user_id FROM push_subscriptions WHERE endpoint = ?')
+    .get(subscription.endpoint);
+  if (existing && existing.user_id !== userId) {
+    throw httpError(409, 'This push subscription belongs to another account');
+  }
   db.prepare(
     `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, created_at)
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(endpoint) DO UPDATE SET
-       user_id = excluded.user_id,
        p256dh = excluded.p256dh,
        auth = excluded.auth`
   ).run(userId, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, now);
@@ -85,10 +116,11 @@ export async function notifyUser(userId, { title, body, convId } = {}) {
   }
   const subs = listSubscriptions(userId);
   if (!subs.length) return { sent: 0 };
+  const url = convId ? `/#/chat/${convId}` : '/#/chat';
   const payload = JSON.stringify({
     title: title || 'Orion',
     body: body || '',
-    url: '/#/chat',
+    url,
   });
   let sent = 0;
   for (const s of subs) {

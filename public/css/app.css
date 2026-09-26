@@ -536,17 +536,17 @@ button.avatar.lg:hover { opacity: .85; }
 .tool-row.open .tool-detail { display: block; }
 
 /* single live status line — one general phrase, updated in place while a run works */
-.tool-status {
+#run-status {
   display: flex; align-items: center; gap: 9px;
   margin: 0 0 10px; padding: 7px 4px;
   font-family: var(--sans); font-size: 13px; color: var(--ink-3);
 }
-.tool-status .dot {
+#run-status .dot {
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); flex-shrink: 0;
   animation: blink 1s steps(1) infinite;
 }
-.tool-status .ttext {
+#run-status .ttext {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 

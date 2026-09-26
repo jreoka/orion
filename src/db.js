@@ -1,6 +1,7 @@
 // Orion persistence: SQLite via better-sqlite3 (synchronous API).
 // DB lives at $ORION_DATA/orion.db (default ./data/orion.db).
 import Database from 'better-sqlite3';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -89,6 +90,21 @@ addColumn('users', 'totp_pending_secret', 'TEXT');
 addColumn('sessions', 'ip', 'TEXT');
 addColumn('sessions', 'user_agent', 'TEXT');
 addColumn('sessions', 'last_seen_at', 'INTEGER');
+// Public session id: the sessions.id column IS the bearer token, so the API
+// must never hand it out (session list / revoke). public_id is a random,
+// non-secret handle safe to expose.
+addColumn('sessions', 'public_id', 'TEXT');
+{
+  const missing = db.prepare('SELECT id FROM sessions WHERE public_id IS NULL').all();
+  if (missing.length) {
+    const stmt = db.prepare('UPDATE sessions SET public_id = ? WHERE id = ?');
+    const txn = db.transaction((rows) => {
+      for (const r of rows) stmt.run(crypto.randomBytes(16).toString('hex'), r.id);
+    });
+    txn(missing);
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_public_id ON sessions(public_id)');
+}
 addColumn('conversations', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
 addColumn('conversations', 'task_id', 'INTEGER');
 addColumn('messages', 'kind', "TEXT NOT NULL DEFAULT 'message'");
@@ -262,6 +278,10 @@ export function getSetting(key, fallback = '') {
 export function setSetting(key, value) {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
     .run(key, String(value));
+}
+
+export function deleteSetting(key) {
+  db.prepare('DELETE FROM settings WHERE key = ?').run(key);
 }
 
 // Orion has a single main chat per user — no conversation list. This

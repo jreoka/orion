@@ -138,12 +138,13 @@ export const TOOLS = [
     function: {
       name: 'browser_shot',
       description:
-        'Take a screenshot of a URL with headless Chromium and attach it to your reply so the user can see it. Use for "show me", visual checks, or verifying rendered pages.',
+        'Take a screenshot of a URL with headless Chromium so YOU can see the rendered page. The screenshot is for your own eyes only and is never shown to the user — unless the user explicitly asked to see the page (e.g. "show me", "screenshot this"), in which case set show_user to true to attach it to your reply.',
       parameters: {
         type: 'object',
         properties: {
           url: { type: 'string', description: 'http(s) URL to screenshot' },
           full_page: { type: 'boolean', description: 'Capture the full scrollable page (default false)' },
+          show_user: { type: 'boolean', description: 'Attach the screenshot to your reply so the user sees it. Only when the user asked to see it (default false).' },
         },
       },
     },
@@ -435,20 +436,34 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       );
       if (exitCode !== 0) throw new Error(`browser_shot failed: ${output.trim().slice(0, 500)}`);
       const png = await sandboxPullFile(userId, shotPath);
-      const dir = path.join(DATA_DIR, 'files', String(conversationId));
+      // The screenshot is for the agent's own eyes by default — it only
+      // becomes a user-visible attachment when the user asked to see it.
+      // Agent-only shots go to a tmp dir and are deleted after the model
+      // has seen them, so they never accumulate on disk.
+      const showUser = args.show_user === true;
+      const dir = showUser
+        ? path.join(DATA_DIR, 'files', String(conversationId))
+        : path.join(DATA_DIR, 'tmp');
       fs.mkdirSync(dir, { recursive: true });
       const filename = `${uuid}.png`;
-      fs.writeFileSync(path.join(dir, filename), png);
-      const info = db
-        .prepare(
-          'INSERT INTO attachments (message_id, kind, filename, mime, path) VALUES (?, ?, ?, ?, ?)'
-        )
-        .run(assistantMessageId, 'image', filename, 'image/png', `files/${conversationId}/${filename}`);
-      const url = `/api/files/${info.lastInsertRowid}`;
+      const fullPath = path.join(dir, filename);
+      fs.writeFileSync(fullPath, png);
+      let url = null;
+      if (showUser) {
+        const info = db
+          .prepare(
+            'INSERT INTO attachments (message_id, kind, filename, mime, path) VALUES (?, ?, ?, ?, ?)'
+          )
+          .run(assistantMessageId, 'image', filename, 'image/png', `files/${conversationId}/${filename}`);
+        url = `/api/files/${info.lastInsertRowid}`;
+      }
       return {
-        text: `Screenshot captured and shown to the user (attachment ${info.lastInsertRowid}).`,
-        image: { url, filename },
-        imagePath: path.join(dir, filename),
+        text: showUser
+          ? 'Screenshot captured and shown to the user.'
+          : 'Screenshot captured for your own viewing (not shown to the user).',
+        image: showUser ? { url, filename } : undefined,
+        imagePath: fullPath,
+        tmpImage: !showUser,
       };
     }
     case 'schedule_task': {
@@ -931,13 +946,18 @@ async function runToolLoop({
             convo.push({
               role: 'user',
               content: [
-                { type: 'text', text: `Image produced by ${tc.function.name} (also attached for the user to see):` },
+                { type: 'text', text: `Image produced by ${tc.function.name}${result.image ? ' (also attached for the user to see)' : ' (for your eyes only — not shown to the user)'}:` },
                 part,
               ],
             });
           }
         } catch {
           /* vision must never break the tool loop */
+        }
+        // Agent-only screenshots have served their purpose once the model
+        // has seen them — remove the tmp file so they don't accumulate.
+        if (result.tmpImage) {
+          try { fs.unlinkSync(result.imagePath); } catch { /* ignore */ }
         }
       }
       try {
