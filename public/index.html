@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d17">
+  <meta name="description" content="Orion — your own sandboxed AI agent. Chat, build, browse.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Orion">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <title>Orion</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <!-- Shared gradient defs for every Orion mark on the page -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="orion-grad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#6366f1"/>
+        <stop offset="1" stop-color="#a855f7"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div id="app">
+    <!-- ============ AUTH ============ -->
+    <section id="view-auth" class="view" hidden>
+      <div class="auth-wrap">
+        <div class="auth-card">
+          <div class="orion-mark lg">
+            <svg viewBox="0 0 32 32" aria-hidden="true">
+              <circle cx="16" cy="16" r="5.5" fill="url(#orion-grad)"/>
+              <ellipse cx="16" cy="16" rx="13" ry="5.2" transform="rotate(-24 16 16)" fill="none" stroke="url(#orion-grad)" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="26.5" cy="10.5" r="1.6" fill="url(#orion-grad)"/>
+            </svg>
+            <span class="wordmark">Orion</span>
+          </div>
+          <p class="auth-sub">Your own sandboxed AI agent.</p>
+          <div class="auth-tabs" role="tablist">
+            <button id="tab-login" class="auth-tab active" role="tab">Log in</button>
+            <button id="tab-signup" class="auth-tab" role="tab">Sign up</button>
+          </div>
+          <form id="auth-form" autocomplete="off">
+            <label class="field">
+              <span>Username</span>
+              <input id="auth-username" type="text" autocomplete="username" minlength="1" maxlength="32" required placeholder="ada">
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <input id="auth-password" type="password" autocomplete="current-password" minlength="1" required placeholder="••••••••">
+            </label>
+            <p id="auth-error" class="form-error" hidden></p>
+            <button type="submit" class="btn primary block" id="auth-submit">Log in</button>
+          </form>
+          <p class="auth-note">The first account created becomes the administrator.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ CHAT ============ -->
+    <section id="view-chat" class="view" hidden>
+      <div id="sidebar-backdrop" hidden></div>
+      <aside id="sidebar">
+        <div class="side-head">
+          <div class="orion-mark sm">
+            <svg viewBox="0 0 32 32" aria-hidden="true">
+              <circle cx="16" cy="16" r="5.5" fill="url(#orion-grad)"/>
+              <ellipse cx="16" cy="16" rx="13" ry="5.2" transform="rotate(-24 16 16)" fill="none" stroke="url(#orion-grad)" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="26.5" cy="10.5" r="1.6" fill="url(#orion-grad)"/>
+            </svg>
+            <span class="wordmark">Orion</span>
+          </div>
+          <button id="sidebar-close" class="icon-btn only-mobile" aria-label="Close sidebar">✕</button>
+        </div>
+        <button id="new-chat" class="btn primary block new-chat">
+          <span class="plus">＋</span> New chat
+        </button>
+        <nav id="conv-list" class="conv-list" aria-label="Conversations"></nav>
+        <div class="side-foot">
+          <button id="user-chip" class="user-chip" aria-haspopup="menu">
+            <span id="user-avatar" class="avatar">?</span>
+            <span class="user-meta">
+              <span id="user-name" class="user-name">…</span>
+              <span id="user-role" class="role-badge" hidden>admin</span>
+            </span>
+            <span class="chevron">▴</span>
+          </button>
+          <div id="user-menu" class="menu" hidden role="menu">
+            <button data-act="password" role="menuitem">Change password</button>
+            <button data-act="sandbox" role="menuitem">Reset sandbox</button>
+            <button data-act="admin" role="menuitem" id="menu-admin" hidden>Admin panel</button>
+            <div class="menu-sep"></div>
+            <button data-act="logout" role="menuitem" class="danger">Log out</button>
+          </div>
+        </div>
+      </aside>
+
+      <main id="chat-main">
+        <header id="chat-header">
+          <button id="hamburger" class="icon-btn" aria-label="Open sidebar">☰</button>
+          <span class="wordmark sm">Orion</span>
+          <button id="new-chat-mobile" class="icon-btn" aria-label="New chat">＋</button>
+        </header>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <div id="empty-state" class="empty-state" hidden>
+          <div class="orion-mark xl">
+            <svg viewBox="0 0 32 32" aria-hidden="true">
+              <circle cx="16" cy="16" r="5.5" fill="url(#orion-grad)"/>
+              <ellipse cx="16" cy="16" rx="13" ry="5.2" transform="rotate(-24 16 16)" fill="none" stroke="url(#orion-grad)" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="26.5" cy="10.5" r="1.6" fill="url(#orion-grad)"/>
+            </svg>
+          </div>
+          <h1>What should we build?</h1>
+          <p class="muted">Your agent has a Linux VM and a browser.<br>Ask it to do things, not just say things.</p>
+          <div class="chips">
+            <button class="chip" data-suggest="Write a Python script that fetches the top Hacker News stories and saves them to a markdown file.">📰 Scrape Hacker News</button>
+            <button class="chip" data-suggest="Take a screenshot of example.com in your browser and describe what you see.">📸 Browse the web</button>
+            <button class="chip" data-suggest="Set up a tiny project in your VM: show me the OS, disk space, and what tools are installed.">🖥️ Explore your VM</button>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <form id="composer" class="composer">
+            <textarea id="composer-input" rows="1" placeholder="Message Orion…" aria-label="Message Orion"></textarea>
+            <button type="submit" id="send-btn" class="send-btn" aria-label="Send" disabled>
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 19V5m0 0l-6 6m6-6l6 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button type="button" id="stop-btn" class="stop-btn" aria-label="Stop" hidden>
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>
+            </button>
+          </form>
+          <p class="composer-hint">Enter to send · Shift+Enter for a new line</p>
+        </div>
+      </main>
+    </section>
+
+    <!-- ============ ADMIN ============ -->
+    <section id="view-admin" class="view" hidden>
+      <div class="admin-wrap">
+        <header class="admin-head">
+          <a href="#/chat" class="back-link">← Back to chat</a>
+          <h1>Administration</h1>
+        </header>
+
+        <div class="card">
+          <h2>AI provider</h2>
+          <p class="muted small">One model and key for everyone. Users never see the key.</p>
+          <form id="provider-form">
+            <div class="grid2">
+              <label class="field">
+                <span>Provider name</span>
+                <input id="set-provider" type="text" placeholder="OpenAI" maxlength="64">
+              </label>
+              <label class="field">
+                <span>Model</span>
+                <input id="set-model" type="text" placeholder="gpt-4o" maxlength="128">
+              </label>
+            </div>
+            <label class="field">
+              <span>Base URL</span>
+              <input id="set-baseurl" type="url" placeholder="https://api.openai.com/v1" maxlength="256">
+            </label>
+            <label class="field">
+              <span>API key</span>
+              <input id="set-key" type="password" autocomplete="new-password" placeholder="Not set" maxlength="256">
+            </label>
+            <label class="toggle-row">
+              <span>Allow public signups</span>
+              <span class="toggle"><input id="set-signup" type="checkbox"><span class="knob"></span></span>
+            </label>
+            <div class="form-row">
+              <button type="submit" class="btn primary" id="provider-save">Save changes</button>
+              <span id="provider-saved" class="saved-note" hidden>Saved ✓</span>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>Users</h2>
+          <div class="table-wrap">
+            <table class="users-table">
+              <thead>
+                <tr><th>User</th><th>Role</th><th>Messages</th><th>Joined</th><th class="th-actions">Actions</th></tr>
+              </thead>
+              <tbody id="users-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Image lightbox -->
+  <div id="lightbox" hidden>
+    <img id="lightbox-img" alt="">
+    <button id="lightbox-close" class="icon-btn" aria-label="Close">✕</button>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toasts" aria-live="polite"></div>
+  <script src="/js/app.js"></script>
+</body>
+</html>
