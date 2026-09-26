@@ -860,7 +860,12 @@ function vaultFormPage(rq, title, message, done) {
 // Fulfill a vault request. The secret travels only in this request body —
 // it is encrypted immediately and never echoed back or logged.
 app.post('/api/vault/requests/:requestId/fulfill', requireAuth, asyncRoute(async (req, res) => {
-  const { itemId, request: rq } = fulfillVaultRequest(req.user.id, req.params.requestId, req.body?.value);
+  let itemId, rq;
+  try {
+    ({ itemId, request: rq } = fulfillVaultRequest(req.user.id, req.params.requestId, req.body?.value));
+  } catch (e) {
+    throw httpError(400, e.message); // expired/used/missing — a user error, not a 500
+  }
   // Flip the widget message to "fulfilled" so reloaded history reads right.
   if (rq.message_id) {
     try {
