@@ -1,10 +1,8 @@
-// Orion heartbeat: a periodic proactive check-in per user. When enabled,
-// every 30 minutes we run the agent against the user's dedicated
-// heartbeat conversation with a quiet-instruction: if nothing needs the
-// user's attention the model replies HEARTBEAT_QUIET and we throw the whole
-// check away (no notification noise, no history clutter).
+// Orion heartbeat: always on, every 30 minutes, no options. We run the
+// agent against the user's main chat with a quiet-instruction: if nothing
+// needs the user's attention the model replies HEARTBEAT_QUIET and we throw
+// the whole check away (no notification noise, no history clutter).
 import { db, getSetting, getOrCreateMainConversation } from './db.js';
-import { httpError } from './auth.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
 import { registerController, unregisterController, chainPendingUserMessages } from './runs.js';
@@ -25,33 +23,24 @@ function globalSettings() {
   };
 }
 
-export function getHeartbeatSettings(userId) {
-  const row = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId);
-  return {
-    enabled: !!row?.heartbeat_enabled,
-    interval_minutes: 30,
-    prompt: row?.heartbeat_prompt ?? '',
-  };
+// Custom heartbeat instructions, if the user ever set any before the
+// settings UI was removed. There is no toggle or interval: the heartbeat
+// is always on, every 30 minutes.
+function getHeartbeatPrompt(userId) {
+  return db.prepare('SELECT heartbeat_prompt FROM user_settings WHERE user_id = ?').get(userId)
+    ?.heartbeat_prompt || '';
 }
 
-export function putHeartbeatSettings(userId, body) {
-  const { enabled, prompt } = body || {};
-  if (typeof enabled !== 'boolean') throw httpError(400, 'enabled must be a boolean');
-  const p = String(prompt ?? '').slice(0, 2000);
+function touchHeartbeatAt(userId, now) {
   db.prepare(
-    `INSERT INTO user_settings (user_id, heartbeat_enabled, heartbeat_prompt)
-     VALUES (?, ?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET
-       heartbeat_enabled = excluded.heartbeat_enabled,
-       heartbeat_prompt = excluded.heartbeat_prompt`
-  ).run(userId, enabled ? 1 : 0, p);
-  return getHeartbeatSettings(userId);
+    `INSERT INTO user_settings (user_id, last_heartbeat_at)
+     VALUES (?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET last_heartbeat_at = excluded.last_heartbeat_at`
+  ).run(userId, now);
 }
 
 export async function runHeartbeatFor(userId) {
-  const s = getHeartbeatSettings(userId);
-  if (!s.enabled) return { ok: false, reason: 'disabled' };
-
+  const prompt = getHeartbeatPrompt(userId);
   const convId = getOrCreateMainConversation(userId);
   if (!tryAcquireRun(convId)) {
     console.log(`[orion] heartbeat for user ${userId} skipped: main chat busy`);
@@ -69,7 +58,7 @@ export async function runHeartbeatFor(userId) {
     const r = await runAgent({
       userId,
       conversationId: convId,
-      userText: s.prompt || DEFAULT_PROMPT,
+      userText: prompt || DEFAULT_PROMPT,
       settings: globalSettings(),
       shouldAbort: () => isStopRequested(convId),
       signal: controller.signal,
@@ -96,10 +85,10 @@ export async function runHeartbeatFor(userId) {
         db.prepare(`DELETE FROM attachments WHERE message_id IN (${ph})`).run(...ids);
         db.prepare(`DELETE FROM messages WHERE id IN (${ph})`).run(...ids);
       }
-      db.prepare('UPDATE user_settings SET last_heartbeat_at = ? WHERE user_id = ?').run(now, userId);
+      touchHeartbeatAt(userId, now);
       return { ok: true, quiet: true };
     }
-    db.prepare('UPDATE user_settings SET last_heartbeat_at = ? WHERE user_id = ?').run(now, userId);
+    touchHeartbeatAt(userId, now);
     // The heartbeat had something to say: ping the user if they aren't
     // watching the chat live.
     try {
@@ -126,9 +115,16 @@ export async function runHeartbeatFor(userId) {
 }
 
 async function checkHeartbeats() {
+  // No provider configured yet: nothing to run with.
+  const g = globalSettings();
+  if (!g.model || !g.api_key) return;
   const now = Date.now();
   const rows = db
-    .prepare('SELECT user_id, last_heartbeat_at FROM user_settings WHERE heartbeat_enabled = 1')
+    .prepare(
+      `SELECT u.id AS user_id, s.last_heartbeat_at
+       FROM users u LEFT JOIN user_settings s ON s.user_id = u.id
+       WHERE u.disabled = 0`
+    )
     .all();
   for (const r of rows) {
     if (r.last_heartbeat_at && now - r.last_heartbeat_at < HEARTBEAT_INTERVAL_MS) continue;

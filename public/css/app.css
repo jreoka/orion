@@ -267,7 +267,24 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
   background: var(--ink);
   display: inline-flex; align-items: center; justify-content: center;
   font-family: var(--serif); font-weight: 700; font-size: 14px; color: var(--paper); flex-shrink: 0;
+  overflow: hidden; padding: 0; border: none;
 }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar.lg { width: 64px; height: 64px; font-size: 26px; cursor: pointer; }
+button.avatar.lg:hover { opacity: .85; }
+
+/* ---------- profile card (settings) ---------- */
+.profile-card { display: flex; align-items: center; gap: 16px; }
+.profile-meta { min-width: 0; }
+.profile-name { font-family: var(--serif); font-size: 20px; font-weight: 700; }
+.profile-sub { font-family: var(--sans); font-size: 13px; color: var(--ink-3); margin-top: 4px; }
+.link-btn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--accent); font: inherit; text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-btn:hover { color: var(--ink); }
+.link-btn.danger { color: var(--danger); }
 /* ---------- Main column ---------- */
 #chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 #chat-header {

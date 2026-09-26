@@ -54,8 +54,6 @@ import {
   initTasks,
 } from './tasks.js';
 import {
-  getHeartbeatSettings,
-  putHeartbeatSettings,
   initHeartbeat,
 } from './heartbeat.js';
 import { ensureImage, sandboxStatus, sandboxReset, removeSandbox } from './sandbox.js';
@@ -111,12 +109,24 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
-  res.json(req.user);
+  const row = db.prepare('SELECT avatar_path FROM users WHERE id = ?').get(req.user.id);
+  let avatarUrl = null;
+  if (row?.avatar_path) {
+    // mtime cache-buster so a fresh upload never shows the stale image.
+    try {
+      const v = fs.statSync(path.resolve(DATA_DIR, row.avatar_path)).mtimeMs.toString(36);
+      avatarUrl = '/api/avatar?v=' + v;
+    } catch { avatarUrl = '/api/avatar'; }
+  }
+  res.json({ ...req.user, avatar_url: avatarUrl });
 });
 
 app.patch('/api/auth/me', requireAuth, asyncRoute(async (req, res) => {
-  const { password } = req.body || {};
+  const { password, current_password } = req.body || {};
   if (password !== undefined) {
+    if (!verifyPassword(req.user.id, current_password || '')) {
+      throw httpError(403, 'Current password is incorrect.');
+    }
     if (String(password).length < 8) throw httpError(400, 'Password must be at least 8 characters');
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), req.user.id);
   }
@@ -557,16 +567,6 @@ app.post('/api/tasks/:id/run', requireAuth, asyncRoute(async (req, res) => {
   res.json({ ok: true, conversationId: convId });
 }));
 
-// ---- heartbeat --------------------------------------------------------------
-
-app.get('/api/heartbeat', requireAuth, (req, res) => {
-  res.json(getHeartbeatSettings(req.user.id));
-});
-
-app.put('/api/heartbeat', requireAuth, asyncRoute(async (req, res) => {
-  res.json(putHeartbeatSettings(req.user.id, req.body || {}));
-}));
-
 // ---- push notifications -----------------------------------------------------
 // Web Push (VAPID). The service worker shows incoming pushes; tapping one
 // deep-links into the conversation.
@@ -661,8 +661,64 @@ app.post('/api/upload', requireAuth, (req, res) => {
   });
 });
 
-app.get('/api/files/:id', requireAuth, (req, res) => {
-  const att = db.prepare('SELECT * FROM attachments WHERE id = ?').get(req.params.id);
+// ---- profile avatar ---------------------------------------------------------
+// One image per user, served only to its owner.
+
+const AVATAR_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' };
+
+const avatarUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, _file, cb) => {
+      const dir = path.join(DATA_DIR, 'files', 'avatars', String(req.user.id));
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      cb(null, crypto.randomUUID() + (AVATAR_EXT[file.mimetype] || '.png'));
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (_req, file, cb) => cb(null, !!AVATAR_EXT[file.mimetype]),
+});
+
+function deleteAvatarFile(userId) {
+  const row = db.prepare('SELECT avatar_path FROM users WHERE id = ?').get(userId);
+  if (row?.avatar_path) {
+    try { fs.rmSync(path.resolve(DATA_DIR, row.avatar_path), { force: true }); } catch { /* gone */ }
+  }
+}
+
+app.post('/api/avatar', requireAuth, (req, res) => {
+  avatarUpload.single('avatar')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE' ? 'Image is over the 5 MB limit.' : 'Upload failed.';
+      return res.status(400).json({ error: msg });
+    }
+    if (!req.file) return res.status(400).json({ error: 'Please choose a PNG, JPEG, GIF, or WebP image.' });
+    deleteAvatarFile(req.user.id);
+    const rel = `files/avatars/${req.user.id}/${req.file.filename}`;
+    db.prepare('UPDATE users SET avatar_path = ? WHERE id = ?').run(rel, req.user.id);
+    res.json({ avatar_url: '/api/avatar' });
+  });
+});
+
+app.get('/api/avatar', requireAuth, (req, res) => {
+  const row = db.prepare('SELECT avatar_path FROM users WHERE id = ?').get(req.user.id);
+  if (!row?.avatar_path) return res.status(404).json({ error: 'No avatar' });
+  const fp = path.resolve(DATA_DIR, row.avatar_path);
+  if (!fp.startsWith(path.resolve(DATA_DIR) + path.sep)) return res.status(400).json({ error: 'Bad path' });
+  res.sendFile(fp, (err) => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'File missing' });
+  });
+});
+
+app.delete('/api/avatar', requireAuth, (req, res) => {
+  deleteAvatarFile(req.user.id);
+  db.prepare('UPDATE users SET avatar_path = NULL WHERE id = ?').run(req.user.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/files/:id', requireAuth, (req, res) => {  const att = db.prepare('SELECT * FROM attachments WHERE id = ?').get(req.params.id);
   if (!att) return res.status(404).json({ error: 'Not found' });
   // Staged uploads belong to the uploader alone; claimed ones follow their
   // message's conversation ownership.

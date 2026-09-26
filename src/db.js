@@ -98,6 +98,7 @@ addColumn('users', 'abuse_locked', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'abuse_reason', 'TEXT');
 addColumn('users', 'abuse_locked_at', 'INTEGER');
 addColumn('users', 'weekly_token_limit', 'INTEGER DEFAULT 1000000');
+addColumn('users', 'avatar_path', 'TEXT');
 // User file uploads: rows are staged (message_id = 0, staged = 1) at
 // upload time and claimed by a user message at send time.
 addColumn('attachments', 'user_id', 'INTEGER');

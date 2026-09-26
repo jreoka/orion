@@ -188,6 +188,15 @@
           <h1>Settings</h1>
         </header>
 
+        <div class="card profile-card">
+          <button type="button" id="profile-avatar-btn" class="avatar lg" aria-label="Change profile picture">?</button>
+          <input type="file" id="profile-avatar-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+          <div class="profile-meta">
+            <div class="profile-name" id="profile-name">…</div>
+            <div class="profile-sub"><span id="profile-role"></span> · <button type="button" id="profile-avatar-change" class="link-btn">Change picture</button><span id="profile-avatar-sep" hidden> · </span><button type="button" id="profile-avatar-remove" class="link-btn danger" hidden>Remove</button></div>
+          </div>
+        </div>
+
         <div class="card">
           <h2>Appearance</h2>
           <p class="muted small">Paper by day, ink by night.</p>
@@ -201,7 +210,6 @@
           <div class="settings-tabs" role="tablist">
             <button class="settings-tab active" data-tab="security" role="tab">Security</button>
             <button class="settings-tab" data-tab="sessions" role="tab">Sessions</button>
-            <button class="settings-tab" data-tab="heartbeat" role="tab">Heartbeat</button>
             <button class="settings-tab" data-tab="notifications" role="tab">Notifications</button>
           </div>
 
@@ -219,25 +227,6 @@
               <button class="btn" id="sessions-revoke-others">Sign out other sessions</button>
             </div>
             <div id="sessions-box"><p class="muted">Loading…</p></div>
-          </div>
-
-          <div class="settings-panel" id="set-panel-heartbeat" hidden>
-            <h3 class="set-h">Heartbeat</h3>
-            <p class="muted small">Every 30 minutes the agent wakes up to check whether anything needs your attention. It stays quiet when there's nothing to say.</p>
-            <form id="heartbeat-form">
-              <label class="toggle-row">
-                <span>Enable heartbeat</span>
-                <span class="toggle"><input id="hb-enabled" type="checkbox"><span class="knob"></span></span>
-              </label>
-              <label class="field">
-                <span>Custom instructions (optional)</span>
-                <textarea id="hb-prompt" rows="3" placeholder="e.g. Also remind me about anything on my calendar tomorrow."></textarea>
-              </label>
-              <div class="form-row">
-                <button type="submit" class="btn primary">Save</button>
-                <span id="hb-saved" class="saved-note" hidden>Saved ✓</span>
-              </div>
-            </form>
           </div>
 
           <div class="settings-panel" id="set-panel-notifications" hidden>

@@ -561,8 +561,63 @@ function appendUserMessage(content, attachments) {
 /* ---------- user chip + menu ---------- */
 function renderUserChip() {
   const me = S.me;
-  $('#user-avatar').textContent = (me.username[0] || '?').toUpperCase();
+  const el = $('#user-avatar');
+  if (me.avatar_url) {
+    el.innerHTML = `<img src="${esc(me.avatar_url)}" alt="">`;
+  } else {
+    el.textContent = (me.username[0] || '?').toUpperCase();
+  }
   $('#menu-admin').hidden = me.role !== 'admin';
+}
+
+/* ---------- profile picture ---------- */
+function paintAvatar(el, me) {
+  el.classList.toggle('has-img', !!me.avatar_url);
+  if (me.avatar_url) el.innerHTML = `<img src="${esc(me.avatar_url)}" alt="">`;
+  else el.textContent = (me.username[0] || '?').toUpperCase();
+}
+
+function renderProfileCard() {
+  const me = S.me;
+  paintAvatar($('#profile-avatar-btn'), me);
+  $('#profile-name').textContent = me.username;
+  $('#profile-role').textContent = me.role === 'admin' ? 'Administrator' : 'Member';
+  $('#profile-avatar-remove').hidden = !me.avatar_url;
+  $('#profile-avatar-sep').hidden = !me.avatar_url;
+}
+
+async function refreshMe() {
+  S.me = await api('/api/auth/me');
+  renderUserChip();
+  renderProfileCard();
+}
+
+function wireProfileCard() {
+  const input = $('#profile-avatar-input');
+  const pick = () => input.click();
+  $('#profile-avatar-btn').onclick = pick;
+  $('#profile-avatar-change').onclick = pick;
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    input.value = '';
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('avatar', file);
+    try {
+      const r = await fetch('/api/avatar', { method: 'POST', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Upload failed');
+      await refreshMe();
+      toast('Profile picture updated');
+    } catch (e) { toast(e.message, 'error'); }
+  });
+  $('#profile-avatar-remove').onclick = async () => {
+    try {
+      await api('/api/avatar', { method: 'DELETE' });
+      await refreshMe();
+      toast('Profile picture removed');
+    } catch (e) { toast(e.message, 'error'); }
+  };
 }
 
 function wireUserMenu() {
@@ -590,11 +645,14 @@ function changePasswordModal() {
     <h3>Change password</h3>
     <p class="muted">Choose a new password for <b>${esc(S.me.username)}</b>.</p>
     <form id="pw-form">
+      <label class="field"><span>Current password</span>
+        <input id="pw-current" type="password" autocomplete="current-password" required minlength="1">
+      </label>
       <label class="field"><span>New password</span>
-        <input id="pw-new" type="password" autocomplete="new-password" required minlength="1">
+        <input id="pw-new" type="password" autocomplete="new-password" required minlength="8">
       </label>
       <label class="field"><span>Confirm new password</span>
-        <input id="pw-confirm" type="password" autocomplete="new-password" required minlength="1">
+        <input id="pw-confirm" type="password" autocomplete="new-password" required minlength="8">
       </label>
       <p id="pw-error" class="form-error" hidden></p>
       <div class="modal-actions">
@@ -605,12 +663,13 @@ function changePasswordModal() {
   bd.querySelector('[data-x=cancel]').onclick = closeModal;
   bd.querySelector('#pw-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const cur = bd.querySelector('#pw-current').value;
     const p1 = bd.querySelector('#pw-new').value;
     const p2 = bd.querySelector('#pw-confirm').value;
     const err = bd.querySelector('#pw-error');
     if (p1 !== p2) { err.textContent = 'Passwords don\u2019t match.'; err.hidden = false; return; }
     try {
-      await api('/api/auth/me', { method: 'PATCH', body: { password: p1 } });
+      await api('/api/auth/me', { method: 'PATCH', body: { current_password: cur, password: p1 } });
       closeModal();
       toast('Password changed');
     } catch (ex) { err.textContent = ex.message; err.hidden = false; }
@@ -1270,7 +1329,7 @@ async function passkeyLogin() {
 }
 
 /* ---------- settings ---------- */
-const SETTINGS_TABS = ['security', 'sessions', 'heartbeat', 'notifications'];
+const SETTINGS_TABS = ['security', 'sessions', 'notifications'];
 let _settingsTab = 'security';
 let _twofaStatus = null;
 let _passkeys = null;
@@ -1284,15 +1343,15 @@ async function renderSettings() {
   }
   if (_settingsTab === 'security') renderSecurityTab();
   else if (_settingsTab === 'sessions') renderSessionsTab();
-  else if (_settingsTab === 'heartbeat') renderHeartbeatTab();
   else if (_settingsTab === 'notifications') renderNotificationsTab();
+  renderProfileCard();
 }
 function wireSettings() {
   document.querySelectorAll('.settings-tab').forEach(t => {
     t.onclick = () => { _settingsTab = t.dataset.tab; renderSettings(); };
   });
   wireSessionsTab();
-  wireHeartbeatTab();
+  wireProfileCard();
   $('#reset-everything').onclick = resetEverythingModal;
 }
 
@@ -1601,34 +1660,6 @@ async function renderSessionsTab() {
     }
   } catch (err) {
     box.innerHTML = `<p class="form-error">${esc(err.message)}</p>`;
-  }
-}
-
-/* ----- heartbeat ----- */
-function wireHeartbeatTab() {
-  $('#heartbeat-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    $('#hb-saved').hidden = true;
-    const body = {
-      enabled: $('#hb-enabled').checked,
-      prompt: $('#hb-prompt').value.trim(),
-    };
-    try {
-      await api('/api/heartbeat', { method: 'PUT', body: JSON.stringify(body) });
-      $('#hb-saved').hidden = false;
-      setTimeout(() => { $('#hb-saved').hidden = true; }, 2500);
-    } catch (err) { toast('Save failed: ' + err.message); }
-  });
-}
-async function renderHeartbeatTab() {
-  $('#hb-saved').hidden = true;
-  try {
-    const d = await api('/api/heartbeat');
-    const hb = d.heartbeat || d;
-    $('#hb-enabled').checked = !!hb.enabled;
-    $('#hb-prompt').value = hb.prompt || '';
-  } catch (err) {
-    toast('Couldn’t load heartbeat: ' + err.message);
   }
 }
 
