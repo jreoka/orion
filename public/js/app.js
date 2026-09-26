@@ -1181,11 +1181,15 @@ async function sendMessage() {
       body: { content, attachment_ids: staged.map((p) => p.id) },
     });
   } catch (e) {
-    removeMessage(local);
-    input.value = content; // restore the draft
-    S.pendingUploads = staged; // keep the files staged so they can resend
-    renderAttachTray();
-    updateComposer();
+    // If the bus already reconciled this message, the server did persist
+    // it — don't remove it or resurrect the draft as if it never sent.
+    if (!local._reconciled) {
+      removeMessage(local);
+      input.value = content; // restore the draft
+      S.pendingUploads = staged; // keep the files staged so they can resend
+      renderAttachTray();
+      updateComposer();
+    }
     toast(e.message || 'Send failed', 'error');
     return;
   }
@@ -1226,7 +1230,10 @@ function removeMessage(m) {
 // Swap an optimistic local id for the real row id, or drop the local copy
 // if the bus already delivered the row (dedupes either arrival order).
 function reconcileLocal(local, real) {
-  if (S.messages.some((x) => x.id === real.id)) { removeMessage(local); return; }
+  // NOTE: exclude `local` itself — when the bus wins the race, this local
+  // already carries the real id, and without the exclusion we'd delete the
+  // user's own message from the DOM.
+  if (S.messages.some((x) => x !== local && x.id === real.id)) { removeMessage(local); return; }
   const el = msgElById(local.id);
   local.id = real.id;
   local.content = real.content;
