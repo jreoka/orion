@@ -604,15 +604,6 @@ function wireChat() {
   $('#bn-new').onclick = () => { newConversation(); };
   $('#bn-settings').onclick = () => go('settings');
 
-  // Suggestion chips fill the composer.
-  document.addEventListener('click', (e) => {
-    const chip = e.target.closest('[data-suggest]');
-    if (!chip) return;
-    input.value = chip.dataset.suggest;
-    input.dispatchEvent(new Event('input'));
-    input.focus();
-  });
-
   updateComposer();
 }
 
