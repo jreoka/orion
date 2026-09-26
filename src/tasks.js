@@ -5,7 +5,7 @@
 // double-run.
 import cron from 'node-cron';
 import { CronExpressionParser } from 'cron-parser';
-import { db, getSetting, getOrCreateMainConversation } from './db.js';
+import { db, getSetting, getOrCreateConversation } from './db.js';
 import { httpError } from './auth.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
@@ -81,7 +81,7 @@ export async function fireTask(taskId, { manual = false } = {}) {
   }
   if (!task.enabled && !manual) return { ok: false, reason: 'disabled' };
 
-  const convId = getOrCreateMainConversation(task.user_id);
+  const convId = getOrCreateConversation(task.user_id);
   if (!tryAcquireRun(convId)) {
     console.log(`[orion] task ${taskId} skipped: main chat ${convId} already has an active run`);
     if (task.kind === 'once') retryTaskSoon(taskId);
