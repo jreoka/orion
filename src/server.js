@@ -327,7 +327,9 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
 
 // Stop the current agent run for a conversation. Sets the stop flag and
 // aborts the in-flight LLM fetch; partial text is kept with a
-// "(stopped by user)" note and queued chaining is canceled.
+// "(stopped by user)" note. A user message queued while the run was active
+// still chains a follow-up run — stop halts the in-flight work, not the
+// user's newer intent.
 app.post('/api/conversations/:id/stop', requireAuth, (req, res) => {
   const conv = getConv(req.params.id, req.user.id);
   if (!conv) return res.status(404).json({ error: 'Not found' });

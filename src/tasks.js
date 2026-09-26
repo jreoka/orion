@@ -139,9 +139,13 @@ export function unscheduleTask(taskId) {
   else clearTimeout(j.timer);
 }
 
+const stmtGetTask = db.prepare('SELECT * FROM tasks WHERE id = ?');
+const stmtSetNextRun = db.prepare('UPDATE tasks SET next_run_at = ? WHERE id = ?');
+const stmtDisableTask = db.prepare('UPDATE tasks SET enabled = 0, next_run_at = NULL WHERE id = ?');
+
 export function scheduleTask(taskId) {
   unscheduleTask(taskId);
-  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+  const task = stmtGetTask.get(taskId);
   if (!task || !task.enabled) return;
   if (task.kind === 'cron' && task.cron_expr) {
     if (!cron.validate(task.cron_expr)) return;
@@ -151,14 +155,14 @@ export function scheduleTask(taskId) {
     jobs.set(taskId, { type: 'cron', job });
     try {
       const next = CronExpressionParser.parse(task.cron_expr).next().getTime();
-      db.prepare('UPDATE tasks SET next_run_at = ? WHERE id = ?').run(next, taskId);
+      stmtSetNextRun.run(next, taskId);
     } catch {
       /* next_run_at stays null */
     }
   } else if (task.kind === 'once' && task.run_at) {
     const delay = task.run_at - Date.now();
     if (delay <= 0) {
-      db.prepare('UPDATE tasks SET enabled = 0, next_run_at = NULL WHERE id = ?').run(taskId);
+      stmtDisableTask.run(taskId);
       return;
     }
     const timer = setTimeout(() => {
@@ -166,13 +170,19 @@ export function scheduleTask(taskId) {
     }, delay);
     timer.unref?.();
     jobs.set(taskId, { type: 'timeout', timer });
-    db.prepare('UPDATE tasks SET next_run_at = ? WHERE id = ?').run(task.run_at, taskId);
+    stmtSetNextRun.run(task.run_at, taskId);
   }
 }
 
+// Long-lived statement: initTasks() runs during server.js module evaluation,
+// and a transient prepared Statement created there can be GC'd mid-load,
+// which crashes better-sqlite3 on some Node versions (RemoveEnvironmentCleanupHook
+// with no current Environment). A module-level statement is never collected.
+const stmtEnabledTasks = db.prepare('SELECT id FROM tasks WHERE enabled = 1');
+
 // Restore all enabled tasks on boot.
 export function initTasks() {
-  const rows = db.prepare('SELECT id FROM tasks WHERE enabled = 1').all();
+  const rows = stmtEnabledTasks.all();
   for (const t of rows) {
     try {
       scheduleTask(t.id);
