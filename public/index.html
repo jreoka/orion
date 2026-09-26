@@ -129,7 +129,7 @@
             </svg>
           </div>
           <h1>Begin.</h1>
-          <p class="muted">Your agent has a Linux VM and a browser.<br>Ask it to do things, not just say things.</p>
+          <p class="muted">Your agent has a computer of its own and a browser.<br>Give it something to do.</p>
         </div>
         <div class="composer-wrap">
           <form id="composer" class="composer">
@@ -235,7 +235,6 @@
           <div class="settings-tabs" role="tablist">
             <button class="settings-tab active" data-tab="security" role="tab">Security</button>
             <button class="settings-tab" data-tab="sessions" role="tab">Sessions</button>
-            <button class="settings-tab" data-tab="tasks" role="tab">Tasks</button>
             <button class="settings-tab" data-tab="heartbeat" role="tab">Heartbeat</button>
             <button class="settings-tab" data-tab="notifications" role="tab">Notifications</button>
           </div>
@@ -256,68 +255,13 @@
             <div id="sessions-box"><p class="muted">Loading…</p></div>
           </div>
 
-          <div class="settings-panel" id="set-panel-tasks" hidden>
-            <h3 class="set-h">Scheduled tasks</h3>
-            <p class="muted small">Tasks run your agent automatically on a schedule, each in its own chat.</p>
-            <div id="tasks-box"><p class="muted">Loading…</p></div>
-            <h3 class="set-h">New task</h3>
-            <form id="task-form">
-              <label class="field">
-                <span>Name</span>
-                <input id="task-name" type="text" maxlength="80" placeholder="Morning briefing" required>
-              </label>
-              <div class="field">
-                <span>Schedule</span>
-                <div class="radio-row">
-                  <label><input type="radio" name="task-kind" value="cron" checked> Repeating</label>
-                  <label><input type="radio" name="task-kind" value="once"> One-time</label>
-                </div>
-              </div>
-              <div id="task-cron-wrap">
-                <div class="field">
-                  <span>Preset</span>
-                  <div class="chip-row" id="cron-presets">
-                    <button type="button" class="chip sm" data-cron="0 * * * *">Hourly</button>
-                    <button type="button" class="chip sm" data-cron="0 9 * * *">Daily 9am</button>
-                    <button type="button" class="chip sm" data-cron="0 9 * * 1">Weekly Mon 9am</button>
-                  </div>
-                </div>
-                <label class="field">
-                  <span>Cron expression</span>
-                  <input id="task-cron" type="text" class="mono" value="0 9 * * *" maxlength="64">
-                </label>
-              </div>
-              <div id="task-once-wrap" hidden>
-                <label class="field">
-                  <span>Run at</span>
-                  <input id="task-runat" type="datetime-local">
-                </label>
-              </div>
-              <label class="field">
-                <span>Prompt</span>
-                <textarea id="task-prompt" rows="3" placeholder="What should the agent do when this runs?" required></textarea>
-              </label>
-              <button type="submit" class="btn primary">Create task</button>
-            </form>
-          </div>
-
           <div class="settings-panel" id="set-panel-heartbeat" hidden>
             <h3 class="set-h">Heartbeat</h3>
-            <p class="muted small">Periodically wake the agent to check whether anything needs your attention. It stays quiet when there's nothing to say.</p>
+            <p class="muted small">Every 30 minutes the agent wakes up to check whether anything needs your attention. It stays quiet when there's nothing to say.</p>
             <form id="heartbeat-form">
               <label class="toggle-row">
                 <span>Enable heartbeat</span>
                 <span class="toggle"><input id="hb-enabled" type="checkbox"><span class="knob"></span></span>
-              </label>
-              <label class="field">
-                <span>Check every</span>
-                <select id="hb-interval">
-                  <option value="1">1 hour</option>
-                  <option value="3">3 hours</option>
-                  <option value="6" selected>6 hours</option>
-                  <option value="12">12 hours</option>
-                  <option value="24">24 hours</option>
-                </select>
               </label>
               <label class="field">
                 <span>Custom instructions (optional)</span>

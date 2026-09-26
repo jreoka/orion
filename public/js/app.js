@@ -1239,7 +1239,7 @@ function startRename(c, el) {
 
 
 /* ---------- settings ---------- */
-const SETTINGS_TABS = ['security', 'sessions', 'tasks', 'heartbeat', 'notifications'];
+const SETTINGS_TABS = ['security', 'sessions', 'heartbeat', 'notifications'];
 let _settingsTab = 'security';
 let _twofaStatus = null;
 let _passkeys = null;
@@ -1253,7 +1253,6 @@ async function renderSettings() {
   }
   if (_settingsTab === 'security') renderSecurityTab();
   else if (_settingsTab === 'sessions') renderSessionsTab();
-  else if (_settingsTab === 'tasks') renderTasksTab();
   else if (_settingsTab === 'heartbeat') renderHeartbeatTab();
   else if (_settingsTab === 'notifications') renderNotificationsTab();
 }
@@ -1262,7 +1261,6 @@ function wireSettings() {
     t.onclick = () => { _settingsTab = t.dataset.tab; renderSettings(); };
   });
   wireSessionsTab();
-  wireTasksTab();
   wireHeartbeatTab();
 }
 
@@ -1517,97 +1515,6 @@ async function renderSessionsTab() {
   }
 }
 
-/* ----- tasks ----- */
-function wireTasksTab() {
-  document.querySelectorAll('input[name="task-kind"]').forEach(r => {
-    r.addEventListener('change', () => {
-      const kind = document.querySelector('input[name="task-kind"]:checked').value;
-      $('#task-cron-wrap').hidden = kind !== 'cron';
-      $('#task-once-wrap').hidden = kind !== 'once';
-    });
-  });
-  document.querySelectorAll('#cron-presets .chip').forEach(ch => {
-    ch.onclick = () => {
-      $('#task-cron').value = ch.dataset.cron;
-      document.querySelectorAll('#cron-presets .chip').forEach(c => c.classList.remove('active'));
-      ch.classList.add('active');
-    };
-  });
-  $('#task-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = $('#task-name').value.trim();
-    const prompt = $('#task-prompt').value.trim();
-    if (!name || !prompt) { toast('Name and prompt are required'); return; }
-    const kind = document.querySelector('input[name="task-kind"]:checked').value;
-    const body = { name, prompt, kind };
-    if (kind === 'once') {
-      const at = $('#task-runat').value;
-      if (!at) { toast('Pick a date and time'); return; }
-      body.run_at = new Date(at).toISOString();
-    } else {
-      body.cron_expr = $('#task-cron').value.trim();
-      if (!body.cron_expr) { toast('Enter a cron expression'); return; }
-    }
-    try {
-      await api('/api/tasks', { method: 'POST', body: JSON.stringify(body) });
-      $('#task-name').value = '';
-      $('#task-prompt').value = '';
-      $('#task-runat').value = '';
-      await renderTasksTab();
-      toast('Task created');
-    } catch (err) { toast('Create failed: ' + err.message); }
-  });
-}
-function taskScheduleLabel(t) {
-  if (t.run_at && !t.cron_expr) return 'once · ' + fmtDateTime(t.run_at);
-  if (t.cron_expr) {
-    const presets = { '0 * * * *': 'hourly', '0 9 * * *': 'daily 9am', '0 9 * * 1': 'weekly Mon 9am' };
-    return 'repeats · ' + (presets[t.cron_expr] || t.cron_expr);
-  }
-  return t.run_at ? 'once · ' + fmtDateTime(t.run_at) : '';
-}
-async function renderTasksTab() {
-  const box = $('#tasks-box');
-  box.innerHTML = '<p class="muted">Loading…</p>';
-  try {
-    const d = await api('/api/tasks');
-    const tasks = d.tasks || [];
-    if (!tasks.length) { box.innerHTML = '<p class="muted">No scheduled tasks yet.</p>'; return; }
-    box.innerHTML = '';
-    for (const t of tasks) {
-      const row = document.createElement('div');
-      row.className = 'row-item task-row' + (t.enabled ? '' : ' disabled');
-      row.innerHTML = `
-        <label class="toggle" title="Enable/disable"><input type="checkbox"${t.enabled ? ' checked' : ''}><span class="knob"></span></label>
-        <div class="row-main">
-          <span class="row-title">${esc(t.name)}</span>
-          <span class="row-sub">${esc(taskScheduleLabel(t))}${t.last_run_at ? ' · last ran ' + esc(fmtDateTime(t.last_run_at)) : ''}${t.last_status ? ' · ' + esc(t.last_status) : ''}</span>
-        </div>
-        <button class="btn small run">Run now</button>
-        <button class="btn small danger del">Delete</button>`;
-      row.querySelector('input').onchange = async (e) => {
-        try {
-          await api(`/api/tasks/${t.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: e.target.checked }) });
-          t.enabled = e.target.checked;
-          row.classList.toggle('disabled', !t.enabled);
-        } catch (err) { toast('Update failed: ' + err.message); e.target.checked = t.enabled; }
-      };
-      row.querySelector('.run').onclick = async () => {
-        try { await api(`/api/tasks/${t.id}/run`, { method: 'POST' }); toast('Task run started'); renderTasksTab(); }
-        catch (err) { toast('Run failed: ' + err.message); }
-      };
-      row.querySelector('.del').onclick = async () => {
-        if (!await confirmDialog({ title: 'Delete task', message: `Delete “${t.name}”?`, confirmLabel: 'Delete', danger: true })) return;
-        try { await api(`/api/tasks/${t.id}`, { method: 'DELETE' }); renderTasksTab(); }
-        catch (err) { toast('Delete failed: ' + err.message); }
-      };
-      box.appendChild(row);
-    }
-  } catch (err) {
-    box.innerHTML = `<p class="form-error">${esc(err.message)}</p>`;
-  }
-}
-
 /* ----- heartbeat ----- */
 function wireHeartbeatTab() {
   $('#heartbeat-form').addEventListener('submit', async (e) => {
@@ -1615,7 +1522,6 @@ function wireHeartbeatTab() {
     $('#hb-saved').hidden = true;
     const body = {
       enabled: $('#hb-enabled').checked,
-      interval_hours: parseInt($('#hb-interval').value, 10),
       prompt: $('#hb-prompt').value.trim(),
     };
     try {
@@ -1631,7 +1537,6 @@ async function renderHeartbeatTab() {
     const d = await api('/api/heartbeat');
     const hb = d.heartbeat || d;
     $('#hb-enabled').checked = !!hb.enabled;
-    if (hb.interval_hours) $('#hb-interval').value = String(hb.interval_hours);
     $('#hb-prompt').value = hb.prompt || '';
   } catch (err) {
     toast('Couldn’t load heartbeat: ' + err.message);

@@ -1,5 +1,5 @@
 // Orion heartbeat: a periodic proactive check-in per user. When enabled,
-// every interval_hours we run the agent against the user's dedicated
+// every 30 minutes we run the agent against the user's dedicated
 // heartbeat conversation with a quiet-instruction: if nothing needs the
 // user's attention the model replies HEARTBEAT_QUIET and we throw the whole
 // check away (no notification noise, no history clutter).
@@ -11,6 +11,7 @@ import { registerController, unregisterController } from './runs.js';
 import { notifyConversation } from './push.js';
 
 const CHECK_MS = 5 * 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000; // fixed: no user option
 const DEFAULT_PROMPT =
   'Check in: review the recent conversation and tell me anything that needs my attention.';
 const HEARTBEAT_SYSTEM_EXTRA =
@@ -28,27 +29,22 @@ export function getHeartbeatSettings(userId) {
   const row = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId);
   return {
     enabled: !!row?.heartbeat_enabled,
-    interval_hours: row?.heartbeat_interval_hours ?? 6,
+    interval_minutes: 30,
     prompt: row?.heartbeat_prompt ?? '',
   };
 }
 
 export function putHeartbeatSettings(userId, body) {
-  const { enabled, interval_hours, prompt } = body || {};
+  const { enabled, prompt } = body || {};
   if (typeof enabled !== 'boolean') throw httpError(400, 'enabled must be a boolean');
-  const h = Number(interval_hours);
-  if (!Number.isFinite(h) || h < 1 || h > 168) {
-    throw httpError(400, 'interval_hours must be 1–168');
-  }
   const p = String(prompt ?? '').slice(0, 2000);
   db.prepare(
-    `INSERT INTO user_settings (user_id, heartbeat_enabled, heartbeat_interval_hours, heartbeat_prompt)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO user_settings (user_id, heartbeat_enabled, heartbeat_prompt)
+     VALUES (?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET
        heartbeat_enabled = excluded.heartbeat_enabled,
-       heartbeat_interval_hours = excluded.heartbeat_interval_hours,
        heartbeat_prompt = excluded.heartbeat_prompt`
-  ).run(userId, enabled ? 1 : 0, Math.floor(h), p);
+  ).run(userId, enabled ? 1 : 0, p);
   return getHeartbeatSettings(userId);
 }
 
@@ -133,13 +129,10 @@ export async function runHeartbeatFor(userId) {
 async function checkHeartbeats() {
   const now = Date.now();
   const rows = db
-    .prepare(
-      'SELECT user_id, heartbeat_interval_hours, last_heartbeat_at FROM user_settings WHERE heartbeat_enabled = 1'
-    )
+    .prepare('SELECT user_id, last_heartbeat_at FROM user_settings WHERE heartbeat_enabled = 1')
     .all();
   for (const r of rows) {
-    const intervalMs = (r.heartbeat_interval_hours || 6) * 3600 * 1000;
-    if (r.last_heartbeat_at && now - r.last_heartbeat_at < intervalMs) continue;
+    if (r.last_heartbeat_at && now - r.last_heartbeat_at < HEARTBEAT_INTERVAL_MS) continue;
     try {
       await runHeartbeatFor(r.user_id);
     } catch (e) {

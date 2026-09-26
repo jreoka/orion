@@ -21,6 +21,7 @@ import {
   sandboxListFiles,
   sandboxPullFile,
 } from './sandbox.js';
+import { validateTaskInput, scheduleTask, unscheduleTask } from './tasks.js';
 
 const MAX_ITERATIONS = 12;
 const RUN_CAP_MS = 12 * 60 * 1000; // overall run budget, shared with subagents
@@ -35,6 +36,7 @@ Your tools:
 - browser_shot: take a real screenshot of a URL with headless Chromium and show it to the user as an image attachment. Use it when the user wants to SEE a page, or to verify how a page you built looks.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
 - send_update: speak to the user mid-run. Use it for meaningful progress updates during long multi-step work — a sentence or two, not a narration of every tool call.
+- schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in its own chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
 
 Guidelines:
 - Be concise and direct. Explain what you're doing briefly, then do it.
@@ -129,6 +131,77 @@ export const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'schedule_task',
+      description:
+        'Schedule the agent to do something later or on a repeating schedule. Use this whenever the user asks for future or recurring work (reminders, recurring checks, scheduled briefings). Do not wait or poll yourself — the task fires automatically in its own chat and notifies the user when it produces output.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Short name, 1–80 characters, e.g. "Morning briefing"' },
+          kind: {
+            type: 'string',
+            enum: ['once', 'cron'],
+            description: "'once' runs a single time at run_at; 'cron' repeats on cron_expr",
+          },
+          run_at: {
+            type: 'string',
+            description:
+              "For kind 'once': when to run — an ISO 8601 date/time (include the user's UTC offset when you know it) or a millisecond timestamp. Must be in the future.",
+          },
+          cron_expr: {
+            type: 'string',
+            description: "For kind 'cron': a 5-field cron expression, e.g. '0 9 * * *' for every day at 9am",
+          },
+          prompt: {
+            type: 'string',
+            description:
+              'What the agent should do when the task fires (1–4000 characters). Write it self-contained — it runs without this conversation as context.',
+          },
+        },
+        required: ['name', 'kind', 'prompt'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_tasks',
+      description: "List the user's scheduled tasks: id, name, schedule, and whether each is active.",
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_task',
+      description: 'Pause/resume or edit a scheduled task.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'number', description: 'Task id from list_tasks' },
+          enabled: { type: 'boolean', description: 'false pauses the task, true resumes it' },
+          name: { type: 'string', description: 'New name (optional)' },
+          prompt: { type: 'string', description: 'New instructions for when it fires (optional)' },
+        },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_task',
+      description: 'Delete a scheduled task permanently.',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'number', description: 'Task id from list_tasks' } },
+        required: ['id'],
+      },
+    },
+  },
 ];
 
 const DELEGATE_TOOL = {
@@ -179,6 +252,10 @@ function summarizeTool(name, args) {
     case 'browser_shot': return s(args.url);
     case 'delegate': return s(args.task, 80);
     case 'send_update': return s(args.text, 80);
+    case 'schedule_task': return s(args.name, 80);
+    case 'list_tasks': return 'list tasks';
+    case 'update_task':
+    case 'delete_task': return 'task ' + s(args.id, 20);
     default: return name;
   }
 }
@@ -190,6 +267,45 @@ function validUrl(u) {
   } catch {
     return false;
   }
+}
+
+// Create a scheduled task on the user's behalf (agent tool). Throws a plain
+// Error with a user-readable message on invalid input.
+function createAgentTask(userId, args) {
+  const name = String(args.name ?? '').trim();
+  const kind = args.kind;
+  const prompt = String(args.prompt ?? '');
+  let run_at = null;
+  let cron_expr = null;
+  if (kind === 'once') {
+    const raw = args.run_at;
+    const ms =
+      typeof raw === 'number'
+        ? raw
+        : /^\d+$/.test(String(raw ?? ''))
+          ? Number(raw)
+          : Date.parse(String(raw ?? ''));
+    if (!Number.isFinite(ms))
+      throw new Error('schedule_task: run_at must be a future date/time (ISO 8601 or ms timestamp)');
+    run_at = ms;
+  } else if (kind === 'cron') {
+    cron_expr = String(args.cron_expr || '').trim();
+  }
+  const input = { name, kind, cron_expr, run_at, prompt };
+  try {
+    validateTaskInput(input);
+  } catch (e) {
+    throw new Error('schedule_task: ' + (e.message || e));
+  }
+  const now = Date.now();
+  const info = db
+    .prepare(
+      'INSERT INTO tasks (user_id, name, kind, cron_expr, run_at, prompt, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)'
+    )
+    .run(userId, name, kind, cron_expr, run_at, prompt, now, now);
+  const id = Number(info.lastInsertRowid);
+  scheduleTask(id);
+  return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
 }
 
 // Executes one tool call. Returns { text, image? } — text goes back to the
@@ -249,6 +365,57 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
         text: `Screenshot captured and shown to the user (attachment ${info.lastInsertRowid}).`,
         image: { url, filename },
       };
+    }
+    case 'schedule_task': {
+      const t = createAgentTask(userId, args);
+      const when =
+        t.kind === 'cron' ? 'repeats on cron ' + t.cron_expr : 'runs once at ' + new Date(t.run_at).toISOString();
+      return {
+        text: `Scheduled task #${t.id} "${t.name}" — ${when}. It fires automatically in its own chat and notifies the user.`,
+      };
+    }
+    case 'list_tasks': {
+      const rows = db
+        .prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC')
+        .all(userId);
+      if (!rows.length) return { text: 'No scheduled tasks.' };
+      const lines = rows.map((t) => {
+        const when = t.kind === 'cron' ? 'cron ' + t.cron_expr : 'once ' + new Date(t.run_at).toISOString();
+        return `#${t.id} "${t.name}" — ${when}${t.enabled ? '' : ' (paused)'}`;
+      });
+      return { text: lines.join('\n') };
+    }
+    case 'update_task': {
+      const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(args.id, userId);
+      if (!task) throw new Error(`update_task: no task #${args.id}`);
+      const next = {
+        name: args.name !== undefined ? String(args.name) : task.name,
+        kind: task.kind,
+        cron_expr: task.cron_expr,
+        run_at: task.run_at,
+        prompt: args.prompt !== undefined ? String(args.prompt) : task.prompt,
+        enabled: args.enabled !== undefined ? (args.enabled ? 1 : 0) : task.enabled,
+      };
+      try {
+        validateTaskInput(next);
+      } catch (e) {
+        throw new Error('update_task: ' + (e.message || e));
+      }
+      db.prepare('UPDATE tasks SET name = ?, prompt = ?, enabled = ?, updated_at = ? WHERE id = ?').run(
+        String(next.name).trim(),
+        String(next.prompt),
+        next.enabled,
+        Date.now(),
+        task.id
+      );
+      scheduleTask(task.id);
+      return { text: `Task #${task.id} "${next.name}" updated${next.enabled ? '' : ' (paused)'}.` };
+    }
+    case 'delete_task': {
+      const info = db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(args.id, userId);
+      if (!info.changes) throw new Error(`delete_task: no task #${args.id}`);
+      unscheduleTask(Number(args.id));
+      return { text: `Deleted task #${args.id}.` };
     }
     case 'send_update': {
       const text = String(args.text ?? '').trim();
