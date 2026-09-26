@@ -22,6 +22,20 @@ export function hashPassword(password) {
   return bcrypt.hashSync(password, 10);
 }
 
+// bcrypt silently truncates at 72 bytes — cap the byte length so a
+// "longer" password isn't weaker than the user believes. Existing hashes
+// keep working: verification truncates the same way.
+export function checkPasswordRules(password) {
+  const s = String(password ?? '');
+  if (s.length < 8) {
+    throw httpError(400, 'Password must be at least 8 characters');
+  }
+  if (Buffer.byteLength(s, 'utf8') > 72) {
+    throw httpError(400, 'Password must be at most 72 bytes (fewer characters if you use non-ASCII characters)');
+  }
+  return s;
+}
+
 function publicUser(row) {
   return { id: row.id, username: row.username, role: row.role };
 }
@@ -30,15 +44,13 @@ export function signup(username, password) {
   if (!USERNAME_RE.test(username || '')) {
     throw httpError(400, 'Username must be 3–24 characters: letters, numbers, _ or -');
   }
-  if (!password || password.length < 8) {
-    throw httpError(400, 'Password must be at least 8 characters');
-  }
+  const pw = checkPasswordRules(password);
   const count = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
   const role = count === 0 ? 'admin' : 'user'; // first user is the admin
   try {
     const info = db
       .prepare('INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)')
-      .run(username, hashPassword(password), role, Date.now());
+      .run(username, hashPassword(pw), role, Date.now());
     return { id: Number(info.lastInsertRowid), username, role };
   } catch (e) {
     if (String(e.message).includes('UNIQUE constraint failed')) {
@@ -124,7 +136,10 @@ export function setSessionCookie(res, token) {
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     secure: SECURE_COOKIES,
-    sameSite: 'lax',
+    // Strict: the session cookie is only ever needed by our own pages.
+    // (The SPA is static, so a cookieless first paint after an external
+    // link is harmless — the first same-origin API call re-authenticates.)
+    sameSite: 'strict',
     maxAge: SESSION_TTL_MS,
     path: '/',
   });
@@ -132,7 +147,7 @@ export function setSessionCookie(res, token) {
 
 export function clearSessionCookie(res) {
   // Clearing must mirror the cookie's flags or the browser won't overwrite it.
-  res.clearCookie(COOKIE_NAME, { path: '/', secure: SECURE_COOKIES, sameSite: 'lax' });
+  res.clearCookie(COOKIE_NAME, { path: '/', secure: SECURE_COOKIES, sameSite: 'strict' });
 }
 
 // Session telemetry: refresh last_seen_at/ip/user_agent at most every 5 min

@@ -150,15 +150,18 @@ try {
           abuse_locked INTEGER NOT NULL DEFAULT 0,
           abuse_reason TEXT,
           abuse_locked_at INTEGER,
-          weekly_token_limit INTEGER DEFAULT 1000000
+          weekly_token_limit INTEGER DEFAULT 1000000,
+          avatar_path TEXT
         );
         INSERT INTO users_limit_fix
           (id, username, password_hash, role, disabled, created_at,
            totp_secret, totp_enabled, totp_pending_secret,
-           abuse_locked, abuse_reason, abuse_locked_at, weekly_token_limit)
+           abuse_locked, abuse_reason, abuse_locked_at, weekly_token_limit,
+           avatar_path)
           SELECT id, username, password_hash, role, disabled, created_at,
            totp_secret, totp_enabled, totp_pending_secret,
-           abuse_locked, abuse_reason, abuse_locked_at, weekly_token_limit
+           abuse_locked, abuse_reason, abuse_locked_at, weekly_token_limit,
+           avatar_path
           FROM users;
         DROP TABLE users;
         ALTER TABLE users_limit_fix RENAME TO users;

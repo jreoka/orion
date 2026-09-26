@@ -18,6 +18,7 @@
 import { db, getSetting } from './db.js';
 import { runAgentContinuation } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
+import { sandboxKillExec } from './sandbox.js';
 import { notifyConversation } from './push.js';
 
 export const MAX_CHAINED_RUNS = 10;
@@ -26,15 +27,41 @@ export const MAX_CHAINED_RUNS = 10;
 // Aborted by abortRun() (the stop endpoint).
 const controllers = new Map();
 
-/** Abort the in-flight LLM fetch of the current run, if any. */
+// conversationId -> { userId, execId } of the currently running `exec`
+// tool call. The LLM abort alone wouldn't stop a long command, so Stop
+// also kills the in-container process via its ORION_EXEC_ID marker.
+const activeExecs = new Map();
+
+/** Record the start of one sandbox exec inside a conversation's run. */
+export function trackExecStart(conversationId, userId, execId) {
+  activeExecs.set(Number(conversationId), { userId: Number(userId), execId });
+}
+
+/** Record the end of a sandbox exec; only clears if it matches. */
+export function trackExecEnd(conversationId, execId) {
+  const id = Number(conversationId);
+  if (activeExecs.get(id)?.execId === execId) activeExecs.delete(id);
+}
+
+/**
+ * Abort the in-flight work of the current run, if any: the LLM fetch via
+ * its AbortController, and any running sandbox exec via its process
+ * marker. Best-effort — sandboxKillExec never throws.
+ */
 export function abortRun(conversationId) {
-  const c = controllers.get(Number(conversationId));
+  const id = Number(conversationId);
+  const c = controllers.get(id);
   if (c) {
     try {
       c.abort();
     } catch {
       /* ignore */
     }
+  }
+  const a = activeExecs.get(id);
+  if (a) {
+    activeExecs.delete(id);
+    sandboxKillExec(a.userId, a.execId); // fire-and-forget; never rejects
   }
 }
 
@@ -96,6 +123,8 @@ export async function runConversation(
       settings: globalSettings(),
       shouldAbort: () => isStopRequested(id),
       signal: controller.signal,
+      onExecStart: (execId) => trackExecStart(id, userId, execId),
+      onExecEnd: (execId) => trackExecEnd(id, execId),
     });
     if (r?.status) runStatus = r.status;
   } catch (e) {
@@ -104,6 +133,7 @@ export async function runConversation(
     console.error(`[orion] run for conversation ${id} threw:`, e?.message || e);
   } finally {
     controllers.delete(id);
+    activeExecs.delete(id); // belt-and-braces: no stale exec after a run
   }
 
   const wasStopped = isStopRequested(id);
@@ -124,17 +154,20 @@ export async function runConversation(
 
   // Outermost run of this trigger finished: ping the user if they aren't
   // watching this conversation live. Chained runs notify only once, here.
+  // Skip when the conversation was deleted mid-run (nothing to deep-link).
   if (chainDepth === 0) {
     try {
       const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(id);
-      const last = db
-        .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1")
-        .get(id);
-      const snippet = String(last?.content || '').replace(/\s+/g, ' ').trim().slice(0, 140);
-      await notifyConversation(userId, id, {
-        title: 'Orion',
-        body: `${conv?.title || 'Chat'}${runStatus !== 'done' ? ` (${runStatus})` : ''}: ${snippet || 'finished'}`,
-      });
+      if (conv) {
+        const last = db
+          .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1")
+          .get(id);
+        const snippet = String(last?.content || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+        await notifyConversation(userId, id, {
+          title: 'Orion',
+          body: `${conv.title || 'Chat'}${runStatus !== 'done' ? ` (${runStatus})` : ''}: ${snippet || 'finished'}`,
+        });
+      }
     } catch (e) {
       console.warn('[orion] run-end push failed:', e?.message || e);
     }

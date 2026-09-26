@@ -28,7 +28,8 @@ async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    // Proves to the server this came from our own pages (CSRF check).
+    headers: { 'X-Requested-With': 'XMLHttpRequest', ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined
   });
   // A 401 only means "the session died" when the client believed it had one.
@@ -58,7 +59,7 @@ const S = {
   toolRows: new Map(), // message id -> [{name, el, open}]
   adminSettings: null,
   adminUsers: [],
-  pendingUploads: [],  // staged file uploads waiting to be sent [{id, filename, mime, size, url, uploading}]
+  pendingByConv: {},   // conv id (or 'none') -> staged file uploads waiting to be sent [{id, filename, mime, size, url, uploading}]
   jumpUnread: 0        // new messages arrived while the user was scrolled up
 };
 
@@ -414,16 +415,19 @@ async function loadOlder() {
   const box = $('#messages');
   // trimRenderedTop() drops DOM nodes for messages that are still loaded in
   // S.messages. Re-attach those first — otherwise scrolling up dead-ends on
-  // messages the client already has but can't see.
+  // messages the client already has but can't see. Key by the raw dataset
+  // string: optimistic local bubbles use ids like 'local-<ts>', which
+  // Number() turns into NaN and would resurrect as duplicates.
   const inDom = new Set();
-  for (const n of box.querySelectorAll(':scope > [data-mid]')) inDom.add(Number(n.dataset.mid));
-  const missing = S.messages.filter((m) => !inDom.has(m.id));
+  for (const n of box.querySelectorAll(':scope > [data-mid]')) inDom.add(n.dataset.mid);
+  const missing = S.messages.filter((m) => !inDom.has(String(m.id)));
   if (missing.length) {
     const prevHeight = box.scrollHeight;
     const prevTop = box.scrollTop;
     const frag = document.createDocumentFragment();
     for (const m of missing) frag.appendChild(messageEl(m)); // S.messages order: oldest first
     box.insertBefore(frag, ensureOlderSpinner().nextSibling);
+    applyCollapseGroups(); // re-attached turns belong under existing "earlier steps" toggles
     box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
     return;
   }
@@ -440,6 +444,7 @@ async function loadOlder() {
     const frag = document.createDocumentFragment();
     for (const m of batch) frag.appendChild(messageEl(m));
     box.insertBefore(frag, ensureOlderSpinner().nextSibling);
+    applyCollapseGroups(); // paged-up turns stay tucked under "earlier steps" toggles
     box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
   } catch {
     /* a failed page just means scrolling up tries again later */
@@ -453,10 +458,13 @@ async function loadOlder() {
 // Only when the user isn't reading the top; scroll position is preserved.
 function trimRenderedTop() {
   const box = $('#messages');
-  if (box.scrollTop < 200) return;
   const nodes = box.querySelectorAll(':scope > [data-mid]');
   const over = nodes.length - RENDER_CAP;
   if (over <= 0) return;
+  // Don't yank the user's scroll position while they're reading history —
+  // but if the DOM is far over cap (a long stream arriving while they're
+  // up top), trim anyway so it can't grow unbounded.
+  if (box.scrollTop < 200 && over <= 100) return;
   const prevHeight = box.scrollHeight;
   const prevTop = box.scrollTop;
   for (let i = 0; i < over && i < nodes.length; i++) nodes[i].remove();
@@ -521,11 +529,22 @@ function fmtBytes(n) {
   return (n / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+// Staged uploads are per conversation — files staged in chat A must never
+// leak into a message sent from chat B. Everything below goes through
+// these helpers rather than touching the map directly.
+function pendingUploads() {
+  const key = S.activeId || 'none';
+  return (S.pendingByConv[key] ||= []);
+}
+function setPendingUploads(arr) {
+  S.pendingByConv[S.activeId || 'none'] = arr;
+}
+
 function renderAttachTray() {
   const tray = $('#attach-tray');
-  tray.hidden = S.pendingUploads.length === 0;
+  tray.hidden = pendingUploads().length === 0;
   tray.innerHTML = '';
-  for (const p of S.pendingUploads) {
+  for (const p of pendingUploads()) {
     const chip = document.createElement('div');
     chip.className = 'attach-chip' + (p.uploading ? ' uploading' : '');
     const thumb = p.uploading
@@ -535,7 +554,7 @@ function renderAttachTray() {
         : '<span class="attach-file-ico">📎</span>';
     chip.innerHTML = `${thumb}<span class="attach-name">${esc(p.filename)}</span><span class="attach-size">${fmtBytes(p.size)}</span><button type="button" class="attach-x" aria-label="Remove attachment">×</button>`;
     chip.querySelector('.attach-x').addEventListener('click', () => {
-      S.pendingUploads = S.pendingUploads.filter((x) => x !== p);
+      setPendingUploads(pendingUploads().filter((x) => x !== p));
       renderAttachTray();
       updateComposer();
     });
@@ -545,9 +564,9 @@ function renderAttachTray() {
 
 async function handleFiles(files) {
   for (const file of files) {
-    if (S.pendingUploads.length >= 10) { toast('At most 10 files per message.', 'error'); break; }
+    if (pendingUploads().length >= 10) { toast('At most 10 files per message.', 'error'); break; }
     const p = { id: null, filename: file.name, size: file.size, mime: file.type, url: '', uploading: true };
-    S.pendingUploads.push(p);
+    pendingUploads().push(p);
     renderAttachTray();
     updateComposer();
     const fd = new FormData();
@@ -558,7 +577,7 @@ async function handleFiles(files) {
       if (!r.ok) throw new Error(d.error || 'Upload failed');
       Object.assign(p, { id: d.id, filename: d.filename, mime: d.mime, size: d.size, url: d.url, uploading: false });
     } catch (e) {
-      S.pendingUploads = S.pendingUploads.filter((x) => x !== p);
+      setPendingUploads(pendingUploads().filter((x) => x !== p));
       toast(`Couldn't upload ${file.name}: ${e.message}`, 'error');
     }
     renderAttachTray();
@@ -843,8 +862,9 @@ function openMsgMenu(msgEl, x, y) {
   }, 0);
 }
 
+let localMsgSeq = 0; // disambiguates optimistic ids minted within the same millisecond
 function appendUserMessage(content, attachments) {
-  const m = { id: 'local-' + Date.now(), role: 'user', content, attachments: attachments || [] };
+  const m = { id: `local-${Date.now()}-${localMsgSeq++}`, role: 'user', content, attachments: attachments || [] };
   S.messages.push(m);
   $('#messages').appendChild(messageEl(m));
   trimRenderedTop();
@@ -1116,10 +1136,17 @@ function deleteChatModal(conv) {
   bd.querySelector('[data-x=cancel]').onclick = closeModal;
   bd.querySelector('#del-confirm').onclick = async () => {
     try {
+      // A chat with a running agent must be stopped first — otherwise the
+      // run keeps burning tokens against a conversation that's being deleted.
+      if (S.runByConv[conv.id] || (conv.id === S.activeId && S.runActive)) {
+        try { await api(`/api/conversations/${conv.id}/stop`, { method: 'POST' }); }
+        catch { /* best-effort: the delete proceeds regardless */ }
+      }
       await api(`/api/conversations/${conv.id}`, { method: 'DELETE' });
       closeModal();
       delete S.runByConv[conv.id];
       delete S.lastSeenAt[conv.id];
+      delete S.pendingByConv[conv.id];
       toast('Chat deleted');
       await loadConversationsQuiet();
       if (conv.id === S.activeId) {
@@ -1133,6 +1160,7 @@ function deleteChatModal(conv) {
           S.activeId = null;
           setMessages({ messages: [], hasMoreOlder: false });
           renderMessages();
+          renderAttachTray();
           updateComposer();
         }
       }
@@ -1158,6 +1186,13 @@ async function switchConversation(id) {
     renderSidebar();
     renderMessages();
     openEventStream(id);
+    // Clear the composer before restoring this chat's draft — otherwise a
+    // chat with no draft inherits the previous chat's text. Also re-render
+    // the attach tray: staged uploads are per conversation.
+    const composerInput = $('#composer-input');
+    composerInput.value = '';
+    composerInput.style.height = 'auto';
+    renderAttachTray();
     restoreDraft();
     updateComposer();
   } catch (ex) {
@@ -1209,7 +1244,14 @@ function wireSidebarOnce() {
     }
   } catch {}
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && S.me) loadConversationsQuiet();
+    if (document.hidden || !S.me) return;
+    loadConversationsQuiet();
+    // A tab backgrounded long enough can have its SSE stream die silently
+    // (no error event, no heartbeat): re-establish it and restore the
+    // Stop button / run state from the server.
+    if (S.activeId && (!S.evt || S.evt.readyState === EventSource.CLOSED)) {
+      refreshAfterReconnect(S.activeId);
+    }
   });
 }
 
@@ -1220,9 +1262,9 @@ async function renderChat() {
   if (!chatWired) { wireChat(); chatWired = true; }
   wireUserMenuOnce();
   wireSidebarOnce();
-  // Open the most recent chat. If none exists, create one quietly so the
-  // page always lands in a regular chat tab — a chat is created only when
-  // none exist, so refreshing never duplicates.
+  // Open the most recent chat. If none exists, land on the empty state —
+  // the chat is created lazily on first send, so merely loading the page
+  // never mints a database row.
   if (!S.activeId) {
     const box = $('#messages');
     box.innerHTML = '<div class="skel" style="max-width:60%;"></div><div class="skel" style="max-width:80%;margin-left:auto"></div>';
@@ -1234,8 +1276,7 @@ async function renderChat() {
         S.activeId = list[0].id;
         setMessages(data);
       } else {
-        const conv = await api('/api/conversations', { method: 'POST', body: { title: 'New chat' } });
-        S.activeId = conv.id;
+        S.activeId = null;
         setMessages({ messages: [], hasMoreOlder: false });
       }
     } catch {
@@ -1311,8 +1352,8 @@ function restoreDraft() {
 function updateComposer() {
   const input = $('#composer-input');
   const hasText = input.value.trim().length > 0;
-  const uploading = S.pendingUploads.some((p) => p.uploading);
-  const hasFiles = S.pendingUploads.some((p) => !p.uploading && p.id != null);
+  const uploading = pendingUploads().some((p) => p.uploading);
+  const hasFiles = pendingUploads().some((p) => !p.uploading && p.id != null);
   // Sending mid-run is allowed — the message is queued server-side.
   // Keep the send button visible/enabled based on text or staged files even
   // while a run is active; the stop button appears alongside it.
@@ -1324,16 +1365,26 @@ function updateComposer() {
 async function sendMessage() {
   const input = $('#composer-input');
   const content = input.value.trim();
-  const staged = S.pendingUploads.filter((p) => !p.uploading && p.id != null);
-  if (S.pendingUploads.some((p) => p.uploading)) return; // wait for uploads
+  // Staged files live on the active conversation's list — capture both the
+  // list key and the staged files before any await, so the send-time chat
+  // creation (which changes S.activeId) can't clear or claim the wrong list.
+  const stagedKey = S.activeId || 'none';
+  const uploadList = pendingUploads();
+  const staged = uploadList.filter((p) => !p.uploading && p.id != null);
+  if (uploadList.some((p) => p.uploading)) return; // wait for uploads
   if (!content && !staged.length) return;
 
+  // Capture the target chat before any await. If the user switches chats
+  // mid-flight, bail out rather than posting into the wrong chat.
+  let convId = S.activeId;
   // Ensure a chat exists before posting into it: the first message
   // creates it (nothing is auto-created on page load).
-  if (!S.activeId) {
+  if (!convId) {
     try {
       const conv = await api('/api/conversations', { method: 'POST', body: {} });
       const data = await api(`/api/conversations/${conv.id}`);
+      if (S.activeId && S.activeId !== conv.id) { toast('Switched chats — message not sent', 'error'); return; }
+      convId = conv.id;
       S.activeId = conv.id;
       setMessages(data);
       renderMessages();
@@ -1341,12 +1392,13 @@ async function sendMessage() {
       await loadConversationsQuiet();
     } catch (e) { toast(e.message, 'error'); return; }
   }
-  const convId = S.activeId;
+  if (S.activeId !== convId) { toast('Switched chats — message not sent', 'error'); return; }
 
   input.value = '';
   input.style.height = 'auto';
   if (S.clearComposerDraft) S.clearComposerDraft();
-  S.pendingUploads = [];
+  try { sessionStorage.removeItem('orion-composer-draft-none'); } catch {} // drafts typed before any chat existed
+  S.pendingByConv[stagedKey] = [];
   renderAttachTray();
   updateComposer();
 
@@ -1367,7 +1419,7 @@ async function sendMessage() {
     if (!local._reconciled) {
       removeMessage(local);
       input.value = content; // restore the draft
-      S.pendingUploads = staged; // keep the files staged so they can resend
+      S.pendingByConv[stagedKey] = staged; // keep the files staged so they can resend
       renderAttachTray();
       updateComposer();
     }
@@ -1529,7 +1581,7 @@ async function refreshAfterReconnect(convId) {
 // to its saved state and keep the local message copy in sync.
 function onVaultEvent(d) {
   if (!d || !d.request_id) return;
-  const safeId = String(d.request_id).replace(/["\\]/g, '');
+  const safeId = CSS.escape(String(d.request_id));
   const wrapEl = document.querySelector(`[data-vault-request="${safeId}"]`);
   if (wrapEl) {
     const body = wrapEl.querySelector('.vault-body');
@@ -2177,7 +2229,7 @@ async function resetEverythingModal() {
   try { need2fa = !!(await api('/api/auth/2fa/status')).enabled; } catch {}
   const bd = openModal(`
     <h3>Reset chat &amp; sandbox?</h3>
-    <p class="muted">This wipes <b>all messages</b> in your chat and <b>everything</b> in the agent's sandbox — files, installed tools, the works. The sandbox starts over fresh. This can't be undone.</p>
+    <p class="muted">This erases <b>all chats</b> — every message in every conversation — and <b>everything</b> in the agent's sandbox — files, installed tools, the agent's memory (SOUL.md / MEMORY.md), the works. The sandbox starts over fresh. This can't be undone.</p>
     <form id="reset-form">
       <label class="field"><span>Your password</span>
         <input id="reset-password" type="password" autocomplete="current-password" required>
@@ -2200,12 +2252,15 @@ async function resetEverythingModal() {
     btn.disabled = true;
     btn.textContent = 'Resetting…';
     try {
-      await api('/api/reset', { method: 'POST', body: {
+      const out = await api('/api/reset', { method: 'POST', body: {
         password: bd.querySelector('#reset-password').value,
         totp_code: need2fa ? bd.querySelector('#reset-totp').value : undefined
       }});
       closeModal();
       clearChatState();
+      // The server wiped every chat and made a fresh one — open it.
+      await loadConversationsQuiet();
+      if (out && out.conversation_id) await switchConversation(out.conversation_id);
       toast('Chat and sandbox reset');
     } catch (ex) {
       err.textContent = ex.message || 'Reset failed.';

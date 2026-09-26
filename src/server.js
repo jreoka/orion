@@ -19,6 +19,7 @@ import {
   setSessionCookie,
   clearSessionCookie,
   hashPassword,
+  checkPasswordRules,
   verifyPassword,
   listSessions,
   revokeSession,
@@ -53,7 +54,7 @@ import {
   pruneExpiredRequests,
 } from './vault.js';
 import { runConversation, startRunIfIdle, abortRun } from './runs.js';
-import { isRunLocked, requestStop } from './runlock.js';
+import { isRunLocked, requestStop, activeRunIds } from './runlock.js';
 import {
   validateTaskInput,
   publicTask,
@@ -83,6 +84,7 @@ import {
   checkLimit,
   recordFailure,
   recordSuccess,
+  hitRateLimit,
   limitErrorMessage,
 } from './ratelimit.js';
 
@@ -92,8 +94,44 @@ const app = express();
 // Behind Caddy (the only ingress — the app container publishes no ports),
 // so X-Forwarded-For is trustworthy and req.ip is the real client IP.
 app.set('trust proxy', true);
+app.disable('x-powered-by');
 
-app.use(express.json({ limit: '10mb' }));
+// Baseline security headers on every response.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  // The vault form is same-origin iframed; nothing else may frame the app.
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  next();
+});
+
+// CSRF: the session cookie is the only credential, so every state-changing
+// request must prove it came from our own pages. Same-origin fetches carry
+// an Origin (or Referer) header — it must match our host. Requests with
+// neither (curl, exotic clients) must send X-Requested-With instead, which
+// a cross-site page cannot add without a preflight the browser would block.
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  const host = req.headers.host;
+  const sameHost = (u) => {
+    try {
+      return new URL(u).host === host;
+    } catch {
+      return false;
+    }
+  };
+  const origin = req.headers.origin;
+  const referer = req.headers.referer;
+  const ok = origin
+    ? sameHost(origin)
+    : referer
+      ? sameHost(referer)
+      : req.headers['x-requested-with'] === 'XMLHttpRequest';
+  if (!ok) return res.status(403).json({ error: 'Cross-origin request blocked.' });
+  next();
+});
+
+app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, '..', 'public'), {
   setHeaders(res, filePath) {
@@ -206,8 +244,8 @@ app.patch('/api/auth/me', requireAuth, asyncRoute(async (req, res) => {
     if (!verifyPassword(req.user.id, current_password || '')) {
       throw httpError(403, 'Current password is incorrect.');
     }
-    if (String(password).length < 8) throw httpError(400, 'Password must be at least 8 characters');
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), req.user.id);
+    const pw = checkPasswordRules(password);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(pw), req.user.id);
     // A password change may mean compromise — drop every other session.
     revokeOtherSessions(req.user.id, req.sessionId);
   }
@@ -486,24 +524,71 @@ app.patch('/api/conversations/:id', requireAuth, asyncRoute(async (req, res) => 
   res.json({ ok: true, title });
 }));
 
-function deleteConversationFiles(convId) {
-  const dir = path.join(DATA_DIR, 'files', String(convId));
-  fs.rmSync(dir, { recursive: true, force: true });
+// ---- deletion helpers --------------------------------------------------------
+// Uploads live at files/uploads/<userId>/<uuid> and avatars at
+// files/avatars/<userId>/<uuid> — never under files/<convId>. The DB rows are
+// the source of truth for what bytes exist: gather paths BEFORE deleting
+// rows, then remove the files.
+
+function attachmentPathsForMessages(msgIds) {
+  if (!msgIds.length) return [];
+  const ph = msgIds.map(() => '?').join(',');
+  return db
+    .prepare(`SELECT path FROM attachments WHERE message_id IN (${ph})`)
+    .all(...msgIds)
+    .map((r) => r.path)
+    .filter(Boolean);
+}
+
+// Remove files/dirs strictly inside DATA_DIR. Never throws.
+function removeDataPaths(paths) {
+  const base = path.resolve(DATA_DIR) + path.sep;
+  for (const p of paths) {
+    try {
+      const fp = path.resolve(DATA_DIR, p);
+      if (fp.startsWith(base)) fs.rmSync(fp, { force: true });
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+function removeDataDir(rel) {
+  try {
+    const fp = path.resolve(DATA_DIR, rel);
+    if (fp.startsWith(path.resolve(DATA_DIR) + path.sep)) {
+      fs.rmSync(fp, { recursive: true, force: true });
+    }
+  } catch {
+    /* already gone */
+  }
+}
+
+// Delete one conversation completely: stop any in-flight run first so it
+// can't write into rows we're removing, then DB rows, then bytes.
+function deleteConversation(convId) {
+  abortRun(convId);
+  const msgIds = db
+    .prepare('SELECT id FROM messages WHERE conversation_id = ?')
+    .all(convId)
+    .map((m) => m.id);
+  const paths = attachmentPathsForMessages(msgIds);
+  if (msgIds.length) {
+    const ph = msgIds.map(() => '?').join(',');
+    db.prepare(`DELETE FROM attachments WHERE message_id IN (${ph})`).run(...msgIds);
+    db.prepare(`DELETE FROM reactions WHERE message_id IN (${ph})`).run(...msgIds);
+    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(convId);
+  }
+  db.prepare('DELETE FROM conversations WHERE id = ?').run(convId);
+  removeDataPaths(paths);
 }
 
 app.delete('/api/conversations/:id', requireAuth, (req, res) => {
   const conv = getConv(req.params.id, req.user.id);
   if (!conv) return res.status(404).json({ error: 'Not found' });
-  // All chats are equal: any of them can be deleted. The heartbeat and
-  // reset flows lazily recreate their anchor chat if it ever goes missing.
-  const msgIds = db.prepare('SELECT id FROM messages WHERE conversation_id = ?').all(conv.id).map((m) => m.id);
-  if (msgIds.length) {
-    const placeholders = msgIds.map(() => '?').join(',');
-    db.prepare(`DELETE FROM attachments WHERE message_id IN (${placeholders})`).run(...msgIds);
-    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conv.id);
-  }
-  db.prepare('DELETE FROM conversations WHERE id = ?').run(conv.id);
-  deleteConversationFiles(conv.id);
+  // All chats are equal: any of them can be deleted. The heartbeat lazily
+  // recreates its anchor chat if it ever goes missing.
+  deleteConversation(conv.id);
   res.json({ ok: true });
 });
 
@@ -550,6 +635,9 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
     ? req.body.attachment_ids.map(Number).filter((n) => Number.isFinite(n)).slice(0, 10)
     : [];
   if (!content && !attachmentIds.length) throw httpError(400, 'Empty message');
+  // A single chat message has no business being megabytes: cap it well below
+  // the JSON body limit so one paste can't bloat the DB or the model replay.
+  if (content.length > 100_000) throw httpError(400, 'Message too long (100,000 character limit).');
 
   // Persist + publish the user message first. Runs always replay history
   // from the DB, so the insert is the single source of truth.
@@ -629,28 +717,25 @@ app.post('/api/reset', requireAuth, asyncRoute(async (req, res) => {
   if (totpEnabled(req.user.id) && !verifySecondFactor(req.user.id, totp_code || '')) {
     return res.status(403).json({ error: 'Wrong two-factor code.' });
   }
-  const convId = getOrCreateConversation(req.user.id);
-  abortRun(convId); // stop any in-flight run before wiping its messages
-  const msgIds = db.prepare('SELECT id FROM messages WHERE conversation_id = ?').all(convId).map((m) => m.id);
-  if (msgIds.length) {
-    const ph = msgIds.map(() => '?').join(',');
-    db.prepare(`DELETE FROM attachments WHERE message_id IN (${ph})`).run(...msgIds);
-    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(convId);
-  }
-  db.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?').run('Main chat', Date.now(), convId);
-  deleteConversationFiles(convId);
+  // "Reset everything" means everything: every conversation (not just the
+  // most recent), all staged uploads, and the sandbox.
+  const convIds = db
+    .prepare('SELECT id FROM conversations WHERE user_id = ?')
+    .all(req.user.id)
+    .map((c) => c.id);
+  for (const cid of convIds) deleteConversation(cid);
   // Drop this user's staged (unclaimed) uploads too.
   const stagedPaths = db
     .prepare('SELECT path FROM attachments WHERE staged = 1 AND user_id = ?')
     .all(req.user.id)
     .map((r) => r.path);
   db.prepare('DELETE FROM attachments WHERE staged = 1 AND user_id = ?').run(req.user.id);
-  for (const p of stagedPaths) {
-    try { fs.rmSync(path.resolve(DATA_DIR, p), { force: true }); } catch { /* gone */ }
-  }
-  publish(convId, { type: 'chat_cleared' });
+  removeDataPaths(stagedPaths);
+  for (const cid of convIds) publish(cid, { type: 'chat_cleared' });
   await sandboxReset(req.user.id);
-  res.json({ ok: true });
+  // Hand the client a fresh empty chat so it never sits on a deleted one.
+  const freshId = getOrCreateConversation(req.user.id);
+  res.json({ ok: true, conversation_id: freshId });
 }));
 
 // ---- tasks ----------------------------------------------------------------
@@ -797,6 +882,23 @@ app.post('/api/upload', requireAuth, (req, res) => {
       return res.status(400).json({ error: msg });
     }
     if (!req.file) return res.status(400).json({ error: 'No file received.' });
+    // Multer already wrote the file — remove it on any rejection below so
+    // denied uploads don't linger on disk.
+    const dropFile = () => {
+      try {
+        fs.rmSync(req.file.path, { force: true });
+      } catch {
+        /* gone */
+      }
+    };
+    // Rate limit: 30 uploads/hour per user. No quota on count alone would
+    // let an account fill the data volume 100 MB at a time.
+    const hit = hitRateLimit(`upload:user:${req.user.id}`, { max: 30, windowMs: 60 * 60 * 1000 });
+    if (hit) {
+      dropFile();
+      res.set('Retry-After', String(Math.ceil(hit.retryAfterMs / 1000)));
+      return res.status(429).json({ error: 'Too many uploads — try again later.' });
+    }
     // Sweep this user's abandoned staged uploads (older than 2 hours).
     const stale = db
       .prepare('SELECT id, path FROM attachments WHERE user_id = ? AND staged = 1 AND created_at < ?')
@@ -820,6 +922,17 @@ app.post('/api/upload', requireAuth, (req, res) => {
         now
       );
     const id = Number(info.lastInsertRowid);
+    // Storage quota: 2 GB per user across staged + claimed uploads. Enforced
+    // after the insert (the file is already on disk); over-quota uploads are
+    // removed again immediately.
+    const used = db
+      .prepare('SELECT COALESCE(SUM(size), 0) AS s FROM attachments WHERE user_id = ?')
+      .get(req.user.id).s;
+    if (used > 2 * 1024 * 1024 * 1024) {
+      db.prepare('DELETE FROM attachments WHERE id = ?').run(id);
+      dropFile();
+      return res.status(413).json({ error: 'Storage quota exceeded (2 GB). Delete chats or files to free space.' });
+    }
     res.json({
       id,
       filename: req.file.originalname || 'file',
@@ -1064,8 +1177,25 @@ app.get('/api/files/:id', requireAuth, (req, res) => {  const att = db.prepare('
   if (!fp.startsWith(path.resolve(DATA_DIR) + path.sep)) {
     return res.status(400).json({ error: 'Bad file path' });
   }
-  res.type(att.mime || 'application/octet-stream');
-  res.set('Content-Disposition', `inline; filename="${(att.filename || 'file').replace(/"/g, '')}"`);
+  // Active content must never render as our origin: an uploaded .html/.svg
+  // served inline with its claimed mime would run script as orion.dill.moe
+  // (stored XSS) when opened directly. Force a download for those, and belt
+  // and braces, sandbox them. (The mime is client-supplied at upload, so the
+  // file extension is checked too — nosniff is already set globally.)
+  const mime = String(att.mime || 'application/octet-stream').toLowerCase().split(';')[0].trim();
+  const name = String(att.filename || 'file');
+  const activeMime = new Set([
+    'text/html', 'application/xhtml+xml', 'image/svg+xml', 'text/xml', 'application/xml',
+  ]).has(mime);
+  const activeExt = /\.(html?|svg|xml|xhtml)$/i.test(name);
+  const safeName = name.replace(/[\r\n"]/g, '');
+  if (activeMime || activeExt) {
+    res.set('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.set('Content-Security-Policy', 'sandbox');
+  } else {
+    res.set('Content-Disposition', `inline; filename="${safeName}"`);
+  }
+  res.type(mime);
   res.sendFile(fp, (err) => {
     if (err && !res.headersSent) res.status(404).json({ error: 'File missing' });
   });
@@ -1090,14 +1220,18 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
   const body = req.body || {};
   for (const key of ADMIN_SETTING_KEYS) {
     if (body[key] === undefined) continue;
+    // Every setting is a short string — bound it so a bad paste can't bloat
+    // the settings table (api keys are dozens of chars; 4000 is generous).
+    const val = String(body[key]);
+    if (val.length > 4000) throw httpError(400, `Setting ${key} is too long (4000 character limit).`);
     if (key === 'api_key') {
       // Only overwrite when a non-empty value is sent — the client sends ''
       // when the admin didn't touch the field (it never sees the real key).
-      if (String(body[key]).length > 0) setSetting(key, String(body[key]));
+      if (val.length > 0) setSetting(key, val);
     } else if (key === 'signup_enabled') {
       setSetting(key, body[key] === '0' || body[key] === false ? '0' : '1');
     } else {
-      setSetting(key, String(body[key]));
+      setSetting(key, val);
     }
   }
   res.json({ ok: true });
@@ -1151,6 +1285,14 @@ app.patch('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
     db.prepare('UPDATE users SET disabled = ? WHERE id = ?').run(disabled ? 1 : 0, id);
     if (disabled) {
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id); // log them out now
+      // A disabled account's scheduled tasks must stop firing too.
+      for (const t of db.prepare('SELECT id FROM tasks WHERE user_id = ?').all(id)) {
+        try {
+          unscheduleTask(t.id);
+        } catch {
+          /* best effort */
+        }
+      }
     } else {
       // Re-enabling clears an abuse lock (admins only get here via requireAdmin).
       db.prepare('UPDATE users SET abuse_locked = 0, abuse_reason = NULL, abuse_locked_at = NULL WHERE id = ?').run(id);
@@ -1166,15 +1308,21 @@ app.delete('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => 
   if (!target) return res.status(404).json({ error: 'Not found' });
 
   for (const conv of db.prepare('SELECT id FROM conversations WHERE user_id = ?').all(id)) {
-    const msgIds = db.prepare('SELECT id FROM messages WHERE conversation_id = ?').all(conv.id).map((m) => m.id);
-    if (msgIds.length) {
-      const ph = msgIds.map(() => '?').join(',');
-      db.prepare(`DELETE FROM attachments WHERE message_id IN (${ph})`).run(...msgIds);
-      db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conv.id);
-    }
-    db.prepare('DELETE FROM conversations WHERE id = ?').run(conv.id);
-    deleteConversationFiles(conv.id);
+    deleteConversation(conv.id);
   }
+  // Staged (never claimed) uploads: rows + bytes.
+  const stagedPaths = db
+    .prepare('SELECT path FROM attachments WHERE staged = 1 AND user_id = ?')
+    .all(id)
+    .map((r) => r.path);
+  db.prepare('DELETE FROM attachments WHERE user_id = ?').run(id);
+  removeDataPaths(stagedPaths);
+  // Per-user file dirs (uploads + avatars) and every other user-owned row.
+  removeDataDir(`files/uploads/${id}`);
+  removeDataDir(`files/avatars/${id}`);
+  db.prepare('DELETE FROM vault_items WHERE user_id = ?').run(id);
+  db.prepare('DELETE FROM vault_requests WHERE user_id = ?').run(id);
+  db.prepare('DELETE FROM reactions WHERE user_id = ?').run(id);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
   db.prepare('DELETE FROM tasks WHERE user_id = ?').run(id);
   db.prepare('DELETE FROM user_settings WHERE user_id = ?').run(id);
@@ -1198,11 +1346,13 @@ app.delete('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // Errors from httpError carry .status; everything else is a 500.
-// Never leak stack traces or secrets to clients.
+// Never leak stack traces, SQL, or filesystem paths to clients —
+// unexpected failures get a generic message (details stay in the log).
 app.use((err, _req, res, _next) => {
   const status = err?.status || 500;
   if (status >= 500) console.error('[orion]', err);
-  res.status(status).json({ error: err?.message || 'Internal error' });
+  const msg = status >= 500 ? 'Internal error' : err?.message || 'Internal error';
+  res.status(status).json({ error: msg });
 });
 
 // ---- boot -----------------------------------------------------------------
@@ -1225,8 +1375,57 @@ try {
 }
 
 const PORT = process.env.PORT || 3000;
+let listener = null;
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  app.listen(PORT, () => console.log(`[orion] listening on :${PORT}`));
+  listener = app.listen(PORT, () => console.log(`[orion] listening on :${PORT}`));
 }
+
+// Graceful shutdown: a deploy recreates the container, which used to kill
+// the process mid-run and strand partial messages + held run locks (the
+// stranded-heartbeat incident). On SIGTERM/SIGINT: stop accepting new
+// connections, abort in-flight runs so their finally blocks publish
+// run_ended and release locks, then exit — as soon as the runs are done,
+// or after a bounded grace period, whichever comes first.
+let shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[orion] ${signal}: draining — no new connections, aborting in-flight runs`);
+  try {
+    listener?.close();
+  } catch {
+    /* not listening */
+  }
+  try {
+    for (const convId of activeRunIds()) {
+      try {
+        abortRun(convId);
+      } catch {
+        /* best effort */
+      }
+    }
+  } catch {
+    /* best effort */
+  }
+  const deadline = setTimeout(() => {
+    console.log('[orion] shutdown grace period elapsed; exiting');
+    process.exit(0);
+  }, 8000);
+  deadline.unref?.();
+  const poll = setInterval(() => {
+    try {
+      if (activeRunIds().length === 0) {
+        clearInterval(poll);
+        clearTimeout(deadline);
+        process.exit(0);
+      }
+    } catch {
+      /* keep waiting for the deadline */
+    }
+  }, 250);
+  poll.unref?.();
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 export default app;

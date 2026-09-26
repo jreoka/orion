@@ -19,6 +19,11 @@ export function isRunLocked(conversationId) {
   return locks.has(Number(conversationId));
 }
 
+/** Conversation ids currently holding the run lock (for graceful shutdown). */
+export function activeRunIds() {
+  return [...locks.keys()];
+}
+
 // ---- stop flags -----------------------------------------------------------
 // Set by POST /:id/stop. The agent loop polls isStopRequested() between
 // iterations and the in-flight LLM fetch is aborted via the run's

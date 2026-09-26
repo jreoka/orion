@@ -19,13 +19,25 @@ function num(v) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-/** Add one LLM call's usage to the user's current week. Never throws. */
-export function recordUsage(userId, usage) {
+/** Add one LLM call's usage to the user's current week. Never throws.
+ *
+ * When the provider omits the usage chunk, `estimate` ({ promptChars,
+ * completionChars }) supplies a rough token count (~1 token per 4 chars)
+ * so the weekly limit stays enforceable instead of recording nothing.
+ */
+export function recordUsage(userId, usage, estimate) {
   try {
     const uid = Number(userId);
     if (!uid) return;
-    const p = num(usage?.prompt_tokens);
-    const c = num(usage?.completion_tokens);
+    let p = num(usage?.prompt_tokens);
+    let c = num(usage?.completion_tokens);
+    if (p === 0 && c === 0 && estimate) {
+      // No usage chunk from the provider — estimate rather than record
+      // zero, otherwise a provider that never reports usage would let a
+      // user burn unlimited tokens past their weekly limit.
+      p = Math.ceil(Number(estimate.promptChars) / 4) || 0;
+      c = Math.ceil(Number(estimate.completionChars) / 4) || 0;
+    }
     const t = num(usage?.total_tokens) || p + c;
     const ws = weekStartMs();
     db.prepare(

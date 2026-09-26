@@ -49,6 +49,20 @@ export function recordSuccess(key) {
   buckets.delete(key);
 }
 
+/**
+ * Generic rate limit: record one hit against `key`. Returns null when still
+ * allowed, or { retryAfterMs } when the bucket is exhausted.
+ */
+export function hitRateLimit(key, { max = 30, windowMs = 60 * 60 * 1000 } = {}) {
+  sweep();
+  const b = getBucket(key, windowMs);
+  b.count += 1;
+  if (b.count > max) {
+    return { retryAfterMs: Math.max(0, b.resetAt - Date.now()) };
+  }
+  return null;
+}
+
 /** Check without recording: returns { retryAfterMs } when the bucket is exhausted. */
 export function checkLimit(key, { max = 5 } = {}) {
   sweep();

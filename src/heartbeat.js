@@ -55,6 +55,14 @@ function scrubHeartbeatMessages(convId, maxIdBefore, ownUserMsgId) {
   const ph = ids.map(() => '?').join(',');
   db.prepare(`DELETE FROM attachments WHERE message_id IN (${ph})`).run(...ids);
   db.prepare(`DELETE FROM messages WHERE id IN (${ph})`).run(...ids);
+  // The check's own vault widget dies with its message: delete the request
+  // row(s) too, so they don't linger until the expiry sweep. The message_id
+  // IS NULL arm catches a request created just before a crash between the
+  // row INSERT and the message_id UPDATE — only this check's agent loop
+  // could have written such rows (the run lock is per conversation).
+  db.prepare(
+    `DELETE FROM vault_requests WHERE conversation_id = ? AND (message_id IN (${ph}) OR message_id IS NULL)`
+  ).run(convId, ...ids);
 }
 
 // Delete just the injected heartbeat prompt, keeping the assistant's

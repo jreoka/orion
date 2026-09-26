@@ -37,6 +37,8 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   // API traffic is always live — never serve or store it.
   if (url.pathname.startsWith('/api/')) return;
+  // Vault secret forms are single-use: a cached copy could render a dead form.
+  if (url.pathname.startsWith('/vault/')) return;
   // Never cache-bust the query string off cache lookups for versioned assets.
   if (NETWORK_FIRST.has(url.pathname)) {
     event.respondWith(
@@ -74,12 +76,17 @@ self.addEventListener('push', (event) => {
   try {
     if (event.data) data = Object.assign(data, event.data.json());
   } catch { /* malformed payload: show the fallback */ }
+  // Per-conversation notification tags: concurrent pings from different
+  // chats no longer collapse into one. Falls back to the shared tag when
+  // the payload carries no conversation reference.
+  const convId = data.conversation_id || data.conversationId ||
+    (String(data.url || '').match(/\/chat\/([^\/?#]+)/) || [])[1];
   event.waitUntil(
     self.registration.showNotification(data.title || 'Orion', {
       body: data.body || '',
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
-      tag: data.tag || 'orion-note',
+      tag: data.tag || (convId ? 'orion-chat-' + convId : 'orion-note'),
       renotify: true,
       requireInteraction: true, // message/task pings stay visible until dismissed
       data: { url: data.url || '/' },

@@ -23,14 +23,17 @@ export function ensureVapidKeys() {
   }
   // Migrate from the old settings-table storage (pre-hardening), then drop
   // the private key from the DB so a settings read can never yield it.
+  // The DB copy is deleted only AFTER the file write is verified — if the
+  // write fails, the DB key must survive so the next boot can retry instead
+  // of generating a fresh keypair (which would silently break every existing
+  // push subscription).
+  let migratedFromDb = false;
   if (!keys?.publicKey || !keys?.privateKey) {
     const pub = getSetting('vapid_public_key', '');
     const priv = getSetting('vapid_private_key', '');
     if (pub && priv) {
       keys = { publicKey: pub, privateKey: priv };
-      try {
-        deleteSetting('vapid_private_key');
-      } catch { /* best effort */ }
+      migratedFromDb = true;
     }
   }
   if (!keys?.publicKey || !keys?.privateKey) {
@@ -40,6 +43,17 @@ export function ensureVapidKeys() {
   try {
     fs.writeFileSync(VAPID_PATH, JSON.stringify(keys), { mode: 0o600 });
     try { fs.chmodSync(VAPID_PATH, 0o600); } catch { /* best effort */ }
+    // Verify the write before dropping the DB copy.
+    const back = JSON.parse(fs.readFileSync(VAPID_PATH, 'utf8'));
+    if (
+      migratedFromDb &&
+      back?.publicKey === keys.publicKey &&
+      back?.privateKey === keys.privateKey
+    ) {
+      try {
+        deleteSetting('vapid_private_key');
+      } catch { /* best effort */ }
+    }
   } catch (e) {
     console.warn('[orion] could not persist VAPID keys:', e?.message || e);
   }

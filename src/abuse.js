@@ -17,6 +17,7 @@ import { db, getSetting } from './db.js';
 import { streamChatCompletion } from './llm.js';
 import { removeSandbox } from './sandbox.js';
 import { recordUsage } from './usage.js';
+import { unscheduleTask } from './tasks.js';
 
 const HEURISTICS = [
   { re: /:\(\)\s*\{\s*:\|\s*:\s*&\s*\}\s*;?\s*:/, reason: 'fork bomb pattern' },
@@ -119,6 +120,15 @@ export function lockAccount(userId, reason) {
     'UPDATE users SET disabled = 1, abuse_locked = 1, abuse_reason = ?, abuse_locked_at = ? WHERE id = ?'
   ).run(String(reason).slice(0, 500), now, userId);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+  // Stop the account's scheduled tasks immediately: a locked user must not
+  // burn tokens on agent runs. Rows stay in the DB (still enabled) so an
+  // admin re-enable resumes them on next boot; fireTask also refuses to run
+  // for locked owners if a timer somehow survives.
+  const taskIds = db
+    .prepare('SELECT id FROM tasks WHERE user_id = ?')
+    .all(userId)
+    .map((r) => r.id);
+  for (const tid of taskIds) unscheduleTask(tid);
   console.warn(`[orion] account ${userId} locked for abuse: ${reason}`);
   // Best-effort: the sandbox may not exist or Docker may be down.
   removeSandbox(userId).catch((e) =>

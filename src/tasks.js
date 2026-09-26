@@ -14,6 +14,10 @@ import { notifyConversation } from './push.js';
 
 const jobs = new Map(); // taskId -> { type: 'cron', job } | { type: 'timeout', timer }
 
+// One-shot timer chunk: well under Node's ~24.85-day setTimeout clamp, so
+// far-future once-tasks re-arm in bounded hops instead of firing instantly.
+const CHUNK_MS = 7 * 24 * 60 * 60 * 1000;
+
 function globalSettings() {
   return {
     base_url: getSetting('base_url', ''),
@@ -80,6 +84,15 @@ export async function fireTask(taskId, { manual = false } = {}) {
     return { ok: false, reason: 'deleted' };
   }
   if (!task.enabled && !manual) return { ok: false, reason: 'disabled' };
+
+  // A lock can land after the timer was armed (or a manual re-fire can race
+  // it): never run the agent loop for a disabled or abuse-locked account.
+  // The timer is stopped; the DB row stays so an admin re-enable resumes
+  // the task on next boot.
+  if (ownerLocked(task.user_id)) {
+    unscheduleTask(taskId);
+    return { ok: false, reason: 'locked' };
+  }
 
   const convId = getOrCreateConversation(task.user_id);
   if (!tryAcquireRun(convId)) {
@@ -160,11 +173,23 @@ export function unscheduleTask(taskId) {
 const stmtGetTask = db.prepare('SELECT * FROM tasks WHERE id = ?');
 const stmtSetNextRun = db.prepare('UPDATE tasks SET next_run_at = ? WHERE id = ?');
 const stmtDisableTask = db.prepare('UPDATE tasks SET enabled = 0, next_run_at = NULL WHERE id = ?');
+// A locked (abuse) or disabled account must never run scheduled work. This
+// is checked at arm time (scheduleTask/initTasks) and again at fire time
+// (fireTask), because a lock can land while a timer is already armed.
+const stmtOwnerLock = db.prepare('SELECT disabled, abuse_locked FROM users WHERE id = ?');
+
+function ownerLocked(userId) {
+  const u = stmtOwnerLock.get(userId);
+  return !!u && !!(u.disabled || u.abuse_locked);
+}
 
 export function scheduleTask(taskId) {
   unscheduleTask(taskId);
   const task = stmtGetTask.get(taskId);
   if (!task || !task.enabled) return;
+  // Never arm timers for a disabled or abuse-locked owner. (fireTask
+  // re-checks at fire time as the last line of defense.)
+  if (ownerLocked(task.user_id)) return;
   if (task.kind === 'cron' && task.cron_expr) {
     if (!cron.validate(task.cron_expr)) return;
     const job = cron.schedule(task.cron_expr, () => {
@@ -183,9 +208,18 @@ export function scheduleTask(taskId) {
       stmtDisableTask.run(taskId);
       return;
     }
+    // Node clamps setTimeout delays above 2^31-1 ms (~24.85 days) to 1ms,
+    // so a once-task scheduled further out would fire immediately. Re-arm
+    // in bounded chunks instead: each chunk that lands re-checks the
+    // remaining delay and either fires (target now close) or arms the next
+    // chunk (also re-checking the owner's lock via scheduleTask).
     const timer = setTimeout(() => {
-      fireTask(taskId).catch((e) => console.error(`[orion] task ${taskId} failed:`, e?.message || e));
-    }, delay);
+      if (task.run_at - Date.now() <= CHUNK_MS) {
+        fireTask(taskId).catch((e) => console.error(`[orion] task ${taskId} failed:`, e?.message || e));
+      } else {
+        scheduleTask(taskId);
+      }
+    }, Math.min(delay, CHUNK_MS));
     timer.unref?.();
     jobs.set(taskId, { type: 'timeout', timer });
     stmtSetNextRun.run(task.run_at, taskId);
@@ -196,7 +230,11 @@ export function scheduleTask(taskId) {
 // and a transient prepared Statement created there can be GC'd mid-load,
 // which crashes better-sqlite3 on some Node versions (RemoveEnvironmentCleanupHook
 // with no current Environment). A module-level statement is never collected.
-const stmtEnabledTasks = db.prepare('SELECT id FROM tasks WHERE enabled = 1');
+// The join skips tasks whose owner is disabled or abuse-locked; scheduleTask
+// re-checks anyway when re-arming from other call sites.
+const stmtEnabledTasks = db.prepare(
+  'SELECT t.id FROM tasks t JOIN users u ON u.id = t.user_id WHERE t.enabled = 1 AND u.disabled = 0 AND u.abuse_locked = 0'
+);
 
 // Restore all enabled tasks on boot.
 export function initTasks() {
