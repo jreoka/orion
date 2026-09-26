@@ -61,10 +61,15 @@ CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);
 `);
 
 // ---- idempotent v2 migrations (ALTER TABLE is safe to re-run) --------------
+// NOTE: uses exec+try/catch instead of PRAGMA+prepare on purpose — transient
+// prepared Statements created during module evaluation can be GC'd while the
+// module graph is still loading, which crashes better-sqlite3 on some Node
+// versions (RemoveEnvironmentCleanupHook with no current Environment).
 function addColumn(table, column, ddl) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-  if (!cols.includes(column)) {
+  try {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  } catch (e) {
+    if (!/duplicate column/i.test(e.message)) throw e;
   }
 }
 
@@ -125,14 +130,16 @@ CREATE INDEX IF NOT EXISTS idx_backup_codes_user ON totp_backup_codes(user_id);
 // tool-role rows need it to be replayable as valid OpenAI history.
 
 // Seed defaults for settings the admin panel edits.
-const seed = (key, value) => {
-  db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run(key, value);
-};
-seed('provider_name', 'OpenAI');
-seed('base_url', 'https://api.openai.com/v1');
-seed('api_key', '');
-seed('model', 'gpt-4o');
-seed('signup_enabled', '1');
+// NOTE: uses a single exec with literals (no prepare) — see addColumn note
+// about transient Statements during module evaluation.
+db.exec(`
+INSERT OR IGNORE INTO settings (key, value) VALUES
+  ('provider_name', 'OpenAI'),
+  ('base_url', 'https://api.openai.com/v1'),
+  ('api_key', ''),
+  ('model', 'gpt-4o'),
+  ('signup_enabled', '1');
+`);
 
 export function getSetting(key, fallback = '') {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);

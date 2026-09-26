@@ -44,8 +44,12 @@ const S = {
   conversations: [],
   activeId: null,
   messages: [],        // [{id, role, content, attachments}]
-  streaming: false,
-  aborter: null,
+  runActive: false,    // an agent run is in flight for the open conversation
+  evt: null,           // EventSource for the open conversation's event bus
+  evtRetry: 0,         // reconnect backoff step
+  liveIds: new Set(),  // assistant message ids currently streaming
+  buffers: new Map(),  // message id -> accumulated streamed text
+  toolRows: new Map(), // message id -> [{name, el, open}]
   adminSettings: null,
   adminUsers: []
 };
@@ -336,7 +340,8 @@ function renderConvList() {
 }
 
 async function newConversation() {
-  if (S.streaming) return;
+  // Runs are detached and per-conversation now, so starting a fresh chat
+  // while another conversation's run is active is safe.
   try {
     const c = await api('/api/conversations', { method: 'POST', body: {} });
     S.conversations.unshift(c);
@@ -344,12 +349,14 @@ async function newConversation() {
     S.messages = [];
     renderConvList();
     renderMessages();
+    openEventStream(c.id);
     $('#composer-input').focus();
   } catch (e) { toast(e.message, 'error'); }
 }
 
 async function openConversation(id) {
-  if (S.streaming) stopStream();
+  closeEventStream();
+  S.runActive = false;
   S.activeId = id;
   renderConvList();
   const box = $('#messages');
@@ -368,6 +375,7 @@ async function openConversation(id) {
     return;
   }
   renderMessages();
+  openEventStream(id);
   closeSidebar();
 }
 
@@ -458,6 +466,7 @@ function wireUserMenu() {
     closeUserMenu();
     if (act === 'logout') {
       try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+      closeEventStream();
       S.me = null; S.conversations = []; S.activeId = null; S.messages = [];
       go('login');
     } else if (act === 'settings') go('settings');
@@ -531,6 +540,7 @@ async function renderChat() {
   }
   renderConvList();
   renderMessages();
+  if (S.activeId) openEventStream(S.activeId);
   updateComposer();
 }
 
@@ -538,9 +548,13 @@ let userMenuWired = false;
 function wireUserMenuOnce() { if (!userMenuWired) { wireUserMenu(); userMenuWired = true; } }
 
 /* ============================================================
-   Composer + SSE streaming
-   The reply arrives as `event: <type>` / `data: <json>` frames
-   over a POST stream (fetch + ReadableStream, so we can abort).
+   Composer + live event stream
+   The client holds a long-lived EventSource on
+   /api/conversations/:id/events and POSTs messages as plain JSON.
+   The server inserts the row, detaches a background agent run, and
+   publishes run_started / token / tool / image / message / run_ended
+   frames on the per-conversation bus. Sending while a run is active
+   is fine — the message is queued and the run chains a follow-up.
    ============================================================ */
 function wireChat() {
   const input = $('#composer-input');
@@ -579,15 +593,18 @@ function wireChat() {
 function updateComposer() {
   const input = $('#composer-input');
   const hasText = input.value.trim().length > 0;
-  $('#send-btn').disabled = !hasText || S.streaming;
-  $('#send-btn').hidden = S.streaming;
-  $('#stop-btn').hidden = !S.streaming;
+  // Sending mid-run is allowed — the message is queued server-side.
+  // Keep the send button visible/enabled based on text even while a run is
+  // active; the stop button appears alongside it.
+  $('#send-btn').disabled = !hasText;
+  $('#send-btn').hidden = false;
+  $('#stop-btn').hidden = !S.runActive;
 }
 
 async function sendMessage() {
   const input = $('#composer-input');
   const content = input.value.trim();
-  if (!content || S.streaming) return;
+  if (!content) return;
 
   // Ensure there's a conversation to post into.
   if (!S.activeId) {
@@ -598,128 +615,267 @@ async function sendMessage() {
       renderConvList();
     } catch (e) { toast(e.message, 'error'); return; }
   }
+  const convId = S.activeId;
 
   input.value = '';
   input.style.height = 'auto';
-  appendUserMessage(content);
   updateComposer();
   closeSidebar();
 
-  // Assistant placeholder the stream writes into.
-  const aMsg = { id: 'stream-' + Date.now(), role: 'assistant', content: '', attachments: [] };
-  S.messages.push(aMsg);
-  const el = messageEl(aMsg);
-  $('#messages').appendChild(el);
-  $('#empty-state').hidden = true;
-  const contentEl = el.querySelector('.content');
-  const toolsEl = el.querySelector('.tools');
-  const imgsEl = el.querySelector('.imgs');
-  // Typing indicator while waiting for the first token; caret takes over once streaming.
-  const typingEl = document.createElement('div');
-  typingEl.className = 'typing-dots';
-  typingEl.setAttribute('aria-label', 'Orion is thinking');
-  typingEl.innerHTML = '<span></span><span></span><span></span>';
-  contentEl.appendChild(typingEl);
-  let gotToken = false;
-  scrollBottom(true);
+  // Optimistic bubble, reconciled with the real row id below. The server
+  // also publishes the row on the bus, which can arrive before the POST
+  // response — upsertMessage dedupes by id either way.
+  const local = appendUserMessage(content);
 
-  S.streaming = true;
-  S.aborter = new AbortController();
-  updateComposer();
-
-  let text = '';
-  const toolRows = []; // {name, el, detail}
-
-  const upsertTool = (name, status, summary) => {
-    let row = [...toolRows].reverse().find((r) => r.name === name && r.open);
-    if (!row) {
-      const div = document.createElement('div');
-      div.className = 'tool-row';
-      div.innerHTML = `
-        <button class="tool-head" type="button">
-          <span class="dot running"></span>
-          <span class="tname">⚙ ${esc(name)}</span>
-          <span class="tsummary"></span>
-          <span class="tchev">▾</span>
-        </button>
-        <div class="tool-detail"></div>`;
-      div.querySelector('.tool-head').addEventListener('click', () => div.classList.toggle('open'));
-      toolsEl.appendChild(div);
-      row = { name, el: div, open: true };
-      toolRows.push(row);
-    }
-    const dot = row.el.querySelector('.dot');
-    const sum = row.el.querySelector('.tsummary');
-    const detail = row.el.querySelector('.tool-detail');
-    if (summary) { sum.textContent = summary; detail.textContent = summary; }
-    if (status === 'done') {
-      dot.classList.remove('running');
-      dot.classList.add('done');
-      row.open = false;
-    } else {
-      sum.textContent = sum.textContent || 'Running…';
-    }
-    scrollBottom();
-  };
-
-  const finish = () => {
-    typingEl.remove();
-    contentEl.classList.remove('caret');
-    S.streaming = false;
-    S.aborter = null;
-    aMsg.content = text;
-    updateComposer();
-    scrollBottom(true);
-    // Pick up the server-side title (and ordering) after a reply.
-    loadConversationsQuiet();
-  };
-
+  let resp;
   try {
-    await streamEvents(`/api/conversations/${S.activeId}/messages`, content, S.aborter.signal, {
-      token: (d) => {
-        if (!gotToken) {
-          gotToken = true;
-          typingEl.remove();
-          contentEl.classList.add('caret');
-        }
-        text += d.text || '';
-        contentEl.innerHTML = md(text);
-        contentEl.classList.add('caret');
-        scrollBottom();
-      },
-      tool: (d) => upsertTool(d.name || 'tool', d.status, d.summary),
-      image: (d) => {
-        if (!d.url) return;
-        const img = document.createElement('img');
-        img.className = 'msg-img';
-        img.src = d.url;
-        img.alt = d.filename || 'image';
-        img.loading = 'lazy';
-        img.addEventListener('click', () => openLightbox(d.url));
-        imgsEl.appendChild(img);
-        (aMsg.attachments = aMsg.attachments || []).push({ url: d.url, filename: d.filename });
-        scrollBottom();
-      },
-      error: (d) => {
-        typingEl.remove();
-        contentEl.classList.remove('caret');
-        contentEl.innerHTML = `<div class="msg-error">${esc(d.message || 'Something went wrong.')}</div>`;
-      }
-    });
+    resp = await api(`/api/conversations/${convId}/messages`, { method: 'POST', body: { content } });
   } catch (e) {
-    if (e.name === 'AbortError') {
-      // Stopped by the user — keep the partial reply.
-    } else {
-      contentEl.classList.remove('caret');
-      contentEl.innerHTML = `<div class="msg-error">${esc(e.message || 'Connection failed.')}</div>`;
-    }
-  } finally {
-    finish();
+    removeMessage(local);
+    input.value = content; // restore the draft
+    updateComposer();
+    toast(e.message || 'Send failed', 'error');
+    return;
+  }
+  reconcileLocal(local, resp.message);
+  updateComposer();
+  scrollBottom(true);
+}
+
+// Server-side stop: the run keeps its partial text with a "(stopped by
+// user)" note; run_ended {status:'stopped'} arrives on the bus and clears
+// the run UI.
+async function stopStream() {
+  if (!S.activeId || !S.runActive) return;
+  try {
+    await api(`/api/conversations/${S.activeId}/stop`, { method: 'POST' });
+  } catch (e) {
+    toast(e.message || 'Stop failed', 'error');
   }
 }
 
-function stopStream() {
-  if (S.aborter) S.aborter.abort();
+/* ---------- live event bus ---------- */
+
+function msgElById(id) {
+  return $('#messages').querySelector(`[data-mid="${CSS.escape(String(id))}"]`);
+}
+
+function removeMessage(m) {
+  S.messages = S.messages.filter((x) => x !== m);
+  msgElById(m.id)?.remove();
+  S.liveIds.delete(m.id);
+  S.buffers.delete(m.id);
+  S.toolRows.delete(m.id);
+}
+
+// Swap an optimistic local id for the real row id, or drop the local copy
+// if the bus already delivered the row (dedupes either arrival order).
+function reconcileLocal(local, real) {
+  if (S.messages.some((x) => x.id === real.id)) { removeMessage(local); return; }
+  const el = msgElById(local.id);
+  local.id = real.id;
+  local.content = real.content;
+  local.created_at = real.created_at;
+  if (el) el.dataset.mid = String(real.id);
+}
+
+function paintContent(msg) {
+  const contentEl = msgElById(msg.id)?.querySelector('.content');
+  if (contentEl) contentEl.innerHTML = md(msg.content || '');
+}
+
+function setRunActive(on) {
+  S.runActive = on;
+  if (!on) {
+    for (const id of S.liveIds) {
+      const el = msgElById(id);
+      el?.querySelector('.typing-dots')?.remove();
+      el?.querySelector('.content')?.classList.remove('caret');
+    }
+    S.liveIds.clear();
+    loadConversationsQuiet(); // pick up the server-side title
+  }
+  updateComposer();
+}
+
+function parseBusEvent(e) {
+  try { return JSON.parse(e.data); } catch { return null; }
+}
+
+function openEventStream(convId) {
+  closeEventStream();
+  const es = new EventSource(`/api/conversations/${convId}/events`);
+  S.evt = es;
+
+  es.addEventListener('hello', (e) => {
+    S.evtRetry = 0;
+    let running = false;
+    try { running = !!JSON.parse(e.data).running; } catch {}
+    setRunActive(running);
+  });
+  es.addEventListener('run_started', () => setRunActive(true));
+  es.addEventListener('run_ended', () => setRunActive(false));
+  es.addEventListener('message', (e) => onBusMessage(parseBusEvent(e)?.message));
+  es.addEventListener('token', (e) => onBusToken(parseBusEvent(e)));
+  es.addEventListener('tool', (e) => onBusTool(parseBusEvent(e)));
+  es.addEventListener('image', (e) => onBusImage(parseBusEvent(e)));
+  es.addEventListener('queued', () => { /* ordinary bubble already shown */ });
+  es.addEventListener('error', (e) => {
+    // Named SSE 'error' frames from the server (agent failure) arrive as
+    // MessageEvents; transport failures are plain Events (handled below).
+    if (!(e instanceof MessageEvent)) return;
+    const d = parseBusEvent(e);
+    if (d && d.message !== undefined) toast('Agent error: ' + d.message, 'error');
+  });
+
+  es.onerror = () => {
+    // Transport failure — reconnect with backoff (2s, 4s, 8s … capped at
+    // 30s), then re-fetch full history to converge on what's stored.
+    try { es.close(); } catch {}
+    if (S.evt !== es) return;
+    S.evt = null;
+    const delay = Math.min(30000, 2000 * Math.pow(2, S.evtRetry++));
+    setTimeout(() => {
+      if (S.evt || !S.activeId || !S.me) return;
+      refreshAfterReconnect(convId);
+    }, delay);
+  };
+}
+
+function closeEventStream() {
+  if (S.evt) { try { S.evt.close(); } catch {} S.evt = null; }
+  S.liveIds.clear();
+  S.buffers.clear();
+  S.toolRows.clear();
+}
+
+async function refreshAfterReconnect(convId) {
+  if (S.activeId !== convId) return;
+  openEventStream(convId); // re-subscribe first, so nothing after this point is missed
+  try {
+    const data = await api(`/api/conversations/${convId}`);
+    if (!data || S.activeId !== convId) return;
+    S.messages = data.messages || [];
+    S.buffers.clear();
+    S.toolRows.clear();
+    renderMessages(); // live state re-derives from hello + subsequent events
+  } catch { /* the next backoff tick retries */ }
+}
+
+function onBusMessage(m) {
+  if (!m || m.id == null || S.activeId == null) return;
+  let msg = S.messages.find((x) => x.id === m.id);
+  if (!msg) {
+    // Optimistic local user bubble? Reconcile instead of duplicating.
+    const local = S.messages.find((x) =>
+      String(x.id).startsWith('local-') && !x._reconciled &&
+      x.role === m.role && x.content === m.content);
+    if (local) {
+      local._reconciled = true;
+      reconcileLocal(local, m);
+      return;
+    }
+    msg = { id: m.id, role: m.role, content: m.content || '', attachments: m.attachments || [] };
+    S.messages.push(msg);
+    $('#messages').appendChild(messageEl(msg));
+    $('#empty-state').hidden = true;
+  } else if (msg.role === 'assistant' && S.liveIds.has(msg.id) && typeof m.content === 'string') {
+    // Authoritative full-row republish (covers onNote appends the token
+    // stream never carried). Only accept it when it isn't older than what
+    // we've already streamed.
+    const buf = S.buffers.get(msg.id) || '';
+    if (m.content.length >= buf.length) {
+      S.buffers.set(msg.id, m.content);
+      msg.content = m.content;
+      paintContent(msg);
+    }
+  }
+  if (m.role === 'assistant' && S.runActive && !m.content) {
+    // Fresh in-flight assistant row: typing indicator until tokens arrive.
+    S.liveIds.add(m.id);
+    const contentEl = msgElById(m.id)?.querySelector('.content');
+    if (contentEl && !contentEl.querySelector('.typing-dots')) {
+      const t = document.createElement('div');
+      t.className = 'typing-dots';
+      t.setAttribute('aria-label', 'Orion is thinking');
+      t.innerHTML = '<span></span><span></span><span></span>';
+      contentEl.appendChild(t);
+    }
+  }
+  scrollBottom();
+}
+
+function onBusToken(d) {
+  if (!d || d.message_id == null) return;
+  const msg = S.messages.find((x) => x.id === d.message_id);
+  if (!msg) return;
+  let buf = S.buffers.get(d.message_id);
+  if (buf === undefined) buf = msg.content || ''; // e.g. joined mid-run
+  buf += d.token || '';
+  S.buffers.set(d.message_id, buf);
+  msg.content = buf;
+  S.liveIds.add(d.message_id);
+  const contentEl = msgElById(d.message_id)?.querySelector('.content');
+  if (!contentEl) return;
+  contentEl.querySelector('.typing-dots')?.remove();
+  contentEl.innerHTML = md(buf);
+  contentEl.classList.add('caret');
+  scrollBottom();
+}
+
+function onBusTool(d) {
+  if (!d || d.message_id == null) return;
+  const toolsEl = msgElById(d.message_id)?.querySelector('.tools');
+  if (!toolsEl) return;
+  let rows = S.toolRows.get(d.message_id);
+  if (!rows) { rows = []; S.toolRows.set(d.message_id, rows); }
+  let row = [...rows].reverse().find((r) => r.name === d.name && r.open);
+  if (!row) {
+    const div = document.createElement('div');
+    div.className = 'tool-row';
+    div.innerHTML = `
+      <button class="tool-head" type="button">
+        <span class="dot running"></span>
+        <span class="tname">⚙ ${esc(d.name || 'tool')}</span>
+        <span class="tsummary"></span>
+        <span class="tchev">▾</span>
+      </button>
+      <div class="tool-detail"></div>`;
+    div.querySelector('.tool-head').addEventListener('click', () => div.classList.toggle('open'));
+    toolsEl.appendChild(div);
+    row = { name: d.name, el: div, open: true };
+    rows.push(row);
+  }
+  const dot = row.el.querySelector('.dot');
+  const sum = row.el.querySelector('.tsummary');
+  const detail = row.el.querySelector('.tool-detail');
+  const summary = d.summary || (d.args ? String(d.args).slice(0, 120) : '');
+  if (summary) { sum.textContent = summary; detail.textContent = summary; }
+  if (d.status === 'done') {
+    dot.classList.remove('running');
+    dot.classList.add('done');
+    row.open = false;
+    if (d.result_summary) detail.textContent = d.result_summary;
+  } else {
+    sum.textContent = sum.textContent || 'Running…';
+  }
+  scrollBottom();
+}
+
+function onBusImage(d) {
+  if (!d || !d.url || d.message_id == null) return;
+  const imgsEl = msgElById(d.message_id)?.querySelector('.imgs');
+  if (!imgsEl) return;
+  const img = document.createElement('img');
+  img.className = 'msg-img';
+  img.src = d.url;
+  img.alt = d.filename || 'image';
+  img.loading = 'lazy';
+  img.addEventListener('click', () => openLightbox(d.url));
+  imgsEl.appendChild(img);
+  const msg = S.messages.find((x) => x.id === d.message_id);
+  if (msg) (msg.attachments = msg.attachments || []).push({ url: d.url, filename: d.filename });
+  scrollBottom();
 }
 
 // Refresh the sidebar list without the skeleton flash.
@@ -728,56 +884,6 @@ async function loadConversationsQuiet() {
     S.conversations = await api('/api/conversations');
     renderConvList();
   } catch { /* non-fatal */ }
-}
-
-/* Parse SSE frames: `event: <type>\ndata: <json>\n\n`.
-   Frames can split across network chunks, so buffer and scan for \n\n. */
-async function streamEvents(url, content, signal, handlers) {
-  const res = await fetch(url, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-    signal
-  });
-  if (!res.ok) {
-    let msg = `Request failed (${res.status})`;
-    try { const d = await res.json(); msg = d.error || d.message || msg; } catch {}
-    throw new Error(msg);
-  }
-  if (!res.body) throw new Error('Streaming not supported in this browser.');
-
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = '';
-
-  const handleFrame = (frame) => {
-    let ev = 'message';
-    const dataLines = [];
-    for (const line of frame.split('\n')) {
-      if (line.startsWith('event:')) ev = line.slice(6).trim();
-      else if (line.startsWith('data:')) dataLines.push(line.slice(5));
-    }
-    const raw = dataLines.join('\n').trim();
-    if (!raw || ev === 'message') return;
-    let data = {};
-    try { data = raw ? JSON.parse(raw) : {}; } catch { return; }
-    const fn = handlers[ev];
-    if (fn) fn(data);
-  };
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let idx;
-    while ((idx = buf.indexOf('\n\n')) >= 0) {
-      handleFrame(buf.slice(0, idx));
-      buf = buf.slice(idx + 2);
-    }
-  }
-  buf += dec.decode();
-  if (buf.trim()) handleFrame(buf);
 }
 
 /* ============================================================

@@ -8,7 +8,8 @@ import { CronExpressionParser } from 'cron-parser';
 import { db, getSetting } from './db.js';
 import { httpError } from './auth.js';
 import { runAgent } from './agent.js';
-import { tryAcquireRun, releaseRun } from './runlock.js';
+import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
+import { registerController, unregisterController } from './runs.js';
 
 const jobs = new Map(); // taskId -> { type: 'cron', job } | { type: 'timeout', timer }
 
@@ -92,21 +93,23 @@ export async function fireTask(taskId, { manual = false } = {}) {
     return { ok: false, reason: 'busy' };
   }
 
+  const controller = registerController(convId);
   try {
     await runAgent({
       userId: task.user_id,
       conversationId: convId,
       userText: task.prompt,
       settings: globalSettings(),
-      emit: () => {},
-      shouldAbort: () => false,
-      signal: undefined,
+      shouldAbort: () => isStopRequested(convId),
+      signal: controller.signal,
     });
   } catch (e) {
-    // runAgent only throws for aborts, which can't happen here (no signal),
-    // but never let a task fire take down the scheduler.
+    // runAgent only throws for aborts/unexpected errors; never let a task
+    // fire take down the scheduler.
     console.error(`[orion] task ${taskId} run threw:`, e?.message || e);
   } finally {
+    unregisterController(convId);
+    clearStop(convId);
     releaseRun(convId);
   }
 

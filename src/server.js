@@ -39,7 +39,9 @@ import {
   listPasskeys,
   deletePasskey,
 } from './passkey.js';
-import { tryAcquireRun, releaseRun, isRunLocked } from './runlock.js';
+import { publish, subscribe, unsubscribe } from './events.js';
+import { runConversation, startRunIfIdle, abortRun } from './runs.js';
+import { isRunLocked, requestStop } from './runlock.js';
 import {
   validateTaskInput,
   publicTask,
@@ -54,7 +56,6 @@ import {
   putHeartbeatSettings,
   initHeartbeat,
 } from './heartbeat.js';
-import { runAgent } from './agent.js';
 import { ensureImage, sandboxStatus, sandboxReset, removeSandbox } from './sandbox.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -264,16 +265,18 @@ app.delete('/api/conversations/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- agent chat (SSE) -----------------------------------------------------
+// ---- agent chat (live event stream) ---------------------------------------
+// The client opens a long-lived EventSource on :id/events and POSTs messages
+// as plain JSON. The server inserts the message, detaches a background run,
+// and streams all progress (tokens, tool calls, mid-run updates) over the
+// per-conversation event bus. Sending while a run is active is always OK —
+// the message is queued and the in-flight run chains a follow-up run.
 
-app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, res) => {
+// Long-lived event stream for a conversation. Sends `hello` on connect and
+// a `: ping` comment every 20s (proxies idle-timeout SSE otherwise).
+app.get('/api/conversations/:id/events', requireAuth, (req, res) => {
   const conv = getConv(req.params.id, req.user.id);
   if (!conv) return res.status(404).json({ error: 'Not found' });
-  const content = String(req.body?.content || '').trim();
-  if (!content) throw httpError(400, 'Empty message');
-  if (!tryAcquireRun(conv.id)) {
-    throw httpError(409, 'A run is already in progress for this conversation');
-  }
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -281,51 +284,58 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no', // don't let proxies buffer the stream
   });
-  const emit = (type, data) => {
+  subscribe(conv.id, res);
+  res.write(`event: hello\ndata: ${JSON.stringify({ type: 'hello', running: isRunLocked(conv.id) })}\n\n`);
+
+  const ping = setInterval(() => {
     try {
-      res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+      res.write(': ping\n\n');
     } catch {
-      /* client gone */
+      /* dead connection; its 'close' handler cleans up */
     }
-  };
-
-  let aborted = false;
-  const controller = new AbortController();
-  // NOTE: listen on res, not req — req 'close' fires as soon as the (small)
-  // request body is consumed, which is not a disconnect. res 'close' with an
-  // unfinished response means the client actually went away.
+  }, 20000);
   res.on('close', () => {
-    if (!res.writableEnded) {
-      aborted = true;
-      controller.abort(); // aborts the in-flight LLM fetch ASAP
-    }
+    clearInterval(ping);
+    unsubscribe(conv.id, res);
   });
+});
 
-  const settings = {
-    base_url: getSetting('base_url', ''),
-    api_key: getSetting('api_key', ''),
-    model: getSetting('model', ''),
-  };
+app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, res) => {
+  const conv = getConv(req.params.id, req.user.id);
+  if (!conv) return res.status(404).json({ error: 'Not found' });
+  const content = String(req.body?.content || '').trim();
+  if (!content) throw httpError(400, 'Empty message');
 
-  try {
-    await runAgent({
-      userId: req.user.id,
-      conversationId: conv.id,
-      userText: content,
-      settings,
-      emit,
-      shouldAbort: () => aborted,
-      signal: controller.signal,
-    });
-    if (!aborted) emit('done', {});
-  } catch (e) {
-    // runAgent handles agent errors itself; this is the backstop.
-    if (!aborted) emit('error', { message: e?.message || 'Something went wrong' });
-  } finally {
-    releaseRun(conv.id);
+  // Persist + publish the user message first. Runs always replay history
+  // from the DB, so the insert is the single source of truth.
+  const now = Date.now();
+  const info = db
+    .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
+    .run(conv.id, 'user', content, now);
+  const message = { id: Number(info.lastInsertRowid), role: 'user', content, created_at: now };
+  db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, conv.id);
+  publish(conv.id, { type: 'message', message });
+
+  // A run is already active — the message stays queued; the in-flight run
+  // chains a follow-up when it finishes. Never 409: sending mid-run is fine.
+  if (!startRunIfIdle(conv.id, req.user.id, content)) {
+    publish(conv.id, { type: 'queued' });
+    return res.json({ message, queued: true });
   }
-  res.end();
+  res.json({ message, queued: false });
 }));
+
+// Stop the current agent run for a conversation. Sets the stop flag and
+// aborts the in-flight LLM fetch; partial text is kept with a
+// "(stopped by user)" note and queued chaining is canceled.
+app.post('/api/conversations/:id/stop', requireAuth, (req, res) => {
+  const conv = getConv(req.params.id, req.user.id);
+  if (!conv) return res.status(404).json({ error: 'Not found' });
+  if (!isRunLocked(conv.id)) return res.json({ ok: true, stopped: false });
+  requestStop(conv.id);
+  abortRun(conv.id);
+  res.json({ ok: true, stopped: true });
+});
 
 // ---- sandbox --------------------------------------------------------------
 

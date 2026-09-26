@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db, DATA_DIR } from './db.js';
 import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
+import { publish } from './events.js';
 import {
   sandboxExec,
   sandboxReadFile,
@@ -32,6 +33,7 @@ Your tools:
 - web_fetch: fetch a URL and get its readable text back. Use it for docs, articles, API responses — anything on the web.
 - browser_shot: take a real screenshot of a URL with headless Chromium and show it to the user as an image attachment. Use it when the user wants to SEE a page, or to verify how a page you built looks.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
+- send_update: speak to the user mid-run. Use it for meaningful progress updates during long multi-step work — a sentence or two, not a narration of every tool call.
 
 Guidelines:
 - Be concise and direct. Explain what you're doing briefly, then do it.
@@ -146,6 +148,22 @@ const DELEGATE_TOOL = {
   },
 };
 
+const SEND_UPDATE_TOOL = {
+  type: 'function',
+  function: {
+    name: 'send_update',
+    description:
+      'Send a short progress update to the user immediately — it appears in the chat right away while you keep working. Use for meaningful progress during long multi-step work (a sentence or two), not after every tool call.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The update text (1–2000 characters)' },
+      },
+      required: ['text'],
+    },
+  },
+};
+
 function summarizeTool(name, args) {
   const s = (v, n = 60) => {
     v = String(v ?? '');
@@ -159,6 +177,7 @@ function summarizeTool(name, args) {
     case 'web_fetch':
     case 'browser_shot': return s(args.url);
     case 'delegate': return s(args.task, 80);
+    case 'send_update': return s(args.text, 80);
     default: return name;
   }
 }
@@ -230,6 +249,21 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
         image: { url, filename },
       };
     }
+    case 'send_update': {
+      const text = String(args.text ?? '').trim();
+      if (!text) throw new Error('send_update: text is required (1–2000 characters)');
+      if (text.length > 2000) throw new Error('send_update: text too long (max 2000 characters)');
+      const now = Date.now();
+      const info = db
+        .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
+        .run(conversationId, 'assistant', text, now);
+      const id = Number(info.lastInsertRowid);
+      publish(conversationId, {
+        type: 'message',
+        message: { id, role: 'assistant', content: text, created_at: now },
+      });
+      return { text: 'Update sent.' };
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -291,7 +325,7 @@ export async function runChildAgent({
   const { finalText, steps, toolCounts } = await runToolLoop({
     settings,
     convo,
-    tools: TOOLS, // no delegate: one level only
+    tools: [...TOOLS, SEND_UPDATE_TOOL], // children can speak up, but no delegate: one level only
     isChild: true,
     maxIterations: maxSteps,
     deadlineAt,
@@ -469,8 +503,14 @@ async function runToolLoop({
       }
 
       toolCounts[tc.function.name] = (toolCounts[tc.function.name] || 0) + 1;
+      let argsJson = '';
       try {
-        emit('tool', { name: tc.function.name, status: 'start', summary: summarizeTool(tc.function.name, args) });
+        argsJson = JSON.stringify(args).slice(0, 500);
+      } catch {
+        /* not serializable; leave blank */
+      }
+      try {
+        emit('tool', { name: tc.function.name, status: 'start', summary: summarizeTool(tc.function.name, args), args: argsJson });
       } catch {
         /* ignore */
       }
@@ -485,13 +525,13 @@ async function runToolLoop({
         if (e?.name === 'AbortError') throw e;
         result = { text: `Tool error (${tc.function.name}): ${e.message}` };
       }
+      const text = result.text ?? '';
       try {
-        emit('tool', { name: tc.function.name, status: 'done' });
+        emit('tool', { name: tc.function.name, status: 'done', result_summary: text.slice(0, 300) });
         if (result.image) emit('image', result.image);
       } catch {
         /* ignore */
       }
-      const text = result.text ?? '';
       convo.push({ role: 'tool', tool_call_id: tc.id, content: text });
       try {
         onTool(text, tc.id);
@@ -506,70 +546,121 @@ async function runToolLoop({
 }
 
 /**
- * Run one agent turn. Streams tokens / tool progress through `emit`.
- * Returns { finalText }. Never throws for agent errors — they are emitted
- * as 'error' events and a short note is saved so the history stays
- * coherent. Aborts quietly (but still persist any partial text).
+ * Run one agent turn for a freshly-written user message. Persists the user
+ * message, publishes it on the event bus, then runs the loop. All run
+ * progress (run_started, token, tool, image, message, run_ended) is published
+ * to the per-conversation bus — there is no per-request emit channel.
+ * Returns { finalText }. Never throws for agent errors — they are published
+ * as 'error' events and a short note is saved so the history stays coherent.
  *
  * Options: systemExtra (appended to the system prompt), historyLimit
  * (max prior messages replayed — used by heartbeat).
  */
 export async function runAgent({
-  userId, conversationId, userText, settings, emit,
+  userId, conversationId, userText, settings,
   shouldAbort, signal, systemExtra, historyLimit,
 }) {
   const now = Date.now();
-  const deadlineAt = now + RUN_CAP_MS;
-
-  // Persist the user message and bump the conversation.
-  db.prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
+  const info = db
+    .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
     .run(conversationId, 'user', userText, now);
+  const userMsgId = Number(info.lastInsertRowid);
   db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, conversationId);
+  publish(conversationId, {
+    type: 'message',
+    message: { id: userMsgId, role: 'user', content: userText, created_at: now },
+  });
+  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit });
+}
 
-  // History first (it now ends with the user message we just stored) …
+/**
+ * Continue an agent run when the user message(s) are already in the DB
+ * (the chat POST handler inserts them; chained follow-up runs reuse this).
+ * userText is only used for auto-titling — nothing is inserted.
+ */
+export async function runAgentContinuation({
+  userId, conversationId, userText, settings,
+  shouldAbort, signal, systemExtra, historyLimit,
+}) {
+  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit });
+}
+
+async function runAgentLoop({
+  userId, conversationId, userText, settings,
+  shouldAbort, signal, systemExtra, historyLimit,
+}) {
+  const deadlineAt = Date.now() + RUN_CAP_MS;
   const prior = loadHistory(conversationId, historyLimit);
 
-  // …then the assistant row is created by onTurnStart at the top of the
-  // first loop iteration, so partial text always lands in the in-flight row.
+  // The assistant row is created by onTurnStart at the top of the first
+  // loop iteration, so partial text always lands in the in-flight row.
   let assistantId = null;
+  let status = 'done'; // done | error | stopped
 
-  const fail = (message, partial) => {
+  // Bridge the loop's emit() calls onto the conversation event bus.
+  const busEmit = (type, data) => {
     try {
-      emit('error', { message });
+      if (type === 'token') {
+        publish(conversationId, { type: 'token', message_id: assistantId, token: data.text });
+      } else if (type === 'tool') {
+        publish(conversationId, { type: 'tool', message_id: assistantId, ...data });
+      } else if (type === 'image') {
+        publish(conversationId, { type: 'image', message_id: assistantId, ...data });
+      } else if (type === 'error') {
+        publish(conversationId, { type: 'error', ...data });
+      }
+    } catch {
+      /* the bus must never kill the loop */
+    }
+  };
+
+  // Re-publish the in-flight assistant row (full content) so bus clients
+  // converge on exactly what's stored — covers notes appended via onNote
+  // (stuck guard, time cap) which never stream as tokens.
+  const publishAssistantRow = () => {
+    if (!assistantId) return;
+    try {
+      const row = db
+        .prepare('SELECT id, role, content, created_at FROM messages WHERE id = ?')
+        .get(assistantId);
+      if (row) publish(conversationId, { type: 'message', message: row });
     } catch {
       /* ignore */
     }
-    const note = `Sorry — I ran into an error: ${message}`;
-    const content = partial ? `${partial}\n\n${note}` : note;
+  };
+
+  const appendStoppedNote = (partial) => {
+    if (!assistantId) return;
     try {
+      const base = partial || '';
+      const content = base ? base + '\n\n(stopped by user)' : '(stopped by user)';
       db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, assistantId);
     } catch {
       /* ignore */
     }
+    publishAssistantRow();
   };
 
-  const savePartial = (partial) => {
-    if (!partial) return;
+  const fail = (message, partial) => {
+    busEmit('error', { message });
+    const note = `Sorry — I ran into an error: ${message}`;
+    const content = partial ? `${partial}\n\n${note}` : note;
     try {
-      db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(partial, assistantId);
+      if (assistantId) db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, assistantId);
     } catch {
       /* ignore */
     }
   };
 
+  publish(conversationId, { type: 'run_started' });
   try {
     const systemContent = systemExtra ? `${SYSTEM_PROMPT}\n\n${systemExtra}` : SYSTEM_PROMPT;
-    const convo = [
-      { role: 'system', content: systemContent },
-      ...prior,
-      // NOTE: `prior` already ends with the user message inserted above —
-      // don't append userText again.
-    ];
+    const convo = [{ role: 'system', content: systemContent }, ...prior];
 
-    const { finalText } = await runToolLoop({
+    const { finalText, stopReason } = await runToolLoop({
       settings,
       convo,
-      tools: [...TOOLS, DELEGATE_TOOL],
+      tools: [...TOOLS, DELEGATE_TOOL, SEND_UPDATE_TOOL],
       isChild: false,
       maxIterations: MAX_ITERATIONS,
       deadlineAt,
@@ -582,6 +673,10 @@ export async function runAgent({
             .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
             .run(conversationId, 'assistant', '', Date.now()).lastInsertRowid
         );
+        publish(conversationId, {
+          type: 'message',
+          message: { id: assistantId, role: 'assistant', content: '', created_at: Date.now() },
+        });
         return assistantId;
       },
       onTurnEnd: (content, toolCallsJson) => {
@@ -597,14 +692,22 @@ export async function runAgent({
         db.prepare('UPDATE messages SET content = content || ? WHERE id = ?')
           .run('\n\n' + note, assistantId);
       },
-      emit,
+      emit: busEmit,
       shouldAbort,
       signal,
     });
 
+    if (stopReason === 'aborted' || shouldAbort?.()) {
+      // Stop was requested mid-run (e.g. during a long tool call, where the
+      // AbortController couldn't interrupt) — mark it stopped explicitly.
+      status = 'stopped';
+      const row = db.prepare('SELECT content FROM messages WHERE id = ?').get(assistantId);
+      appendStoppedNote(row?.content || '');
+    }
+
     // Auto-title: first exchange in an untitled conversation.
     const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId);
-    if (conv && conv.title === 'New chat') {
+    if (conv && conv.title === 'New chat' && userText) {
       const t = userText.slice(0, 40);
       db.prepare('UPDATE conversations SET title = ? WHERE id = ?')
         .run(userText.length > 40 ? t + '…' : t, conversationId);
@@ -615,11 +718,17 @@ export async function runAgent({
     // Whatever text streamed before the failure is already in the DB for
     // finished iterations; e.partialContent covers the in-flight one.
     if (e?.name === 'AbortError' || shouldAbort?.()) {
-      savePartial(e?.partialContent); // client disconnect: keep what we got, quietly
+      // The only abort source now is the user pressing stop.
+      appendStoppedNote(e?.partialContent || '');
+      status = 'stopped';
       return { finalText: '' };
     }
     // Human-friendly: our own errors already read well; anything else gets a prefix.
     fail(e?.message || 'Something went wrong', e?.partialContent);
+    status = 'error';
     return { finalText: '' };
+  } finally {
+    publishAssistantRow();
+    publish(conversationId, { type: 'run_ended', status });
   }
 }

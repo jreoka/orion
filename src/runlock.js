@@ -18,3 +18,23 @@ export function releaseRun(conversationId) {
 export function isRunLocked(conversationId) {
   return locks.has(Number(conversationId));
 }
+
+// ---- stop flags -----------------------------------------------------------
+// Set by POST /:id/stop. The agent loop polls isStopRequested() between
+// iterations and the in-flight LLM fetch is aborted via the run's
+// AbortController. Cleared by the run driver when the run ends.
+
+const stopFlags = new Set(); // conversationId
+
+/** Mark a conversation's run as stop-requested (user pressed stop). */
+export function requestStop(conversationId) {
+  stopFlags.add(Number(conversationId));
+}
+
+export function isStopRequested(conversationId) {
+  return stopFlags.has(Number(conversationId));
+}
+
+export function clearStop(conversationId) {
+  stopFlags.delete(Number(conversationId));
+}

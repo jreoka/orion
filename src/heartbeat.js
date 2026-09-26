@@ -6,7 +6,8 @@
 import { db, getSetting } from './db.js';
 import { httpError } from './auth.js';
 import { runAgent } from './agent.js';
-import { tryAcquireRun, releaseRun } from './runlock.js';
+import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
+import { registerController, unregisterController } from './runs.js';
 
 const CHECK_MS = 5 * 60 * 1000;
 const DEFAULT_PROMPT =
@@ -79,15 +80,15 @@ export async function runHeartbeatFor(userId) {
     .prepare('SELECT COALESCE(MAX(id), 0) AS m FROM messages WHERE conversation_id = ?')
     .get(convId).m;
 
+  const controller = registerController(convId);
   try {
     const { finalText } = await runAgent({
       userId,
       conversationId: convId,
       userText: s.prompt || DEFAULT_PROMPT,
       settings: globalSettings(),
-      emit: () => {},
-      shouldAbort: () => false,
-      signal: undefined,
+      shouldAbort: () => isStopRequested(convId),
+      signal: controller.signal,
       systemExtra: HEARTBEAT_SYSTEM_EXTRA,
       historyLimit: 20,
     });
@@ -114,6 +115,8 @@ export async function runHeartbeatFor(userId) {
     console.error(`[orion] heartbeat for user ${userId} threw:`, e?.message || e);
     return { ok: false, reason: 'error' };
   } finally {
+    unregisterController(convId);
+    clearStop(convId);
     releaseRun(convId);
   }
 }
