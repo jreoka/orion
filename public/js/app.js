@@ -97,6 +97,9 @@ const ROUTES = ['login', 'chat', 'admin', 'settings'];
 const VIEW_ID = { login: 'view-auth', chat: 'view-chat', admin: 'view-admin', settings: 'view-settings' };
 function route() {
   const h = (location.hash || '').replace(/^#\/?/, '');
+  // Push-notification deep link: #/chat/123 opens that conversation.
+  const m = h.match(/^chat\/(\d+)$/);
+  if (m) { S.pendingConvId = Number(m[1]); return 'chat'; }
   return ROUTES.includes(h) ? h : 'chat';
 }
 function go(r) { location.hash = '#/' + r; }
@@ -119,6 +122,19 @@ window.addEventListener('hashchange', render);
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
+    // A push-notification tap while a tab is open: the service worker
+    // focuses it and asks it to navigate to the conversation.
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'orion-navigate' && typeof data.url === 'string') {
+        const m = data.url.match(/#\/chat\/(\d+)/);
+        if (m) {
+          S.pendingConvId = Number(m[1]);
+          if (route() !== 'chat') location.hash = '#/chat';
+          else renderChat();
+        }
+      }
+    });
   });
 }
 
@@ -530,6 +546,16 @@ async function renderChat() {
   if (!chatWired) { wireChat(); chatWired = true; }
   wireUserMenuOnce();
   await loadConversations();
+  // Deep-link (from a push notification) takes priority over resume.
+  if (S.pendingConvId) {
+    const id = S.pendingConvId;
+    S.pendingConvId = null;
+    if (S.conversations.some((c) => c.id === id)) {
+      await openConversation(id);
+      return;
+    }
+    // Unknown conversation (deleted?): fall through to normal resume.
+  }
   // Deep-link or resume: pick the newest conversation, or start fresh.
   if (!S.activeId && S.conversations.length) {
     S.activeId = S.conversations[0].id;
@@ -948,25 +974,39 @@ function wireProviderFormOnce() {
 
 async function loadAdminUsers() {
   const body = $('#users-body');
-  body.innerHTML = `<tr><td colspan="5" class="muted">Loading…</td></tr>`;
+  body.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
   try {
     S.adminUsers = await api('/api/admin/users');
+    try { S.adminUsage = await api('/api/admin/usage'); } catch { S.adminUsage = []; }
   } catch (e) {
-    body.innerHTML = `<tr><td colspan="5" class="muted">Couldn't load users.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="6" class="muted">Couldn't load users.</td></tr>`;
     return;
   }
   renderAdminUsers();
+}
+
+function fmtTokens(n) {
+  n = Number(n) || 0;
+  if (n >= 1000000) return (n / 1000000).toFixed(n % 1000000 ? 1 : 0) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(n % 1000 ? 1 : 0) + 'k';
+  return String(n);
 }
 
 function renderAdminUsers() {
   const body = $('#users-body');
   body.innerHTML = '';
   if (!S.adminUsers.length) {
-    body.innerHTML = `<tr><td colspan="5" class="muted">No users yet.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="6" class="muted">No users yet.</td></tr>`;
     return;
   }
+  const usageById = {};
+  for (const r of S.adminUsage || []) usageById[r.user_id] = r;
   for (const u of S.adminUsers) {
     const isSelf = S.me && u.id === S.me.id;
+    const usage = usageById[u.id];
+    const used = usage ? usage.total_tokens : 0;
+    const lim = u.weekly_token_limit;
+    const usageText = `${fmtTokens(used)} / ${lim === null || lim === undefined ? '∞' : fmtTokens(lim)}`;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><span class="u-name ${u.disabled ? 'u-disabled' : ''}">
@@ -975,8 +1015,10 @@ function renderAdminUsers() {
       <td>
         <span class="pill ${u.role === 'admin' ? 'admin' : 'user'}">${esc(u.role)}</span>
         ${u.disabled ? '<span class="pill off">disabled</span>' : ''}
+        ${u.abuse_locked ? `<span class="pill danger" title="${esc(u.abuse_reason || 'locked for abuse')}">locked</span>` : ''}
       </td>
       <td class="muted">${Number(u.message_count) || 0}</td>
+      <td class="muted" title="tokens used this week / weekly limit">${esc(usageText)}</td>
       <td class="muted">${esc(fmtDate(u.created_at))}</td>
       <td><div class="u-actions"></div></td>`;
     const acts = tr.querySelector('.u-actions');
@@ -1005,6 +1047,35 @@ function renderAdminUsers() {
         toast(u.disabled ? `${u.username} enabled` : `${u.username} disabled`);
       } catch (e) { toast(e.message, 'error'); }
     }, { disabled: isSelf });
+
+    mkBtn('Limit', async () => {
+      const cur = u.weekly_token_limit;
+      const v = window.prompt(
+        `Weekly token limit for ${u.username} (tokens). Empty = unlimited.`,
+        cur === null || cur === undefined ? '' : String(cur)
+      );
+      if (v === null) return; // cancelled
+      try {
+        const body = v.trim() === '' ? { weekly_token_limit: null } : { weekly_token_limit: Number(v) };
+        await api(`/api/admin/users/${u.id}/limit`, { method: 'PATCH', body });
+        await loadAdminUsers();
+        toast(`Limit updated for ${u.username}`);
+      } catch (e) { toast(e.message, 'error'); }
+    });
+
+    mkBtn('Reset usage', async () => {
+      const ok = await confirmDialog({
+        title: 'Reset usage?',
+        message: `Zero ${u.username}\u2019s token usage for this week?`,
+        confirmLabel: 'Reset'
+      });
+      if (!ok) return;
+      try {
+        await api(`/api/admin/users/${u.id}/usage/reset`, { method: 'POST' });
+        await loadAdminUsers();
+        toast(`Usage reset for ${u.username}`);
+      } catch (e) { toast(e.message, 'error'); }
+    });
 
     mkBtn('Delete', async () => {
       const ok = await confirmDialog({
@@ -1163,7 +1234,7 @@ function startRename(c, el) {
 
 
 /* ---------- settings ---------- */
-const SETTINGS_TABS = ['security', 'sessions', 'tasks', 'heartbeat'];
+const SETTINGS_TABS = ['security', 'sessions', 'tasks', 'heartbeat', 'notifications'];
 let _settingsTab = 'security';
 let _twofaStatus = null;
 let _passkeys = null;
@@ -1179,6 +1250,7 @@ async function renderSettings() {
   else if (_settingsTab === 'sessions') renderSessionsTab();
   else if (_settingsTab === 'tasks') renderTasksTab();
   else if (_settingsTab === 'heartbeat') renderHeartbeatTab();
+  else if (_settingsTab === 'notifications') renderNotificationsTab();
 }
 function wireSettings() {
   document.querySelectorAll('.settings-tab').forEach(t => {
@@ -1559,4 +1631,67 @@ async function renderHeartbeatTab() {
   } catch (err) {
     toast('Couldn’t load heartbeat: ' + err.message);
   }
+}
+
+/* ---------- notifications ---------- */
+function urlB64ToU8(s) {
+  const pad = '='.repeat((4 - (s.length % 4)) % 4);
+  const b64 = (s + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function renderNotificationsTab() {
+  const box = $('#notif-box');
+  if (!('PushManager' in window) || !('serviceWorker' in navigator) || !('Notification' in window)) {
+    box.innerHTML = '<p class="muted">Push notifications aren\u2019t supported in this browser.</p>';
+    return;
+  }
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  let sub = null;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    sub = await reg.pushManager.getSubscription();
+  } catch { sub = null; }
+  const on = !!sub;
+  const perm = Notification.permission;
+  box.innerHTML = `
+    <div class="row-between" style="margin-bottom:8px">
+      <div>
+        <div><strong>Push notifications: ${on ? 'on' : 'off'}</strong></div>
+        <div class="muted small">Browser permission: ${esc(perm)}${on ? '' : ' — enable to get pinged when runs finish while you\u2019re away.'}</div>
+      </div>
+      <button class="btn ${on ? '' : 'primary'}" id="notif-toggle">${on ? 'Disable' : 'Enable'}</button>
+    </div>
+    ${!on && perm === 'denied'
+      ? '<p class="muted small">Notifications are blocked for this site — allow them in your browser\u2019s site settings, then enable here.</p>'
+      : ''}`;
+  $('#notif-toggle').onclick = async () => {
+    try {
+      if (on) {
+        const cur = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+        if (cur) {
+          await cur.unsubscribe();
+          await api('/api/push/unsubscribe', { method: 'DELETE', body: { endpoint: cur.endpoint } });
+        }
+        toast('Push notifications disabled');
+      } else {
+        const p = await Notification.requestPermission();
+        if (p !== 'granted') { toast('Notification permission not granted', 'error'); renderNotificationsTab(); return; }
+        const { publicKey } = await api('/api/push/vapid-public-key');
+        const reg = await navigator.serviceWorker.ready;
+        const s = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToU8(publicKey),
+        });
+        await api('/api/push/subscribe', { method: 'POST', body: { subscription: s.toJSON() } });
+        toast('Push notifications enabled');
+      }
+    } catch (e) {
+      toast('Couldn\u2019t update notifications: ' + e.message, 'error');
+    }
+    renderNotificationsTab();
+  };
 }

@@ -57,6 +57,19 @@ import {
   initHeartbeat,
 } from './heartbeat.js';
 import { ensureImage, sandboxStatus, sandboxReset, removeSandbox } from './sandbox.js';
+import { checkUserMessage } from './abuse.js';
+import {
+  getVapidPublicKey,
+  saveSubscription,
+  deleteSubscription,
+  listSubscriptions,
+} from './push.js';
+import {
+  getWeeklyUsage,
+  setWeeklyLimit,
+  resetWeeklyUsage,
+  allWeeklyUsage,
+} from './usage.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -316,6 +329,15 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
   db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, conv.id);
   publish(conv.id, { type: 'message', message });
 
+  // Abuse screening: the message is already stored (evidence). A positive
+  // verdict locks the account and no run starts.
+  const abuse = await checkUserMessage(req.user, content);
+  if (abuse.locked) {
+    publish(conv.id, { type: 'error', message: 'Account locked for abuse — an admin must re-enable it.' });
+    publish(conv.id, { type: 'run_ended', status: 'error' });
+    return res.json({ message, queued: false, locked: true });
+  }
+
   // A run is already active — the message stays queued; the in-flight run
   // chains a follow-up when it finishes. Never 409: sending mid-run is fine.
   if (!startRunIfIdle(conv.id, req.user.id, content)) {
@@ -443,6 +465,36 @@ app.put('/api/heartbeat', requireAuth, asyncRoute(async (req, res) => {
   res.json(putHeartbeatSettings(req.user.id, req.body || {}));
 }));
 
+// ---- push notifications -----------------------------------------------------
+// Web Push (VAPID). The service worker shows incoming pushes; tapping one
+// deep-links into the conversation.
+
+app.get('/api/push/vapid-public-key', requireAuth, (req, res) => {
+  res.json({ publicKey: getVapidPublicKey() });
+});
+
+app.get('/api/push/subscriptions', requireAuth, (req, res) => {
+  res.json(
+    listSubscriptions(req.user.id).map((s) => ({ endpoint: s.endpoint, created_at: s.created_at }))
+  );
+});
+
+app.post('/api/push/subscribe', requireAuth, asyncRoute(async (req, res) => {
+  saveSubscription(req.user.id, req.body?.subscription);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/push/unsubscribe', requireAuth, asyncRoute(async (req, res) => {
+  deleteSubscription(req.user.id, req.body?.endpoint);
+  res.json({ ok: true });
+}));
+
+// ---- token usage (self) -------------------------------------------------------
+
+app.get('/api/usage', requireAuth, (req, res) => {
+  res.json(getWeeklyUsage(req.user.id));
+});
+
 // ---- files ----------------------------------------------------------------
 
 app.get('/api/files/:id', requireAuth, (req, res) => {
@@ -501,7 +553,8 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
 app.get('/api/admin/users', requireAdmin, (req, res) => {
   const rows = db
     .prepare(
-      `SELECT u.id, u.username, u.role, u.disabled, u.created_at, COUNT(m.id) AS message_count
+      `SELECT u.id, u.username, u.role, u.disabled, u.abuse_locked, u.abuse_reason,
+              u.weekly_token_limit, u.created_at, COUNT(m.id) AS message_count
        FROM users u
        LEFT JOIN conversations c ON c.user_id = u.id
        LEFT JOIN messages m ON m.conversation_id = c.id
@@ -510,6 +563,26 @@ app.get('/api/admin/users', requireAdmin, (req, res) => {
     .all();
   res.json(rows);
 });
+
+app.get('/api/admin/usage', requireAdmin, (req, res) => {
+  res.json(allWeeklyUsage());
+});
+
+app.patch('/api/admin/users/:id/limit', requireAdmin, asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  const target = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+  if (!target) return res.status(404).json({ error: 'Not found' });
+  const limit = setWeeklyLimit(id, req.body?.weekly_token_limit ?? null);
+  res.json({ ok: true, weekly_token_limit: limit });
+}));
+
+app.post('/api/admin/users/:id/usage/reset', requireAdmin, asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  const target = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+  if (!target) return res.status(404).json({ error: 'Not found' });
+  resetWeeklyUsage(id);
+  res.json({ ok: true });
+}));
 
 app.patch('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   const id = Number(req.params.id);
@@ -523,7 +596,12 @@ app.patch('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   }
   if (disabled !== undefined) {
     db.prepare('UPDATE users SET disabled = ? WHERE id = ?').run(disabled ? 1 : 0, id);
-    if (disabled) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id); // log them out now
+    if (disabled) {
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id); // log them out now
+    } else {
+      // Re-enabling clears an abuse lock (admins only get here via requireAdmin).
+      db.prepare('UPDATE users SET abuse_locked = 0, abuse_reason = NULL, abuse_locked_at = NULL WHERE id = ?').run(id);
+    }
   }
   res.json({ ok: true });
 }));
@@ -549,6 +627,8 @@ app.delete('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => 
   db.prepare('DELETE FROM user_settings WHERE user_id = ?').run(id);
   db.prepare('DELETE FROM passkey_credentials WHERE user_id = ?').run(id);
   db.prepare('DELETE FROM totp_backup_codes WHERE user_id = ?').run(id);
+  db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').run(id);
+  db.prepare('DELETE FROM token_usage WHERE user_id = ?').run(id);
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
 
   // Best-effort: Docker may be down; the user row is already gone.

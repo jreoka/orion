@@ -8,6 +8,7 @@ import { httpError } from './auth.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
 import { registerController, unregisterController } from './runs.js';
+import { notifyConversation } from './push.js';
 
 const CHECK_MS = 5 * 60 * 1000;
 const DEFAULT_PROMPT =
@@ -110,6 +111,14 @@ export async function runHeartbeatFor(userId) {
       return { ok: true, quiet: true };
     }
     db.prepare('UPDATE user_settings SET last_heartbeat_at = ? WHERE user_id = ?').run(now, userId);
+    // The heartbeat had something to say: ping the user if they aren't
+    // watching the heartbeat conversation live.
+    try {
+      const snippet = String(finalText || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+      await notifyConversation(userId, convId, { title: 'Orion', body: `Heartbeat: ${snippet}` });
+    } catch (e) {
+      console.warn('[orion] heartbeat push failed:', e?.message || e);
+    }
     return { ok: true, quiet: false };
   } catch (e) {
     console.error(`[orion] heartbeat for user ${userId} threw:`, e?.message || e);

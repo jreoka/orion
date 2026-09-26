@@ -211,7 +211,7 @@
           <div class="table-wrap">
             <table class="users-table">
               <thead>
-                <tr><th>User</th><th>Role</th><th>Messages</th><th>Joined</th><th class="th-actions">Actions</th></tr>
+                <tr><th>User</th><th>Role</th><th>Messages</th><th>Usage</th><th>Joined</th><th class="th-actions">Actions</th></tr>
               </thead>
               <tbody id="users-body"></tbody>
             </table>
@@ -233,6 +233,7 @@
             <button class="settings-tab" data-tab="sessions" role="tab">Sessions</button>
             <button class="settings-tab" data-tab="tasks" role="tab">Tasks</button>
             <button class="settings-tab" data-tab="heartbeat" role="tab">Heartbeat</button>
+            <button class="settings-tab" data-tab="notifications" role="tab">Notifications</button>
           </div>
 
           <div class="settings-panel" id="set-panel-security">
@@ -323,6 +324,12 @@
                 <span id="hb-saved" class="saved-note" hidden>Saved ✓</span>
               </div>
             </form>
+          </div>
+
+          <div class="settings-panel" id="set-panel-notifications" hidden>
+            <h3 class="set-h">Push notifications</h3>
+            <p class="muted small">Get notified on this device when an agent run finishes, a scheduled task reports back, or a heartbeat has something to say — even when Orion isn't open.</p>
+            <div id="notif-box"><p class="muted">Loading…</p></div>
           </div>
         </div>
       </div>

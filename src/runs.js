@@ -18,6 +18,7 @@
 import { db, getSetting } from './db.js';
 import { runAgentContinuation } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
+import { notifyConversation } from './push.js';
 
 export const MAX_CHAINED_RUNS = 10;
 
@@ -86,8 +87,9 @@ export async function runConversation(
 
   const controller = new AbortController();
   controllers.set(id, controller);
+  let runStatus = 'done';
   try {
-    await runAgentContinuation({
+    const r = await runAgentContinuation({
       userId,
       conversationId: id,
       userText,
@@ -95,6 +97,7 @@ export async function runConversation(
       shouldAbort: () => isStopRequested(id),
       signal: controller.signal,
     });
+    if (r?.status) runStatus = r.status;
   } catch (e) {
     // runAgentLoop only throws on unexpected internal errors; the agent
     // already published run_ended for handled outcomes (done/error/stopped).
@@ -118,6 +121,25 @@ export async function runConversation(
   if (pending > 0 && tryAcquireRun(id)) {
     return runConversation(id, userId, userText, chainDepth + 1, maxChain);
   }
+
+  // Outermost run of this trigger finished: ping the user if they aren't
+  // watching this conversation live. Chained runs notify only once, here.
+  if (chainDepth === 0) {
+    try {
+      const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(id);
+      const last = db
+        .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1")
+        .get(id);
+      const snippet = String(last?.content || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+      await notifyConversation(userId, id, {
+        title: 'Orion',
+        body: `${conv?.title || 'Chat'}${runStatus !== 'done' ? ` (${runStatus})` : ''}: ${snippet || 'finished'}`,
+      });
+    } catch (e) {
+      console.warn('[orion] run-end push failed:', e?.message || e);
+    }
+  }
+
   return wasStopped ? { stopped: true } : { chained: false };
 }
 

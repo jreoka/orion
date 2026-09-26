@@ -81,6 +81,63 @@ addColumn('sessions', 'user_agent', 'TEXT');
 addColumn('sessions', 'last_seen_at', 'INTEGER');
 addColumn('conversations', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
 addColumn('conversations', 'task_id', 'INTEGER');
+// Phase 3: abuse lock + weekly token limits.
+// NOTE: weekly_token_limit is deliberately NULLABLE — NULL means unlimited
+// (see setWeeklyLimit in usage.js). It must never be NOT NULL.
+addColumn('users', 'abuse_locked', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('users', 'abuse_reason', 'TEXT');
+addColumn('users', 'abuse_locked_at', 'INTEGER');
+addColumn('users', 'weekly_token_limit', 'INTEGER DEFAULT 1000000');
+
+// Repair: phase-3 briefly declared weekly_token_limit NOT NULL, which made
+// "unlimited" (NULL) impossible to store. If that constraint is present,
+// rebuild the users table once with the nullable definition. The table has
+// no foreign keys, so a copy is safe. Runs at boot, before any request.
+const weeklyLimitPragma = db.prepare(
+  "SELECT `notnull` AS nn FROM pragma_table_info('users') WHERE name = 'weekly_token_limit'"
+);
+try {
+  const col = weeklyLimitPragma.get();
+  if (col && col.nn === 1) {
+    console.log('[orion] repairing users.weekly_token_limit: dropping NOT NULL so NULL (unlimited) is storable');
+    db.exec('BEGIN');
+    try {
+      db.exec(`
+        CREATE TABLE users_limit_fix (
+          id INTEGER PRIMARY KEY,
+          username TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'user',
+          disabled INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          totp_secret TEXT,
+          totp_enabled INTEGER NOT NULL DEFAULT 0,
+          totp_pending_secret TEXT,
+          abuse_locked INTEGER NOT NULL DEFAULT 0,
+          abuse_reason TEXT,
+          abuse_locked_at INTEGER,
+          weekly_token_limit INTEGER DEFAULT 1000000
+        );
+        INSERT INTO users_limit_fix
+          (id, username, password_hash, role, disabled, created_at,
+           totp_secret, totp_enabled, totp_pending_secret,
+           abuse_locked, abuse_reason, abuse_locked_at, weekly_token_limit)
+          SELECT id, username, password_hash, role, disabled, created_at,
+           totp_secret, totp_enabled, totp_pending_secret,
+           abuse_locked, abuse_reason, abuse_locked_at, weekly_token_limit
+          FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_limit_fix RENAME TO users;
+      `);
+      db.exec('COMMIT');
+    } catch (e) {
+      try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      throw e;
+    }
+  }
+} catch (e) {
+  console.warn('[orion] weekly_token_limit repair skipped:', e?.message || e);
+}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS totp_backup_codes (
@@ -124,6 +181,23 @@ CREATE TABLE IF NOT EXISTS user_settings (
 CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkey_credentials(user_id);
 CREATE INDEX IF NOT EXISTS idx_backup_codes_user ON totp_backup_codes(user_id);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS token_usage (
+  user_id INTEGER NOT NULL,
+  week_start INTEGER NOT NULL,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, week_start)
+);
+CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
 `);
 
 // NOTE: `messages.tool_call_id` is one column beyond the original sketch —

@@ -11,7 +11,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Stream a chat completion.
- * @returns {Promise<{content: string, toolCalls: Array<{id, type, function:{name, arguments}}>}>}
+ * @returns {Promise<{content: string, toolCalls: Array<{id, type, function:{name, arguments}}>, usage: object|null}>}
  * OpenAI streams tool calls in fragments keyed by `index`; we reassemble
  * id / name / arguments here so callers get whole calls.
  *
@@ -33,7 +33,13 @@ export async function streamChatCompletion({
   if (!apiKey) throw new Error(LLM_NOT_CONFIGURED);
 
   const url = String(baseUrl || '').replace(/\/+$/, '') + '/chat/completions';
-  const body = JSON.stringify({ model, messages, tools, stream: true });
+  const body = JSON.stringify({
+    model,
+    messages,
+    tools,
+    stream: true,
+    stream_options: { include_usage: true }, // ask for a final usage chunk
+  });
 
   let res;
   let attempt = 0;
@@ -99,6 +105,7 @@ export async function streamChatCompletion({
   let lastDataAt = Date.now();
   let stalled = false;
   const toolCalls = []; // sparse, indexed by the provider's `index`
+  let usage = null; // final usage chunk, when the provider sends one
 
   const stallTimer = setInterval(() => {
     if (Date.now() - lastDataAt > STALL_TIMEOUT_MS && !stalled) {
@@ -117,6 +124,11 @@ export async function streamChatCompletion({
       payload = JSON.parse(data);
     } catch {
       return; // ignore malformed heartbeat lines
+    }
+    // Usage arrives as its own chunk (no choices delta) when
+    // stream_options.include_usage was honored.
+    if (payload?.usage && typeof payload.usage === 'object') {
+      usage = payload.usage;
     }
     const delta = payload?.choices?.[0]?.delta;
     if (!delta) return;
@@ -185,5 +197,6 @@ export async function streamChatCompletion({
     toolCalls: toolCalls
       .filter(Boolean)
       .map((tc) => ({ id: tc.id, type: 'function', function: { name: tc.function.name, arguments: tc.function.arguments } })),
+    usage,
   };
 }

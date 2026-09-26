@@ -47,3 +47,43 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+// ---- push notifications -----------------------------------------------------
+self.addEventListener('push', (event) => {
+  let data = { title: 'Orion', body: 'Something needs your attention.', url: '/' };
+  try {
+    if (event.data) data = Object.assign(data, event.data.json());
+  } catch { /* malformed payload: show the fallback */ }
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'Orion', {
+      body: data.body || '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: data.tag || 'orion-note',
+      renotify: true,
+      requireInteraction: true, // message/task pings stay visible until dismissed
+      data: { url: data.url || '/' },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      // Focus an already-open Orion tab if there is one, and take it to the chat.
+      for (const c of clients) {
+        if (c.url.includes(self.location.origin) && 'focus' in c) {
+          c.focus();
+          c.postMessage({ type: 'orion-navigate', url });
+          return;
+        }
+      }
+      return self.clients.openWindow(url);
+    })
+  );
+});
+
+// Deep-link pings from an open tab's push handler: the service worker routes
+// them to the router through the focused client above.

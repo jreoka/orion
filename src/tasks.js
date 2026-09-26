@@ -10,6 +10,7 @@ import { httpError } from './auth.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
 import { registerController, unregisterController } from './runs.js';
+import { notifyConversation } from './push.js';
 
 const jobs = new Map(); // taskId -> { type: 'cron', job } | { type: 'timeout', timer }
 
@@ -94,8 +95,9 @@ export async function fireTask(taskId, { manual = false } = {}) {
   }
 
   const controller = registerController(convId);
+  let finalText = '';
   try {
-    await runAgent({
+    const r = await runAgent({
       userId: task.user_id,
       conversationId: convId,
       userText: task.prompt,
@@ -103,6 +105,7 @@ export async function fireTask(taskId, { manual = false } = {}) {
       shouldAbort: () => isStopRequested(convId),
       signal: controller.signal,
     });
+    finalText = r?.finalText || '';
   } catch (e) {
     // runAgent only throws for aborts/unexpected errors; never let a task
     // fire take down the scheduler.
@@ -127,6 +130,20 @@ export async function fireTask(taskId, { manual = false } = {}) {
     db.prepare('UPDATE tasks SET last_run_at = ?, next_run_at = NULL, enabled = 0, updated_at = ? WHERE id = ?')
       .run(now, now, taskId);
     unscheduleTask(taskId);
+  }
+
+  // The task produced output: ping the user if they aren't watching this
+  // conversation live.
+  if (finalText.trim()) {
+    try {
+      const snippet = finalText.replace(/\s+/g, ' ').trim().slice(0, 140);
+      await notifyConversation(task.user_id, convId, {
+        title: 'Orion',
+        body: `${task.name}: ${snippet}`,
+      });
+    } catch (e) {
+      console.warn('[orion] task push failed:', e?.message || e);
+    }
   }
   return { ok: true, conversationId: convId };
 }

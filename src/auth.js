@@ -49,6 +49,9 @@ export function login(username, password) {
   if (!row || !bcrypt.compareSync(password || '', row.password_hash)) {
     throw httpError(401, 'Invalid username or password');
   }
+  if (row.abuse_locked) {
+    throw httpError(403, 'Account locked — contact your administrator.');
+  }
   if (row.disabled) {
     throw httpError(403, 'This account has been disabled');
   }

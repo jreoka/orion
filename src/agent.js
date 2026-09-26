@@ -13,6 +13,7 @@ import path from 'node:path';
 import { db, DATA_DIR } from './db.js';
 import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
 import { publish } from './events.js';
+import { recordUsage, isOverLimit, LIMIT_REACHED_MESSAGE } from './usage.js';
 import {
   sandboxExec,
   sandboxReadFile,
@@ -438,7 +439,20 @@ async function runToolLoop({
       /* persistence must not kill the loop */
     }
 
-    const { content, toolCalls } = await streamChatCompletion({
+    // Weekly token budget: stop before burning another model call.
+    if (isOverLimit(userId)) {
+      const note = LIMIT_REACHED_MESSAGE;
+      finalText += (finalText ? '\n\n' : '') + note;
+      try {
+        onNote(note);
+      } catch {
+        /* ignore */
+      }
+      stopReason = 'limit';
+      break;
+    }
+
+    const { content, toolCalls, usage } = await streamChatCompletion({
       baseUrl,
       apiKey,
       model,
@@ -454,6 +468,9 @@ async function runToolLoop({
       },
       signal,
     });
+    // Attribute this call's tokens to the run's owner (chat, subagent,
+    // task, and heartbeat runs all flow through here).
+    recordUsage(userId, usage);
 
     const assistantMsg = { role: 'assistant', content: content || '' };
     if (toolCalls.length) assistantMsg.tool_calls = toolCalls;
@@ -585,7 +602,7 @@ export async function runAgentContinuation({
   return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit });
 }
 
-async function runAgentLoop({
+export async function runAgentLoop({
   userId, conversationId, userText, settings,
   shouldAbort, signal, systemExtra, historyLimit,
 }) {
@@ -652,6 +669,27 @@ async function runAgentLoop({
     }
   };
 
+  // Weekly token budget already spent: don't start the model at all — leave
+  // a clear assistant message so the user knows what happened.
+  if (isOverLimit(userId)) {
+    const now = Date.now();
+    const info = db
+      .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
+      .run(conversationId, 'assistant', LIMIT_REACHED_MESSAGE, now);
+    publish(conversationId, {
+      type: 'message',
+      message: {
+        id: Number(info.lastInsertRowid),
+        role: 'assistant',
+        content: LIMIT_REACHED_MESSAGE,
+        created_at: now,
+      },
+    });
+    publish(conversationId, { type: 'run_started' });
+    publish(conversationId, { type: 'run_ended', status: 'done' });
+    return { finalText: LIMIT_REACHED_MESSAGE, status: 'done' };
+  }
+
   publish(conversationId, { type: 'run_started' });
   try {
     const systemContent = systemExtra ? `${SYSTEM_PROMPT}\n\n${systemExtra}` : SYSTEM_PROMPT;
@@ -713,7 +751,7 @@ async function runAgentLoop({
         .run(userText.length > 40 ? t + '…' : t, conversationId);
     }
 
-    return { finalText };
+    return { finalText, status };
   } catch (e) {
     // Whatever text streamed before the failure is already in the DB for
     // finished iterations; e.partialContent covers the in-flight one.
@@ -721,12 +759,12 @@ async function runAgentLoop({
       // The only abort source now is the user pressing stop.
       appendStoppedNote(e?.partialContent || '');
       status = 'stopped';
-      return { finalText: '' };
+      return { finalText: '', status };
     }
     // Human-friendly: our own errors already read well; anything else gets a prefix.
     fail(e?.message || 'Something went wrong', e?.partialContent);
     status = 'error';
-    return { finalText: '' };
+    return { finalText: '', status };
   } finally {
     publishAssistantRow();
     publish(conversationId, { type: 'run_ended', status });
