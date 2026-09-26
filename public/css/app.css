@@ -654,6 +654,10 @@ button.avatar.lg:hover { opacity: .85; }
    ============================================================ */
 .rx-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 0; }
 .rx-row:has(.rx-chip) { margin-top: 8px; }
+/* Consecutive assistant messages belong to one run: tuck them into a single
+   visual group and keep one + for the group instead of one per message. */
+.msg.assistant + .msg.assistant { margin-top: -8px; }
+.msg.assistant:has(+ .msg.assistant) .rx-row { display: none; }
 /* No reactions yet: the lone + floats in the gap under the message instead
    of reserving a full empty row. */
 .msg .bubble, .a-body { position: relative; }
@@ -679,11 +683,11 @@ button.avatar.lg:hover { opacity: .85; }
   background: var(--paper); color: var(--ink-2);
   box-shadow: 0 1px 2px rgba(28, 24, 19, .1);
   font-size: 17px; line-height: 1; cursor: pointer;
-  opacity: .55; transition: opacity .15s, background .12s;
+  opacity: 0; transition: opacity .15s, background .12s;
 }
 .msg:hover .rx-add, .rx-row:focus-within .rx-add { opacity: 1; }
 .rx-add:hover { background: var(--paper-2); color: var(--ink); border-color: var(--ink-2); }
-@media (hover: none) { .rx-add { opacity: .85; } }
+@media (hover: none) { .rx-add { opacity: .5; } }
 /* Chips inside the ink user bubble. */
 .msg.user .rx-chip { background: rgba(244, 240, 232, .13); border-color: transparent; color: var(--paper); }
 .msg.user .rx-chip:hover { background: rgba(244, 240, 232, .22); }
