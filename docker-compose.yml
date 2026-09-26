@@ -1,0 +1,26 @@
+services:
+  orion:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - orion-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PORT=3000
+      - DATA_DIR=/app/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  orion-data:
+  caddy-data:
+  caddy-config:
