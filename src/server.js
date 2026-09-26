@@ -53,7 +53,7 @@ import {
   deleteVaultItem,
   pruneExpiredRequests,
 } from './vault.js';
-import { runConversation, startRunIfIdle, abortRun } from './runs.js';
+import { runConversation, startRunIfIdle, abortRun, recoverStrandedRuns } from './runs.js';
 import { isRunLocked, requestStop, activeRunIds } from './runlock.js';
 import {
   validateTaskInput,
@@ -1388,6 +1388,14 @@ try {
   initHeartbeat();
 } catch (e) {
   console.warn('[orion] heartbeat failed to start:', e.message);
+}
+// A deploy or crash kills in-flight runs (the run lock and chain state are
+// in-memory), which can strand a freshly stored user message with no run
+// to answer it. Pick those up now so they get answered instead of hanging.
+try {
+  recoverStrandedRuns();
+} catch (e) {
+  console.warn('[orion] stranded-run recovery failed:', e.message);
 }
 
 const PORT = process.env.PORT || 3000;

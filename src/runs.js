@@ -197,6 +197,46 @@ export function startRunIfIdle(conversationId, userId, userText) {
 }
 
 /**
+ * Boot-time recovery for stranded user messages.
+ *
+ * The run lock and chain state live in memory, so a deploy or crash
+ * between a user message being stored and the agent run answering it
+ * leaves the message hanging: the POST handler already returned and
+ * nothing re-chains after a restart. On boot, any conversation whose
+ * latest message is a recent user message is handed to the normal run
+ * driver, so the question gets answered instead of hanging forever.
+ * Anything older than a couple of hours is left alone — answering
+ * ancient questions unprompted is worse than leaving them; the
+ * heartbeat will surface them if they still matter.
+ */
+export function recoverStrandedRuns() {
+  const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+  let rows = [];
+  try {
+    rows = db
+      .prepare(
+        `SELECT c.id AS conversation_id, c.user_id,
+                (SELECT content FROM messages WHERE conversation_id = c.id AND role = 'user' ORDER BY id DESC LIMIT 1) AS last_user_text
+         FROM conversations c
+         WHERE (SELECT role FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) = 'user'
+           AND (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) > ?`
+      )
+      .all(cutoff);
+  } catch (e) {
+    console.warn('[orion] stranded-run scan failed:', e?.message || e);
+    return;
+  }
+  for (const r of rows) {
+    try {
+      if (startRunIfIdle(r.conversation_id, r.user_id, String(r.last_user_text || ''))) {
+        console.log(`[orion] boot recovery: answering stranded message in conversation ${r.conversation_id}`);
+      }
+    } catch (e) {
+      console.warn(`[orion] boot recovery for conversation ${r.conversation_id} failed:`, e?.message || e);
+    }
+  }
+}
+/**
  * If the user sent messages into the chat while a task/heartbeat run held
  * the lock, they were queued but nothing will chain them (chaining only
  * happens inside this module's own driver). Hand the chat back to the
