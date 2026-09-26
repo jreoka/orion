@@ -866,7 +866,10 @@ async function sendMessage() {
 async function stopStream() {
   if (!S.activeId || !S.runActive) return;
   try {
-    await api(`/api/conversations/${S.activeId}/stop`, { method: 'POST' });
+    const d = await api(`/api/conversations/${S.activeId}/stop`, { method: 'POST' });
+    // The server had nothing running (e.g. the run died with a deploy):
+    // no run_ended will ever arrive, so clear the stuck stop button now.
+    if (d && d.stopped === false) setRunActive(false);
   } catch (e) {
     toast(e.message || 'Stop failed', 'error');
   }

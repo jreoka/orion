@@ -572,7 +572,14 @@ button.avatar.lg:hover { opacity: .85; }
 /* ============================================================
    Reactions
    ============================================================ */
-.rx-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.rx-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 0; }
+.rx-row:has(.rx-chip) { margin-top: 8px; }
+/* No reactions yet: the lone + floats in the gap under the message instead
+   of reserving a full empty row. */
+.msg .bubble, .a-body { position: relative; }
+.rx-row:not(:has(.rx-chip)) {
+  position: absolute; top: 100%; right: 4px; margin: 6px 0 0;
+}
 .rx-chip {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 15px; line-height: 1;

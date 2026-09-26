@@ -14,7 +14,7 @@ const SHELL = [
 // App code: always try the network first so deploys land without a hard
 // refresh; fall back to cache when offline. Icons are immutable blobs,
 // so they stay cache-first.
-const NETWORK_FIRST = new Set(['/', '/index.html', '/css/app.css', '/js/app.js', '/manifest.json']);
+const NETWORK_FIRST = new Set(['/', '/index.html', '/css/app.css', '/js/app.js', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png']);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
