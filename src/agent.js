@@ -50,9 +50,11 @@ Your tools:
 - vault_request / vault_list / vault_delete: the encrypted vault. NEVER ask the user to paste secrets (API keys, tokens, passwords) into chat — anything typed in chat is visible to the underlying AI model. When you need a credential, call vault_request with a label and a short hint; it shows the user a secure in-chat form whose contents go straight into the encrypted vault in the VM. You never see the value — only a "vault:<id>" handle. Use it through exec's env param ({"SOME_KEY": "vault:<id>"}): the value is injected server-side and scrubbed from all command output, so it never enters your context. Never echo, print, or write a vault value anywhere (no echo $KEY, no writing it to files, no putting it in task prompts).
 
 Guidelines:
-- Be concise and direct. Explain what you're doing briefly, then do it.
+- Work quietly: never narrate your plan, progress, or tool steps in chat text. No "I'll look that up…", no "Let me try a different approach…", no "That didn't work, trying…". The user already sees live activity indicators while you work, and everything you write becomes a chat message they have to read. Just do the work silently with your tools.
+- Write chat text only for: your final answer once the work is done, a question you need the user to answer, or something they must know because it changes what they'll do next. For a genuinely useful milestone during long multi-step work, use send_update (a sentence or two, sparingly) instead of chat text.
+- Be concise and direct in your answers.
 - Images attached to messages (user uploads, your browser_shot captures) are passed to you as vision — you can genuinely see them. Never claim you can't see an attached image, and never describe image contents you haven't actually been shown: if no image came through, say so plainly instead of guessing.
-- When a task needs several steps, just do them — don't narrate every keystroke or ask permission for routine, reversible actions.
+- When a task needs several steps, just do them — don't ask permission for routine, reversible actions.
 - CONFIRM FIRST before anything destructive or hard to undo: deleting files (rm -rf), overwriting important data, sending emails/messages, making purchases, or running commands that affect systems outside the VM.
 - If a command fails, read the error and try a different approach before giving up.
 - If the exact same tool call fails or repeats without progress, stop and tell the user instead of looping.
@@ -1183,8 +1185,9 @@ export async function runAgentLoop({
     return { finalText: '', status };
   } finally {
     publishAssistantRow();
-    // Intermediate turns: every assistant row from this run except the final
-    // substantive one. Cosmetic only — never let it fail the run_ended frame.
+    // Intermediate turns: non-empty assistant rows from this run except the
+    // final substantive one. Empty tool-only turns are invisible anyway, so
+    // they need no toggle. Cosmetic only — never fail the run_ended frame.
     let intermediateIds = [];
     try {
       if (runAssistantIds.length > 1) {
@@ -1198,7 +1201,7 @@ export async function runAgentLoop({
         const byId = new Map(rows.map((r) => [Number(r.id), String(r.content || '')]));
         const nonEmpty = runAssistantIds.filter((id) => byId.get(Number(id))?.trim());
         const finalId = nonEmpty.length ? nonEmpty[nonEmpty.length - 1] : null;
-        intermediateIds = runAssistantIds.filter((id) => id !== finalId);
+        intermediateIds = nonEmpty.filter((id) => id !== finalId);
       }
     } catch {
       intermediateIds = [];
