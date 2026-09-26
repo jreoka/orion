@@ -400,7 +400,7 @@ button.avatar.lg:hover { opacity: .85; }
 .menu-sep { height: 1px; background: var(--hairline); margin: 5px 8px; }
 
 .head-user .menu {
-  top: calc(100% + 10px); bottom: auto; left: -4px; right: auto;
+  top: calc(100% + 10px); bottom: auto; left: auto; right: 0;
   min-width: 228px;
 }
 .head-spacer { width: 42px; } /* balances the avatar so the wordmark stays centered */
