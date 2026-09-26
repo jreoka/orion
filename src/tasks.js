@@ -9,7 +9,7 @@ import { db, getSetting, getOrCreateConversation } from './db.js';
 import { httpError } from './auth.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
-import { registerController, unregisterController, startRunIfIdle, chainPendingUserMessages } from './runs.js';
+import { registerController, unregisterController, startRunIfIdle, chainPendingUserMessages, trackExecStart, trackExecEnd, clearExecTracking } from './runs.js';
 import { notifyConversation } from './push.js';
 
 const jobs = new Map(); // taskId -> { type: 'cron', job } | { type: 'timeout', timer }
@@ -115,6 +115,8 @@ export async function fireTask(taskId, { manual = false } = {}) {
       settings: globalSettings(),
       shouldAbort: () => isStopRequested(convId),
       signal: controller.signal,
+      onExecStart: (execId) => trackExecStart(convId, task.user_id, execId),
+      onExecEnd: (execId) => trackExecEnd(convId, execId),
     });
     finalText = r?.finalText || '';
     userMsgId = r?.userMsgId ?? null;
@@ -124,6 +126,7 @@ export async function fireTask(taskId, { manual = false } = {}) {
     console.error(`[orion] task ${taskId} run threw:`, e?.message || e);
   } finally {
     unregisterController(convId);
+    clearExecTracking(convId);
     clearStop(convId);
     releaseRun(convId);
   }

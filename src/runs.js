@@ -43,6 +43,11 @@ export function trackExecEnd(conversationId, execId) {
   if (activeExecs.get(id)?.execId === execId) activeExecs.delete(id);
 }
 
+/** Drop any exec tracking for a conversation (run cleanup, belt-and-braces). */
+export function clearExecTracking(conversationId) {
+  activeExecs.delete(Number(conversationId));
+}
+
 /**
  * Abort the in-flight work of the current run, if any: the LLM fetch via
  * its AbortController, and any running sandbox exec via its process

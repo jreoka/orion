@@ -5,7 +5,7 @@
 import { db, getSetting, getOrCreateConversation } from './db.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
-import { registerController, unregisterController, chainPendingUserMessages } from './runs.js';
+import { registerController, unregisterController, chainPendingUserMessages, trackExecStart, trackExecEnd, clearExecTracking } from './runs.js';
 import { notifyConversation } from './push.js';
 
 const CHECK_MS = 5 * 60 * 1000;
@@ -99,6 +99,8 @@ export async function runHeartbeatFor(userId) {
       signal: controller.signal,
       systemExtra: HEARTBEAT_SYSTEM_EXTRA,
       historyLimit: 20,
+      onExecStart: (execId) => trackExecStart(convId, userId, execId),
+      onExecEnd: (execId) => trackExecEnd(convId, execId),
     });
     finalText = r?.finalText || '';
     userMsgId = r?.userMsgId ?? null;
@@ -152,6 +154,7 @@ export async function runHeartbeatFor(userId) {
     return { ok: false, reason: 'error' };
   } finally {
     unregisterController(convId);
+    clearExecTracking(convId);
     clearStop(convId);
     releaseRun(convId);
     // The user may have written into the main chat mid-check: answer them.
