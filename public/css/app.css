@@ -466,6 +466,8 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
 .admin-head + .card, .card:first-of-type { border-top: none; padding-top: 0; }
 .card h2 { font-size: 21px; margin-bottom: 6px; }
 .card > .muted { margin-bottom: 24px; font-size: 14.5px; font-style: italic; }
+.danger-zone h2 { color: var(--danger); }
+.danger-zone .muted { margin-bottom: 16px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
 
 .table-wrap { overflow-x: auto; margin: 0 -6px; padding: 0 6px; }

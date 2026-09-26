@@ -28,6 +28,7 @@ import {
   confirmTotpSetup,
   disableTotp,
   getTotpStatus,
+  totpEnabled,
   verifySecondFactor,
   consumeLoginChallenge,
 } from './totp.js';
@@ -377,6 +378,33 @@ app.get('/api/sandbox/status', requireAuth, asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/sandbox/reset', requireAuth, asyncRoute(async (req, res) => {
+  await sandboxReset(req.user.id);
+  res.json({ ok: true });
+}));
+
+// ---- full reset -----------------------------------------------------------
+// Wipes the main chat (messages + attachment files) AND the sandbox, then
+// starts the sandbox fresh. Requires the account password, plus a 2FA code
+// when 2FA is enabled.
+app.post('/api/reset', requireAuth, asyncRoute(async (req, res) => {
+  const { password, totp_code } = req.body || {};
+  if (!verifyPassword(req.user.id, password || '')) {
+    return res.status(403).json({ error: 'Wrong password.' });
+  }
+  if (totpEnabled(req.user.id) && !verifySecondFactor(req.user.id, totp_code || '')) {
+    return res.status(403).json({ error: 'Wrong two-factor code.' });
+  }
+  const convId = getOrCreateMainConversation(req.user.id);
+  abortRun(convId); // stop any in-flight run before wiping its messages
+  const msgIds = db.prepare('SELECT id FROM messages WHERE conversation_id = ?').all(convId).map((m) => m.id);
+  if (msgIds.length) {
+    const ph = msgIds.map(() => '?').join(',');
+    db.prepare(`DELETE FROM attachments WHERE message_id IN (${ph})`).run(...msgIds);
+    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(convId);
+  }
+  db.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?').run('Main chat', Date.now(), convId);
+  deleteConversationFiles(convId);
+  publish(convId, { type: 'chat_cleared' });
   await sandboxReset(req.user.id);
   res.json({ ok: true });
 }));

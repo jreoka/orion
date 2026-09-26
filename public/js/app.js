@@ -380,7 +380,6 @@ function wireUserMenu() {
       go('login');
     } else if (act === 'settings') go('settings');
     else if (act === 'password') changePasswordModal();
-    else if (act === 'sandbox') resetSandboxModal();
     else if (act === 'admin') go('admin');
   });
 }
@@ -416,20 +415,6 @@ function changePasswordModal() {
       toast('Password changed');
     } catch (ex) { err.textContent = ex.message; err.hidden = false; }
   });
-}
-
-async function resetSandboxModal() {
-  const ok = await confirmDialog({
-    title: 'Reset sandbox?',
-    message: 'This wipes your agent\u2019s VM and files, then starts it fresh. Your chats are kept.',
-    confirmLabel: 'Reset sandbox',
-    danger: true
-  });
-  if (!ok) return;
-  try {
-    await api('/api/sandbox/reset', { method: 'POST' });
-    toast('Sandbox reset');
-  } catch (e) { toast(e.message, 'error'); }
 }
 
 /* ---------- chat view entry ---------- */
@@ -613,6 +598,7 @@ function openEventStream(convId) {
   });
   es.addEventListener('run_started', () => setRunActive(true));
   es.addEventListener('run_ended', () => setRunActive(false));
+  es.addEventListener('chat_cleared', () => clearChatState()); // another client reset the chat
   es.addEventListener('message', (e) => onBusMessage(parseBusEvent(e)?.message));
   es.addEventListener('token', (e) => onBusToken(parseBusEvent(e)));
   es.addEventListener('tool', (e) => onBusTool(parseBusEvent(e)));
@@ -1089,6 +1075,64 @@ function wireSettings() {
   });
   wireSessionsTab();
   wireHeartbeatTab();
+  $('#reset-everything').onclick = resetEverythingModal;
+}
+
+/* ---------- full reset: chat + sandbox, password + 2FA confirmed ---------- */
+async function resetEverythingModal() {
+  // Ask for the 2FA status fresh so the code field only appears when needed.
+  let need2fa = false;
+  try { need2fa = !!(await api('/api/auth/2fa/status')).enabled; } catch {}
+  const bd = openModal(`
+    <h3>Reset chat &amp; sandbox?</h3>
+    <p class="muted">This wipes <b>all messages</b> in your chat and <b>everything</b> in the agent's sandbox — files, installed tools, the works. The sandbox starts over fresh. This can't be undone.</p>
+    <form id="reset-form">
+      <label class="field"><span>Your password</span>
+        <input id="reset-password" type="password" autocomplete="current-password" required>
+      </label>
+      ${need2fa ? `<label class="field"><span>Two-factor code</span>
+        <input id="reset-totp" type="text" inputmode="numeric" autocomplete="one-time-code" required maxlength="8">
+      </label>` : ''}
+      <p id="reset-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-x="cancel">Cancel</button>
+        <button type="submit" class="btn danger-ghost" id="reset-submit">Reset everything</button>
+      </div>
+    </form>`);
+  bd.querySelector('[data-x=cancel]').onclick = closeModal;
+  bd.querySelector('#reset-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = bd.querySelector('#reset-error');
+    const btn = bd.querySelector('#reset-submit');
+    err.hidden = true;
+    btn.disabled = true;
+    btn.textContent = 'Resetting…';
+    try {
+      await api('/api/reset', { method: 'POST', body: {
+        password: bd.querySelector('#reset-password').value,
+        totp_code: need2fa ? bd.querySelector('#reset-totp').value : undefined
+      }});
+      closeModal();
+      clearChatState();
+      toast('Chat and sandbox reset');
+    } catch (ex) {
+      err.textContent = ex.message || 'Reset failed.';
+      err.hidden = false;
+      btn.disabled = false;
+      btn.textContent = 'Reset everything';
+    }
+  });
+}
+
+// Drop every message (and any in-flight streaming state) from the chat view.
+function clearChatState() {
+  S.messages = [];
+  S.liveIds.clear();
+  S.buffers.clear();
+  S.toolRows.clear();
+  setRunActive(false);
+  renderMessages();
+  updateComposer();
 }
 
 /* ----- security ----- */

@@ -85,7 +85,6 @@
             <div id="user-menu" class="menu" hidden role="menu">
               <button data-act="settings" role="menuitem">Settings</button>
               <button data-act="password" role="menuitem">Change password</button>
-              <button data-act="sandbox" role="menuitem">Reset sandbox</button>
               <button data-act="admin" role="menuitem" id="menu-admin" hidden>Admin panel</button>
               <div class="menu-sep"></div>
               <button data-act="logout" role="menuitem" class="danger">Log out</button>
@@ -240,6 +239,12 @@
             <p class="muted small">Get notified on this device when an agent run finishes, a scheduled task reports back, or a heartbeat has something to say — even when Orion isn't open.</p>
             <div id="notif-box"><p class="muted">Loading…</p></div>
           </div>
+        </div>
+
+        <div class="card danger-zone">
+          <h2>Reset</h2>
+          <p class="muted small">Wipes the chat and the agent's sandbox — messages, files, everything. Starts completely fresh. This can't be undone.</p>
+          <button class="btn danger-ghost" id="reset-everything">Reset chat &amp; sandbox…</button>
         </div>
       </div>
     </section>
