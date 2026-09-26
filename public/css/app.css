@@ -410,8 +410,12 @@ button.avatar.lg:hover { opacity: .85; }
   min-height: 46px;
 }
 .menu button:hover { background: var(--paper-2); }
+.menu button:disabled { opacity: .45; cursor: default; }
+.menu button:disabled:hover { background: transparent; }
 .menu button.danger { color: var(--danger); }
 .menu-sep { height: 1px; background: var(--hairline); margin: 5px 8px; }
+/* Admin users table: actions live behind a ⋯ menu. */
+.u-actions { position: relative; display: inline-block; }
 
 .head-user .menu {
   top: calc(100% + 10px); bottom: auto; left: auto; right: 0;

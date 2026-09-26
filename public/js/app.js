@@ -1688,82 +1688,125 @@ function renderAdminUsers() {
       <td class="muted">${esc(fmtDate(u.created_at))}</td>
       <td><div class="u-actions"></div></td>`;
     const acts = tr.querySelector('.u-actions');
-
-    const mkBtn = (label, fn, { danger = false, disabled = false } = {}) => {
-      const b = document.createElement('button');
-      b.className = 'link-btn' + (danger ? ' danger' : '');
-      b.textContent = label;
-      b.disabled = disabled;
-      b.onclick = fn;
-      acts.appendChild(b);
-    };
-
-    mkBtn(u.role === 'admin' ? 'Remove admin' : 'Make admin', async () => {
-      try {
-        await api(`/api/admin/users/${u.id}`, { method: 'PATCH', body: { role: u.role === 'admin' ? 'user' : 'admin' } });
-        await loadAdminUsers();
-        toast(`${u.username} is ${u.role === 'admin' ? 'no longer' : 'now'} an admin`);
-      } catch (e) { toast(e.message, 'error'); }
-    }, { disabled: isSelf });
-
-    mkBtn(u.disabled ? 'Enable' : 'Disable', async () => {
-      try {
-        await api(`/api/admin/users/${u.id}`, { method: 'PATCH', body: { disabled: !u.disabled } });
-        await loadAdminUsers();
-        toast(u.disabled ? `${u.username} enabled` : `${u.username} disabled`);
-      } catch (e) { toast(e.message, 'error'); }
-    }, { disabled: isSelf });
-
-    mkBtn('Limit', async () => {
-      const cur = u.weekly_token_limit;
-      const v = await promptDialog({
-        title: 'Weekly token limit',
-        message: `For ${u.username}. Accepts 1K, 1M, 10M, 1B, 3T … Empty = unlimited.`,
-        value: cur === null || cur === undefined ? '' : String(cur),
-        placeholder: 'e.g. 1M',
-        okLabel: 'Save limit',
-      });
-      if (v === null) return; // cancelled
-      const parsed = parseTokenLimit(v);
-      if (!parsed.ok) { toast(parsed.error, 'error'); return; }
-      try {
-        await api(`/api/admin/users/${u.id}/limit`, { method: 'PATCH', body: { weekly_token_limit: parsed.value } });
-        await loadAdminUsers();
-        toast(`Limit updated for ${u.username}`);
-      } catch (e) { toast(e.message, 'error'); }
-    });
-
-    mkBtn('Reset usage', async () => {
-      const ok = await confirmDialog({
-        title: 'Reset usage?',
-        message: `Zero ${u.username}\u2019s token usage for this week?`,
-        confirmLabel: 'Reset'
-      });
-      if (!ok) return;
-      try {
-        await api(`/api/admin/users/${u.id}/usage/reset`, { method: 'POST' });
-        await loadAdminUsers();
-        toast(`Usage reset for ${u.username}`);
-      } catch (e) { toast(e.message, 'error'); }
-    });
-
-    mkBtn('Delete', async () => {
-      const ok = await confirmDialog({
-        title: 'Delete user?',
-        message: `${u.username}\u2019s account, chats, and sandbox will be removed. This can\u2019t be undone.`,
-        confirmLabel: 'Delete',
-        danger: true
-      });
-      if (!ok) return;
-      try {
-        await api(`/api/admin/users/${u.id}`, { method: 'DELETE' });
-        await loadAdminUsers();
-        toast(`${u.username} deleted`);
-      } catch (e) { toast(e.message, 'error'); }
-    }, { danger: true, disabled: isSelf });
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'icon-btn';
+    menuBtn.setAttribute('aria-label', `Actions for ${u.username}`);
+    menuBtn.setAttribute('aria-haspopup', 'menu');
+    menuBtn.textContent = '\u22EF';
+    menuBtn.onclick = (e) => { e.stopPropagation(); openUserActionsMenu(u, menuBtn, isSelf); };
+    acts.appendChild(menuBtn);
 
     body.appendChild(tr);
   }
+}
+
+
+/* ---------- admin user actions menu ---------- */
+function closeUserActionsMenu() {
+  document.getElementById('user-actions-menu')?.remove();
+  document.removeEventListener('click', closeUserActionsMenuOutside, true);
+  document.removeEventListener('keydown', closeUserActionsMenuEsc, true);
+}
+function closeUserActionsMenuOutside(e) {
+  if (!e.target.closest('#user-actions-menu')) closeUserActionsMenu();
+}
+function closeUserActionsMenuEsc(e) {
+  if (e.key === 'Escape') closeUserActionsMenu();
+}
+
+function openUserActionsMenu(u, anchor, isSelf) {
+  const wasOpen = !!document.getElementById('user-actions-menu');
+  closeUserActionsMenu();
+  if (wasOpen) return; // tapping the button again dismisses
+  const menu = document.createElement('div');
+  menu.id = 'user-actions-menu';
+  menu.className = 'menu';
+  menu.setAttribute('role', 'menu');
+  const item = (label, fn, { danger = false, disabled = false, sep = false } = {}) => {
+    if (sep) {
+      const s = document.createElement('div');
+      s.className = 'menu-sep';
+      menu.appendChild(s);
+    }
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.setAttribute('role', 'menuitem');
+    if (danger) b.classList.add('danger');
+    b.disabled = disabled;
+    b.onclick = async () => { closeUserActionsMenu(); await fn(); };
+    menu.appendChild(b);
+  };
+
+  item(u.role === 'admin' ? 'Remove admin' : 'Make admin', async () => {
+    try {
+      await api(`/api/admin/users/${u.id}`, { method: 'PATCH', body: { role: u.role === 'admin' ? 'user' : 'admin' } });
+      await loadAdminUsers();
+      toast(`${u.username} is ${u.role === 'admin' ? 'no longer' : 'now'} an admin`);
+    } catch (e) { toast(e.message, 'error'); }
+  }, { disabled: isSelf });
+
+  item(u.disabled ? 'Enable' : 'Disable', async () => {
+    try {
+      await api(`/api/admin/users/${u.id}`, { method: 'PATCH', body: { disabled: !u.disabled } });
+      await loadAdminUsers();
+      toast(u.disabled ? `${u.username} enabled` : `${u.username} disabled`);
+    } catch (e) { toast(e.message, 'error'); }
+  }, { disabled: isSelf });
+
+  item('Set token limit\u2026', async () => {
+    const cur = u.weekly_token_limit;
+    const v = await promptDialog({
+      title: 'Weekly token limit',
+      message: `For ${u.username}. Accepts 1K, 1M, 10M, 1B, 3T \u2026 Empty = unlimited.`,
+      value: cur === null || cur === undefined ? '' : String(cur),
+      placeholder: 'e.g. 1M',
+      okLabel: 'Save limit',
+    });
+    if (v === null) return; // cancelled
+    const parsed = parseTokenLimit(v);
+    if (!parsed.ok) { toast(parsed.error, 'error'); return; }
+    try {
+      await api(`/api/admin/users/${u.id}/limit`, { method: 'PATCH', body: { weekly_token_limit: parsed.value } });
+      await loadAdminUsers();
+      toast(`Limit updated for ${u.username}`);
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  item('Reset usage', async () => {
+    const ok = await confirmDialog({
+      title: 'Reset usage?',
+      message: `Zero ${u.username}\u2019s token usage for this week?`,
+      confirmLabel: 'Reset'
+    });
+    if (!ok) return;
+    try {
+      await api(`/api/admin/users/${u.id}/usage/reset`, { method: 'POST' });
+      await loadAdminUsers();
+      toast(`Usage reset for ${u.username}`);
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  item('Delete', async () => {
+    const ok = await confirmDialog({
+      title: 'Delete user?',
+      message: `${u.username}\u2019s account, chats, and sandbox will be removed. This can\u2019t be undone.`,
+      confirmLabel: 'Delete',
+      danger: true
+    });
+    if (!ok) return;
+    try {
+      await api(`/api/admin/users/${u.id}`, { method: 'DELETE' });
+      await loadAdminUsers();
+      toast(`${u.username} deleted`);
+    } catch (e) { toast(e.message, 'error'); }
+  }, { danger: true, disabled: isSelf, sep: true });
+
+  anchor.parentElement.appendChild(menu);
+  // Skip the click that opened the menu.
+  setTimeout(() => {
+    document.addEventListener('click', closeUserActionsMenuOutside, true);
+    document.addEventListener('keydown', closeUserActionsMenuEsc, true);
+  }, 0);
 }
 
 /* ---------- WebAuthn helpers ---------- */
