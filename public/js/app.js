@@ -31,7 +31,10 @@ async function api(path, { method = 'GET', body } = {}) {
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined
   });
-  if (res.status === 401 && onUnauthorized) { onUnauthorized(); return null; }
+  // A 401 only means "the session died" when the client believed it had one.
+  // A wrong password at the login/signup form also 401s — that must fall
+  // through to the normal throw below so the form shows the server's error.
+  if (res.status === 401 && onUnauthorized && S.me) { onUnauthorized(); return null; }
   let data = {};
   try { data = await res.json(); } catch { /* non-JSON error body */ }
   if (!res.ok) throw new Error(data.error || data.message || `Request failed (${res.status})`);
@@ -179,7 +182,14 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.addEventListener('message', (event) => {
       const data = event.data || {};
       if (data.type === 'orion-navigate') {
-        if (route() !== 'chat') location.hash = '#/chat';
+        // The service worker posts the push deep-link (e.g. '#/chat/123').
+        // Honor it instead of always landing on the most recent chat.
+        const m = /^#\/chat\/(\d+)$/.exec(String(data.url || ''));
+        const target = m ? Number(m[1]) : null;
+        if (target && target !== S.activeId) {
+          if (route() !== 'chat') location.hash = '#/chat'; // show the chat view first
+          switchConversation(target);
+        } else if (route() !== 'chat') location.hash = '#/chat';
         else renderChat();
       }
     });
@@ -189,7 +199,20 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 /* ---------- boot ---------- */
 async function boot() {
   onUnauthorized = () => {
-    S.me = null;
+    // Session died (or was revoked): scrub every trace of the previous
+    // user's state before showing login, so a different user signing in on
+    // this device can't see chats rendered from memory. Mirrors the logout
+    // cleanup in wireUserMenu, plus the streaming buffers.
+    // NOTE: deliberately not setRunActive(false) — that fires
+    // loadConversationsQuiet(), whose 401 would re-enter onUnauthorized
+    // and recurse forever. The DOM effects are reproduced inline instead.
+    closeEventStream();
+    S.runActive = false;
+    S.me = null; S.activeId = null; S.messages = [];
+    S.conversations = [];
+    S.hasMoreOlder = false; S.loadingOlder = false;
+    S.buffers.clear(); S.toolRows.clear(); S.liveIds.clear();
+    renderSidebar(); updateComposer();
     if (route() !== 'login') go('login'); else render();
   };
   try {
@@ -388,6 +411,22 @@ function showOlderSpinner(on) {
 // Prepend an older batch fetched from the server, keeping the view stable.
 async function loadOlder() {
   if (S.loadingOlder || !S.hasMoreOlder || !S.messages.length || !S.activeId) return;
+  const box = $('#messages');
+  // trimRenderedTop() drops DOM nodes for messages that are still loaded in
+  // S.messages. Re-attach those first — otherwise scrolling up dead-ends on
+  // messages the client already has but can't see.
+  const inDom = new Set();
+  for (const n of box.querySelectorAll(':scope > [data-mid]')) inDom.add(Number(n.dataset.mid));
+  const missing = S.messages.filter((m) => !inDom.has(m.id));
+  if (missing.length) {
+    const prevHeight = box.scrollHeight;
+    const prevTop = box.scrollTop;
+    const frag = document.createDocumentFragment();
+    for (const m of missing) frag.appendChild(messageEl(m)); // S.messages order: oldest first
+    box.insertBefore(frag, ensureOlderSpinner().nextSibling);
+    box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
+    return;
+  }
   S.loadingOlder = true;
   showOlderSpinner(true);
   try {
@@ -395,7 +434,6 @@ async function loadOlder() {
     const batch = data.messages || [];
     S.hasMoreOlder = !!data.hasMoreOlder;
     if (!batch.length) return;
-    const box = $('#messages');
     const prevHeight = box.scrollHeight;
     const prevTop = box.scrollTop;
     S.messages = [...batch, ...S.messages];
@@ -1951,7 +1989,7 @@ async function submit2fa(e) {
   const errEl = $('#auth-2fa-error');
   errEl.hidden = true;
   try {
-    const d = await api('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ challenge: _twofaChallenge, code }) });
+    const d = await api('/api/auth/2fa/verify', { method: 'POST', body: { challenge: _twofaChallenge, code } });
     if (d.need_2fa) {
       show2faStep(d.challenge);
       errEl.textContent = 'Try again — that code didn’t match.';
@@ -1976,7 +2014,7 @@ async function passkeyLogin() {
   try {
     const { token, options } = await api('/api/auth/passkey/login/options', { method: 'POST' });
     const cred = await navigator.credentials.get({ publicKey: webauthnOptionsFromJson(options) });
-    const d = await api('/api/auth/passkey/login/verify', { method: 'POST', body: JSON.stringify({ token, response: webauthnCredToJson(cred) }) });
+    const d = await api('/api/auth/passkey/login/verify', { method: 'POST', body: { token, response: webauthnCredToJson(cred) } });
     S.me = d;
 
     S.activeId = null;
@@ -2160,7 +2198,7 @@ function render2faBox() {
         const errEl = $('#twofa-setup-error');
         errEl.hidden = true;
         try {
-          const r = await api('/api/auth/2fa/confirm', { method: 'POST', body: JSON.stringify({ code }) });
+          const r = await api('/api/auth/2fa/confirm', { method: 'POST', body: { code } });
           showBackupCodes(r.backup_codes || []);
           _twofaStatus = await api('/api/auth/2fa/status');
           render2faBox();
@@ -2232,7 +2270,7 @@ async function disable2faModal() {
   const pw = await passwordConfirmModal('Disable 2FA', 'Enter your password to turn off two-factor authentication.');
   if (!pw) return;
   try {
-    await api('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: pw }) });
+    await api('/api/auth/2fa/disable', { method: 'POST', body: { password: pw } });
     _twofaStatus = await api('/api/auth/2fa/status');
     render2faBox();
     toast('2FA disabled');
@@ -2292,7 +2330,7 @@ async function registerPasskey() {
     const cred = await navigator.credentials.create({ publicKey: webauthnOptionsFromJson(options) });
     await api('/api/auth/passkey/register/verify', {
       method: 'POST',
-      body: JSON.stringify({ token, response: webauthnCredToJson(cred), name: name.trim() || undefined }),
+      body: { token, response: webauthnCredToJson(cred), name: name.trim() || undefined },
     });
     const d = await api('/api/auth/passkeys');
     _passkeys = Array.isArray(d) ? d : [];
