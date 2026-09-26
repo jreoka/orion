@@ -39,6 +39,33 @@ function touchHeartbeatAt(userId, now) {
   ).run(userId, now);
 }
 
+// Delete everything one heartbeat check wrote, except messages from the
+// real user (they may have written mid-check). The injected prompt must
+// never linger as a message the user "sent" — that is confusing. Partial
+// heartbeat output from a failed check is scrubbed the same way.
+function scrubHeartbeatMessages(convId, maxIdBefore, ownUserMsgId) {
+  const ids = db
+    .prepare(
+      `SELECT id FROM messages WHERE conversation_id = ? AND id > ?
+       AND (role != 'user' OR id = ?)`
+    )
+    .all(convId, maxIdBefore, ownUserMsgId ?? -1)
+    .map((r) => r.id);
+  if (!ids.length) return;
+  const ph = ids.map(() => '?').join(',');
+  db.prepare(`DELETE FROM attachments WHERE message_id IN (${ph})`).run(...ids);
+  db.prepare(`DELETE FROM messages WHERE id IN (${ph})`).run(...ids);
+}
+
+// Delete just the injected heartbeat prompt, keeping the assistant's
+// report: the report then reads as Orion speaking up on its own, which is
+// what actually happened.
+function deleteHeartbeatPrompt(convId, userMsgId) {
+  if (userMsgId == null) return;
+  db.prepare('DELETE FROM attachments WHERE message_id = ?').run(userMsgId);
+  db.prepare("DELETE FROM messages WHERE id = ? AND role = 'user'").run(userMsgId);
+}
+
 export async function runHeartbeatFor(userId) {
   const prompt = getHeartbeatPrompt(userId);
   const convId = getOrCreateConversation(userId);
@@ -69,25 +96,18 @@ export async function runHeartbeatFor(userId) {
     userMsgId = r?.userMsgId ?? null;
 
     const now = Date.now();
-    if ((finalText || '').trim() === 'HEARTBEAT_QUIET') {
+    const trimmed = (finalText || '').trim();
+    if (trimmed === '' || trimmed === 'HEARTBEAT_QUIET') {
       // Nothing to report: delete the check's own messages (and their
       // attachments) so the main chat stays clean — but never touch
       // messages the user sent mid-check.
-      const ids = db
-        .prepare(
-          `SELECT id FROM messages WHERE conversation_id = ? AND id > ?
-           AND (role != 'user' OR id = ?)`
-        )
-        .all(convId, maxIdBefore, userMsgId ?? -1)
-        .map((r) => r.id);
-      if (ids.length) {
-        const ph = ids.map(() => '?').join(',');
-        db.prepare(`DELETE FROM attachments WHERE message_id IN (${ph})`).run(...ids);
-        db.prepare(`DELETE FROM messages WHERE id IN (${ph})`).run(...ids);
-      }
+      scrubHeartbeatMessages(convId, maxIdBefore, userMsgId);
       touchHeartbeatAt(userId, now);
       return { ok: true, quiet: true };
     }
+    // The heartbeat had something to say: drop the injected prompt (the
+    // user never typed it) but keep the report.
+    deleteHeartbeatPrompt(convId, userMsgId);
     touchHeartbeatAt(userId, now);
     // The heartbeat had something to say: ping the user if they aren't
     // watching the chat live.
@@ -100,6 +120,27 @@ export async function runHeartbeatFor(userId) {
     return { ok: true, quiet: false };
   } catch (e) {
     console.error(`[orion] heartbeat for user ${userId} threw:`, e?.message || e);
+    // The check died mid-run: remove the injected prompt so it never
+    // masquerades as the user, and scrub partial heartbeat output. Real
+    // user messages are always preserved.
+    try {
+      // runAgent persists the prompt before the loop runs, but throws away
+      // its id when the loop fails — locate it by exact content instead.
+      // (The prompt text is fixed per user; only the heartbeat writes it.)
+      let pid = userMsgId;
+      if (pid == null) {
+        pid =
+          db
+            .prepare(
+              `SELECT id FROM messages WHERE conversation_id = ? AND id > ?
+               AND role = 'user' AND content = ? ORDER BY id DESC LIMIT 1`
+            )
+            .get(convId, maxIdBefore, prompt || DEFAULT_PROMPT)?.id ?? null;
+      }
+      scrubHeartbeatMessages(convId, maxIdBefore, pid ?? -1);
+    } catch (se) {
+      console.error('[orion] heartbeat error-path cleanup failed:', se?.message || se);
+    }
     return { ok: false, reason: 'error' };
   } finally {
     unregisterController(convId);
