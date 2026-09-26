@@ -239,7 +239,8 @@ document.addEventListener('DOMContentLoaded', boot);
 
 /* ---------- temporary layout diagnostics (empty-state scroll) ---------- */
 function layoutDebugOverlay() {
-  if (!new URLSearchParams(location.search).has('debuglayout')) return;
+  // TEMPORARY: always report (was ?debuglayout-gated). Remove after diagnosis.
+  const silent = !new URLSearchParams(location.search).has('debuglayout');
   setTimeout(() => {
     const r = (el) => {
       if (!el) return 'missing';
@@ -271,6 +272,7 @@ function layoutDebugOverlay() {
       headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       body: JSON.stringify(metrics),
     }).catch(() => {});
+    if (silent) return; // report only, no overlay
     const lines = Object.entries(metrics).map(([k, v]) => `${k}: ${v}`);
     const pre = document.createElement('pre');
     pre.textContent = lines.join('\n');
