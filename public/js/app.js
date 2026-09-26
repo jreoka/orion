@@ -161,9 +161,14 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
     // When a new service worker takes over (e.g. a fresh deploy), reload
     // once so the tab runs the new code without a manual hard refresh.
+    // The composer draft is persisted on every keystroke (see wireChat),
+    // so reloading never eats what the user was typing.
     let swReloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (!swReloaded) { swReloaded = true; location.reload(); }
+      if (swReloaded) return;
+      swReloaded = true;
+      toast('Orion updated — reloading…');
+      setTimeout(() => location.reload(), 900);
     });
     // A push-notification tap while a tab is open: the service worker
     // focuses it and asks it to navigate to the conversation.
@@ -761,11 +766,19 @@ function wireUserMenuOnce() { if (!userMenuWired) { wireUserMenu(); userMenuWire
 function wireChat() {
   const input = $('#composer-input');
 
+  // Persist the draft so a tab reload (e.g. the auto-reload after a deploy)
+  // never eats what the user was typing.
+  const DRAFT_KEY = 'orion-composer-draft';
+  const saveDraft = () => { try { sessionStorage.setItem(DRAFT_KEY, input.value); } catch {} };
+  const clearDraft = () => { try { sessionStorage.removeItem(DRAFT_KEY); } catch {} };
+  S.clearComposerDraft = clearDraft;
+
   // Auto-grow, Enter to send.
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 180) + 'px';
     updateComposer();
+    saveDraft();
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -773,6 +786,12 @@ function wireChat() {
 
   $('#composer').addEventListener('submit', (e) => { e.preventDefault(); sendMessage(); });
   $('#stop-btn').addEventListener('click', stopStream);
+
+  // Restore an unsent draft from before a reload.
+  try {
+    const d = sessionStorage.getItem(DRAFT_KEY);
+    if (d) { input.value = d; input.dispatchEvent(new Event('input')); }
+  } catch {}
 
   updateComposer();
 }
@@ -811,6 +830,7 @@ async function sendMessage() {
 
   input.value = '';
   input.style.height = 'auto';
+  if (S.clearComposerDraft) S.clearComposerDraft();
   S.pendingUploads = [];
   renderAttachTray();
   updateComposer();
