@@ -603,6 +603,9 @@ function wireUploads() {
 
 function renderMessages() {
   const box = $('#messages');
+  // The live run-status line lives inside #messages; a re-render must not
+  // destroy it mid-run or the chat goes silent until the next tool event.
+  const status = document.getElementById('run-status');
   box.innerHTML = '';
   box.appendChild(ensureOlderSpinner());
   const empty = $('#empty-state');
@@ -610,6 +613,7 @@ function renderMessages() {
   // Windowed: only the latest RENDER_WINDOW messages hit the DOM.
   const win = S.messages.slice(-RENDER_WINDOW);
   for (const m of win) box.appendChild(messageEl(m));
+  if (status) box.appendChild(status); // keep it last, text intact
   scrollBottom(true);
 }
 
