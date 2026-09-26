@@ -655,6 +655,10 @@ function renderMessages() {
   // otherwise it keeps its flex share plus padding and squeezes the empty
   // state into a scrollable half-screen on mobile.
   box.hidden = S.messages.length === 0;
+  // Force a synchronous reflow: some mobile WebViews don't recalculate the
+  // flex layout when display toggles here, leaving the empty state visually
+  // squeezed into a scrollable half-screen until something else reflows.
+  void document.getElementById('chat-main').offsetHeight;
   // Windowed: only the latest RENDER_WINDOW messages hit the DOM.
   const win = S.messages.slice(-RENDER_WINDOW);
   for (const m of win) box.appendChild(messageEl(m));
