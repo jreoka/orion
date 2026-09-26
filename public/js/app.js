@@ -182,6 +182,20 @@ function setAuthMode(mode) {
 }
 
 function wireGlobal() {
+  // Theme toggle (Settings → Appearance), persisted across visits.
+  const themeToggle = $('#theme-toggle');
+  const applyTheme = (dark) => {
+    if (dark) document.documentElement.dataset.theme = 'dark';
+    else document.documentElement.removeAttribute('data-theme');
+    try { localStorage.setItem('orion-theme', dark ? 'dark' : 'light'); } catch (e) {}
+    const m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', dark ? '#171310' : '#faf7f0');
+  };
+  if (themeToggle) {
+    themeToggle.checked = document.documentElement.dataset.theme === 'dark';
+    themeToggle.addEventListener('change', () => applyTheme(themeToggle.checked));
+  }
+
   $('#tab-login').onclick = () => setAuthMode('login');
   $('#tab-signup').onclick = () => setAuthMode('signup');
 

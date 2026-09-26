@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#faf7f0">
+  <meta name="theme-color" content="#faf7f0" id="meta-theme">
+  <script>try{if(localStorage.getItem('orion-theme')==='dark'){document.documentElement.dataset.theme='dark';var m=document.getElementById('meta-theme');if(m)m.content='#171310';}}catch(e){}</script>
   <meta name="description" content="Orion — your own sandboxed AI agent. Chat, build, browse.">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -69,7 +70,6 @@
               <button type="button" class="btn block" id="auth-2fa-back" style="margin-top:10px">Back</button>
             </form>
           </div>
-          <p class="auth-note">The first account created becomes the administrator.</p>
         </div>
       </div>
     </section>
@@ -221,6 +221,15 @@
           <a href="#/chat" class="back-link">← Back to chat</a>
           <h1>Settings</h1>
         </header>
+
+        <div class="card">
+          <h2>Appearance</h2>
+          <p class="muted small">Paper by day, ink by night.</p>
+          <label class="toggle-row" style="margin-bottom:0">
+            <span>Dark mode</span>
+            <span class="toggle"><input id="theme-toggle" type="checkbox"><span class="knob"></span></span>
+          </label>
+        </div>
 
         <div class="card">
           <div class="settings-tabs" role="tablist">
