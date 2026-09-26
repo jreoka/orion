@@ -231,44 +231,56 @@ export function startRunIfIdle(conversationId, userId, userText) {
  */
 export function recoverStrandedRuns() {
   const cutoff = Date.now() - 2 * 60 * 60 * 1000;
-  const last = (col) =>
-    `(SELECT ${col} FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1)`;
-  const prev = (col) =>
-    `(SELECT ${col} FROM messages WHERE conversation_id = c.id AND id < (SELECT MAX(id) FROM messages WHERE conversation_id = c.id) ORDER BY id DESC LIMIT 1)`;
-  let rows = [];
+  let convs = [];
   try {
-    rows = db
+    convs = db
       .prepare(
         `SELECT c.id AS conversation_id, c.user_id,
-                ${last('role')} AS last_role,
-                ${last('id')} AS last_id,
-                ${last('content')} AS last_content,
-                ${prev('role')} AS prev_role,
-                ${prev('content')} AS prev_content
+                (SELECT role FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) AS last_role,
+                (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) AS last_content,
+                (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) AS last_created,
+                (SELECT content FROM messages WHERE conversation_id = c.id AND role = 'user'
+                   AND id < (SELECT MAX(id) FROM messages WHERE conversation_id = c.id)
+                 ORDER BY id DESC LIMIT 1) AS prev_user_text
          FROM conversations c
-         WHERE c.task_id IS NULL
-           AND ${last('created_at')} > ?`
+         WHERE c.task_id IS NULL`
       )
-      .all(cutoff);
+      .all();
   } catch (e) {
     console.warn('[orion] stranded-run scan failed:', e?.message || e);
     return;
   }
-  for (const r of rows) {
+  for (const r of convs) {
     try {
-      const userText =
-        r.last_role === 'user'
-          ? String(r.last_content || '')
-          : r.last_role === 'assistant' &&
-              (r.last_content === '' || r.last_content == null) &&
-              r.prev_role === 'user'
-            ? String(r.prev_content || '')
-            : null;
-      if (!userText || !userText.trim()) continue;
-      if (r.last_role === 'assistant') {
-        // Abandoned chained-run placeholder: drop it so the fresh run's
-        // own placeholder is the only one.
-        db.prepare('DELETE FROM messages WHERE id = ?').run(r.last_id);
+      if (!r.last_created || r.last_created <= cutoff) continue;
+      let userText = null;
+      let deadPlaceholder = false;
+      if (r.last_role === 'user') {
+        // The run died before (or without) creating its reply placeholder.
+        userText = String(r.last_content || '');
+      } else if (r.last_role === 'assistant' && (r.last_content === '' || r.last_content == null)) {
+        // Trailing empty row: at boot no run is alive to fill it, so the
+        // run died mid-turn — whether it was a reply placeholder or an
+        // update card that never got its text. The question it was
+        // answering is the latest user message before it. (Assistant
+        // content between the two belongs to an earlier question — only a
+        // trailing empty row means the last run produced nothing.)
+        userText = String(r.prev_user_text || '');
+        deadPlaceholder = true;
+      } else {
+        continue;
+      }
+      if (!userText.trim()) continue;
+      if (deadPlaceholder) {
+        // Drop abandoned rows (empty placeholders/cards after the last
+        // real reply) so the fresh run starts clean. Content-bearing cards
+        // are never touched.
+        db.prepare(
+          `DELETE FROM messages WHERE conversation_id = ? AND role = 'assistant'
+           AND (content = '' OR content IS NULL)
+           AND id > (SELECT COALESCE(MAX(id), 0) FROM messages
+                     WHERE conversation_id = ? AND role = 'assistant' AND content != '')`
+        ).run(r.conversation_id, r.conversation_id);
       }
       if (startRunIfIdle(r.conversation_id, r.user_id, userText)) {
         console.log(`[orion] boot recovery: answering stranded message in conversation ${r.conversation_id}`);
