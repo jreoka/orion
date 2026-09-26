@@ -22,8 +22,9 @@
   --success: #34d399;
   --radius: 20px;
   --radius-sm: 13px;
-  --shadow: 0 12px 40px rgba(0, 0, 0, .5);
-  --shadow-soft: 0 4px 18px rgba(0, 0, 0, .32);
+  /* Elevation is expressed with hairlines and dimming, not shadows. */
+  --shadow: none;
+  --shadow-soft: none;
   --font: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --ease: cubic-bezier(.2, .7, .3, 1);
@@ -80,36 +81,27 @@ a { color: var(--accent1); }
 .wordmark.sm { font-size: 15px; }
 
 /* ============================================================
-   Starfield — animated blue dot grid, used sparingly.
-   Login screen and empty states only. Dim, slow, CSS-only.
+   Starfield — a single whisper of a blue dot grid, used sparingly.
+   Login screen and empty states only. One layer, one dot, dim,
+   barely drifting. CSS-only.
    ============================================================ */
 .starfield { position: relative; isolation: isolate; }
-.starfield::before,
-.starfield::after {
+.starfield::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background-image: radial-gradient(rgba(129, 140, 248, .55) 1px, transparent 1.7px);
+  background-image: radial-gradient(rgba(129, 140, 248, .5) 1px, transparent 1.6px);
   background-size: 30px 30px;
-  -webkit-mask-image: radial-gradient(ellipse 95% 85% at 50% 42%, transparent 22%, black 100%);
-  mask-image: radial-gradient(ellipse 95% 85% at 50% 42%, transparent 22%, black 100%);
+  -webkit-mask-image: radial-gradient(ellipse 95% 85% at 50% 42%, transparent 30%, black 100%);
+  mask-image: radial-gradient(ellipse 95% 85% at 50% 42%, transparent 30%, black 100%);
   animation:
-    star-drift 80s linear infinite,
-    star-breathe 9s ease-in-out infinite alternate;
+    star-drift 120s linear infinite,
+    star-breathe 12s ease-in-out infinite alternate;
 }
-.starfield::after {
-  background-image: radial-gradient(rgba(168, 130, 255, .5) 1.3px, transparent 2px);
-  background-size: 54px 54px;
-  -webkit-mask-image: radial-gradient(ellipse 95% 85% at 50% 42%, transparent 35%, black 100%);
-  mask-image: radial-gradient(ellipse 95% 85% at 50% 42%, transparent 35%, black 100%);
-  animation:
-    star-drift 130s linear infinite reverse,
-    star-breathe 14s ease-in-out infinite alternate-reverse;
-}
-@keyframes star-drift { to { background-position: 90px 45px; } }
-@keyframes star-breathe { from { opacity: .14; } to { opacity: .4; } }
+@keyframes star-drift { to { background-position: 60px 30px; } }
+@keyframes star-breathe { from { opacity: .1; } to { opacity: .22; } }
 
 /* ============================================================
    Buttons
@@ -132,9 +124,9 @@ a { color: var(--accent1); }
 .btn.primary {
   background: var(--accent-grad);
   color: #fff;
-  box-shadow: 0 6px 22px rgba(99, 102, 241, .38);
+  box-shadow: none;
 }
-.btn.primary:hover { background: var(--accent-grad); filter: brightness(1.08); box-shadow: 0 8px 28px rgba(99, 102, 241, .5); }
+.btn.primary:hover { background: var(--accent-grad); filter: brightness(1.08); box-shadow: none; }
 .btn.primary:disabled { opacity: .45; cursor: default; box-shadow: none; filter: none; }
 .btn.block { display: block; width: 100%; }
 .btn.danger-ghost { color: var(--danger); background: transparent; }
@@ -211,13 +203,11 @@ a { color: var(--accent1); }
 }
 @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
 .auth-card {
-  background: rgba(15, 18, 31, .78);
-  -webkit-backdrop-filter: blur(22px);
-  backdrop-filter: blur(22px);
-  border: 1px solid rgba(255, 255, 255, .08);
-  border-radius: 26px;
-  padding: 40px 34px 30px;
-  box-shadow: var(--shadow);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 10px 6px;
+  box-shadow: none;
 }
 .auth-sub { text-align: center; color: var(--muted); font-size: 14.5px; margin: 12px 0 26px; }
 .auth-tabs {
@@ -325,12 +315,10 @@ a { color: var(--accent1); }
 
 .menu {
   position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
-  background: rgba(21, 26, 44, .96);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, .09);
-  border-radius: 16px;
-  box-shadow: var(--shadow);
+  background: var(--panel-2);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  box-shadow: none;
   padding: 6px;
   animation: pop .16s var(--ease);
   z-index: 50;
@@ -370,7 +358,7 @@ a { color: var(--accent1); }
   max-width: min(80%, 560px);
   font-size: 15px;
   line-height: 1.6;
-  box-shadow: 0 6px 20px rgba(99, 102, 241, .28);
+  box-shadow: none;
   overflow-wrap: anywhere;
 }
 .msg.assistant { gap: 0; }
@@ -498,10 +486,10 @@ a { color: var(--accent1); }
   border: 1px solid rgba(255, 255, 255, .09);
   border-radius: 26px;
   padding: 8px 8px 8px 20px;
-  box-shadow: var(--shadow-soft);
-  transition: border-color .15s, box-shadow .15s, background .15s;
+  box-shadow: none;
+  transition: border-color .15s, background .15s;
 }
-.composer:focus-within { border-color: rgba(99, 102, 241, .55); box-shadow: 0 0 0 4px rgba(99, 102, 241, .15); background: rgba(255, 255, 255, .065); }
+.composer:focus-within { border-color: rgba(99, 102, 241, .55); background: rgba(255, 255, 255, .065); }
 .composer textarea {
   flex: 1; border: none; background: transparent; resize: none;
   color: var(--text); font: inherit; font-size: 16px; line-height: 1.5;
@@ -515,7 +503,7 @@ a { color: var(--accent1); }
   transition: transform .12s var(--ease), opacity .12s, box-shadow .12s, filter .12s;
 }
 .send-btn[hidden], .stop-btn[hidden] { display: none !important; }
-.send-btn { background: var(--accent-grad); color: #fff; box-shadow: 0 6px 18px rgba(99, 102, 241, .42); }
+.send-btn { background: var(--accent-grad); color: #fff; box-shadow: none; }
 .send-btn:hover:not(:disabled) { transform: scale(1.07); filter: brightness(1.08); }
 .send-btn:active:not(:disabled) { transform: scale(.96); }
 .send-btn:disabled { opacity: .32; box-shadow: none; cursor: default; }
@@ -536,12 +524,14 @@ a { color: var(--accent1); }
 .back-link:hover { color: var(--text); }
 .admin-head h1 { font-size: 30px; margin-top: 6px; letter-spacing: -.025em; font-weight: 700; }
 .card {
-  background: var(--panel);
-  border-radius: var(--radius);
-  padding: 30px;
-  margin-bottom: 22px;
-  box-shadow: var(--shadow-soft);
+  background: transparent;
+  border-radius: 0;
+  padding: 26px 0 0;
+  margin-bottom: 40px;
+  box-shadow: none;
+  border-top: 1px solid var(--hairline);
 }
+.admin-head + .card, .card:first-of-type { border-top: none; padding-top: 0; }
 .card h2 { font-size: 18px; margin-bottom: 6px; }
 .card > .muted { margin-bottom: 22px; font-size: 14px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
@@ -593,10 +583,10 @@ a { color: var(--accent1); }
 @keyframes fade { from { opacity: 0; } }
 .modal {
   width: 100%; max-width: 400px;
-  background: rgba(21, 26, 44, .97);
-  border: 1px solid rgba(255, 255, 255, .09);
-  border-radius: 22px; padding: 30px 28px;
-  box-shadow: var(--shadow);
+  background: var(--panel-2);
+  border: 1px solid var(--hairline);
+  border-radius: 18px; padding: 28px 26px;
+  box-shadow: none;
   animation: pop .2s var(--ease);
   max-height: calc(100dvh - 60px);
   overflow-y: auto;
@@ -612,13 +602,11 @@ a { color: var(--accent1); }
   pointer-events: none; width: max-content; max-width: 92vw;
 }
 .toast {
-  background: rgba(29, 36, 56, .96);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, .1);
+  background: var(--panel-3);
+  border: 1px solid var(--hairline);
   color: var(--text); font-size: 14px; font-weight: 500;
   border-radius: 99px; padding: 11px 22px;
-  box-shadow: var(--shadow);
+  box-shadow: none;
   animation: toast-in .28s var(--ease);
   max-width: 92vw;
 }
@@ -776,9 +764,8 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
   .grid2 { grid-template-columns: 1fr; }
   .admin-wrap { padding: 26px 16px 64px; }
   .admin-head h1 { font-size: 26px; }
-  .card { padding: 22px 20px; border-radius: 18px; }
 
-  .auth-card { padding: 34px 26px 26px; }
+  .auth-card { padding: 6px 2px; }
   .empty-state h1 { font-size: 23px; }
   .empty-state .muted { font-size: 14px; }
 
@@ -806,5 +793,5 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
     animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
   }
-  .starfield::before, .starfield::after { display: none; }
+  .starfield::before { display: none; }
 }
