@@ -207,7 +207,14 @@ document.addEventListener('DOMContentLoaded', boot);
    ============================================================ */
 let authMode = 'login'; // or 'signup'
 
-function renderAuth() {
+async function renderAuth() {
+  // Hide the signup tab when public signups are disabled (fail open).
+  try {
+    const cfg = await api('/api/auth/config');
+    const on = !cfg || cfg.signup_enabled !== false;
+    $('#tab-signup').hidden = !on;
+    if (!on) authMode = 'login';
+  } catch (e) { $('#tab-signup').hidden = false; }
   setAuthMode(authMode);
   $('#auth-error').hidden = true;
   hide2faStep();

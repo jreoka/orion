@@ -92,6 +92,13 @@ const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next
 
 // ---- auth ---------------------------------------------------------------
 
+// Public: lets the login page hide the signup tab when public signups are
+// off. The first-ever account can always sign up (it becomes the admin).
+app.get('/api/auth/config', (req, res) => {
+  const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+  res.json({ signup_enabled: userCount === 0 || getSetting('signup_enabled', '1') === '1' });
+});
+
 app.post('/api/auth/signup', asyncRoute(async (req, res) => {
   const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
   if (userCount > 0 && getSetting('signup_enabled', '1') !== '1') {
