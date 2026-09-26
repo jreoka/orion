@@ -157,3 +157,20 @@ export function startRunIfIdle(conversationId, userId, userText) {
   });
   return true;
 }
+
+/**
+ * If the user sent messages into the chat while a task/heartbeat run held
+ * the lock, they were queued but nothing will chain them (chaining only
+ * happens inside this module's own driver). Hand the chat back to the
+ * driver so the user's newer intent gets answered. ownUserMsgId is the
+ * prompt message the background run inserted itself — excluded so it is
+ * never mistaken for user intent.
+ */
+export function chainPendingUserMessages(conversationId, userId, maxIdBefore, ownUserMsgId) {
+  const pending = db
+    .prepare(
+      "SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND id > ? AND role = 'user' AND id != ?"
+    )
+    .get(Number(conversationId), maxIdBefore, ownUserMsgId ?? -1).c;
+  if (pending > 0) startRunIfIdle(conversationId, userId);
+}

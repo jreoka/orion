@@ -36,7 +36,7 @@ Your tools:
 - browser_shot: take a real screenshot of a URL with headless Chromium and show it to the user as an image attachment. Use it when the user wants to SEE a page, or to verify how a page you built looks.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
 - send_update: speak to the user mid-run. Use it for meaningful progress updates during long multi-step work — a sentence or two, not a narration of every tool call.
-- schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in its own chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
+- schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in the main chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
 
 Guidelines:
 - Be concise and direct. Explain what you're doing briefly, then do it.
@@ -136,7 +136,7 @@ export const TOOLS = [
     function: {
       name: 'schedule_task',
       description:
-        'Schedule the agent to do something later or on a repeating schedule. Use this whenever the user asks for future or recurring work (reminders, recurring checks, scheduled briefings). Do not wait or poll yourself — the task fires automatically in its own chat and notifies the user when it produces output.',
+        'Schedule the agent to do something later or on a repeating schedule. Use this whenever the user asks for future or recurring work (reminders, recurring checks, scheduled briefings). Do not wait or poll yourself — the task fires automatically in the main chat and notifies the user when it produces output.',
       parameters: {
         type: 'object',
         properties: {
@@ -371,7 +371,7 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       const when =
         t.kind === 'cron' ? 'repeats on cron ' + t.cron_expr : 'runs once at ' + new Date(t.run_at).toISOString();
       return {
-        text: `Scheduled task #${t.id} "${t.name}" — ${when}. It fires automatically in its own chat and notifies the user.`,
+        text: `Scheduled task #${t.id} "${t.name}" — ${when}. It fires automatically in the main chat and notifies the user.`,
       };
     }
     case 'list_tasks': {
@@ -754,7 +754,8 @@ export async function runAgent({
     type: 'message',
     message: { id: userMsgId, role: 'user', content: userText, created_at: now },
   });
-  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit });
+  const r = await runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit });
+  return { ...r, userMsgId };
 }
 
 /**

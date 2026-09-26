@@ -1,15 +1,15 @@
 // Orion tasks: user-scheduled agent runs, either cron expressions or a
 // one-shot run at a future timestamp. Scheduled fires run the normal agent
-// loop against a dedicated per-task conversation (kind='task') and respect
-// the per-conversation run lock — a busy conversation is skipped, never
+// loop in the user's single main chat and respect the per-conversation run
+// lock — a busy chat is skipped (once-tasks retry shortly after), never
 // double-run.
 import cron from 'node-cron';
 import { CronExpressionParser } from 'cron-parser';
-import { db, getSetting } from './db.js';
+import { db, getSetting, getOrCreateMainConversation } from './db.js';
 import { httpError } from './auth.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
-import { registerController, unregisterController } from './runs.js';
+import { registerController, unregisterController, startRunIfIdle, chainPendingUserMessages } from './runs.js';
 import { notifyConversation } from './push.js';
 
 const jobs = new Map(); // taskId -> { type: 'cron', job } | { type: 'timeout', timer }
@@ -60,20 +60,13 @@ export function publicTask(t) {
   };
 }
 
-// One conversation per task, shared across all its fires.
-export function getOrCreateTaskConversation(userId, task) {
-  const existing = db
-    .prepare("SELECT id FROM conversations WHERE user_id = ? AND kind = 'task' AND task_id = ?")
-    .get(userId, task.id);
-  if (existing) return existing.id;
-  const now = Date.now();
-  return Number(
-    db
-      .prepare(
-        "INSERT INTO conversations (user_id, title, kind, task_id, created_at, updated_at) VALUES (?, ?, 'task', ?, ?, ?)"
-      )
-      .run(userId, '⏰ ' + task.name, task.id, now, now).lastInsertRowid
-  );
+// A once-task whose timer fired while the chat was busy: try again soon
+// instead of silently dropping it. Cron tasks just wait for their next tick.
+function retryTaskSoon(taskId) {
+  setTimeout(() => {
+    const t = db.prepare('SELECT enabled FROM tasks WHERE id = ?').get(taskId);
+    if (t && t.enabled) fireTask(taskId).catch((e) => console.error(`[orion] task ${taskId} retry failed:`, e?.message || e));
+  }, 60 * 1000).unref?.();
 }
 
 // Fire a task now (scheduled or manual). Returns { ok, conversationId }
@@ -88,14 +81,19 @@ export async function fireTask(taskId, { manual = false } = {}) {
   }
   if (!task.enabled && !manual) return { ok: false, reason: 'disabled' };
 
-  const convId = getOrCreateTaskConversation(task.user_id, task);
+  const convId = getOrCreateMainConversation(task.user_id);
   if (!tryAcquireRun(convId)) {
-    console.log(`[orion] task ${taskId} skipped: conversation ${convId} already has an active run`);
+    console.log(`[orion] task ${taskId} skipped: main chat ${convId} already has an active run`);
+    if (task.kind === 'once') retryTaskSoon(taskId);
     return { ok: false, reason: 'busy' };
   }
 
+  const maxIdBefore = db
+    .prepare('SELECT COALESCE(MAX(id), 0) AS m FROM messages WHERE conversation_id = ?')
+    .get(convId).m;
   const controller = registerController(convId);
   let finalText = '';
+  let userMsgId = null;
   try {
     const r = await runAgent({
       userId: task.user_id,
@@ -106,6 +104,7 @@ export async function fireTask(taskId, { manual = false } = {}) {
       signal: controller.signal,
     });
     finalText = r?.finalText || '';
+    userMsgId = r?.userMsgId ?? null;
   } catch (e) {
     // runAgent only throws for aborts/unexpected errors; never let a task
     // fire take down the scheduler.
@@ -115,6 +114,8 @@ export async function fireTask(taskId, { manual = false } = {}) {
     clearStop(convId);
     releaseRun(convId);
   }
+  // The user may have written into the main chat mid-run: answer them.
+  chainPendingUserMessages(convId, task.user_id, maxIdBefore, userMsgId);
 
   const now = Date.now();
   if (task.kind === 'cron' && task.cron_expr) {

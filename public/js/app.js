@@ -41,8 +41,7 @@ async function api(path, { method = 'GET', body } = {}) {
 /* ---------- state ---------- */
 const S = {
   me: null,
-  conversations: [],
-  activeId: null,
+  activeId: null,     // the single main chat's conversation id
   messages: [],        // [{id, role, content, attachments}]
   runActive: false,    // an agent run is in flight for the open conversation
   evt: null,           // EventSource for the open conversation's event bus
@@ -97,9 +96,8 @@ const ROUTES = ['login', 'chat', 'admin', 'settings'];
 const VIEW_ID = { login: 'view-auth', chat: 'view-chat', admin: 'view-admin', settings: 'view-settings' };
 function route() {
   const h = (location.hash || '').replace(/^#\/?/, '');
-  // Push-notification deep link: #/chat/123 opens that conversation.
-  const m = h.match(/^chat\/(\d+)$/);
-  if (m) { S.pendingConvId = Number(m[1]); return 'chat'; }
+  // Old push-notification deep links (#/chat/123) land on the single chat.
+  if (/^chat\/\d+$/.test(h)) return 'chat';
   return ROUTES.includes(h) ? h : 'chat';
 }
 function go(r) { location.hash = '#/' + r; }
@@ -110,7 +108,6 @@ async function render() {
   if (S.me && r === 'login') { go('chat'); return; }
   if (r === 'admin' && S.me && S.me.role !== 'admin') { go('chat'); return; }
   for (const v of ROUTES) { const el = document.getElementById(VIEW_ID[v]); if (el) el.hidden = v !== r; }
-  closeSidebar();
   if (r === 'login') renderAuth();
   else if (r === 'chat') renderChat();
   else if (r === 'admin') renderAdmin();
@@ -126,13 +123,9 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     // focuses it and asks it to navigate to the conversation.
     navigator.serviceWorker.addEventListener('message', (event) => {
       const data = event.data || {};
-      if (data.type === 'orion-navigate' && typeof data.url === 'string') {
-        const m = data.url.match(/#\/chat\/(\d+)/);
-        if (m) {
-          S.pendingConvId = Number(m[1]);
-          if (route() !== 'chat') location.hash = '#/chat';
-          else renderChat();
-        }
+      if (data.type === 'orion-navigate') {
+        if (route() !== 'chat') location.hash = '#/chat';
+        else renderChat();
       }
     });
   });
@@ -232,12 +225,6 @@ function wireGlobal() {
   // Settings view
   wireSettings();
 
-  // Sidebar drawer (mobile)
-  $('#hamburger').onclick = openSidebar;
-  $('#sidebar-close').onclick = closeSidebar;
-  $('#sidebar-backdrop').onclick = closeSidebar;
-  $('#new-chat-mobile').onclick = () => { newConversation(); };
-
   // Image lightbox
   $('#lightbox-close').onclick = () => { $('#lightbox').hidden = true; };
   $('#lightbox').addEventListener('click', (e) => {
@@ -246,16 +233,6 @@ function wireGlobal() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { $('#lightbox').hidden = true; closeModal(); closeUserMenu(); }
   });
-}
-
-function openSidebar() {
-  $('#sidebar').classList.add('open');
-  $('#sidebar-backdrop').hidden = false;
-}
-function closeSidebar() {
-  $('#sidebar').classList.remove('open');
-  const bd = $('#sidebar-backdrop');
-  if (bd) bd.hidden = true;
 }
 
 function openLightbox(url) {
@@ -312,101 +289,6 @@ function attachmentHtml(a) {
     return `<img class="msg-img" src="${esc(a.url)}" alt="${esc(a.filename || 'image')}" loading="lazy">`;
   }
   return `<a class="chip" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" download="${esc(a.filename || '')}">📎 ${esc(a.filename || 'file')}</a>`;
-}
-
-/* ---------- conversation list ---------- */
-async function loadConversations() {
-  const list = $('#conv-list');
-  list.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>';
-  try {
-    S.conversations = (await api('/api/conversations')) || [];
-  } catch (e) {
-    list.innerHTML = `<div class="conv-empty">Couldn't load chats.</div>`;
-    return;
-  }
-  renderConvList();
-}
-
-function renderConvList() {
-  const list = $('#conv-list');
-  if (!S.conversations.length) {
-    list.innerHTML = `<div class="conv-empty">No chats yet.<br>Start one below.</div>`;
-    return;
-  }
-  list.innerHTML = '';
-  for (const c of S.conversations) {
-    const el = document.createElement('div');
-    el.className = 'conv-item' + (c.id === S.activeId ? ' active' : '');
-    el.innerHTML = `<span class="conv-title">${esc(c.title || 'New chat')}</span><button class="conv-edit" title="Rename chat">✎</button><button class="conv-del" title="Delete chat">✕</button>`;
-    el.addEventListener('click', (e) => {
-      if (e.target.closest('.conv-del') || e.target.closest('.conv-edit') || e.target.closest('.conv-rename')) return;
-      openConversation(c.id);
-    });
-    el.querySelector('.conv-edit').addEventListener('click', (e) => {
-      e.stopPropagation();
-      startRename(c, el);
-    });
-    const del = el.querySelector('.conv-del');
-    del.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (!del.classList.contains('confirm')) {
-        del.classList.add('confirm');
-        del.textContent = 'Sure?';
-        setTimeout(() => { del.classList.remove('confirm'); del.textContent = '✕'; }, 2500);
-        return;
-      }
-      try {
-        await api(`/api/conversations/${c.id}`, { method: 'DELETE' });
-        S.conversations = S.conversations.filter((x) => x.id !== c.id);
-        if (S.activeId === c.id) { S.activeId = null; S.messages = []; }
-        renderConvList();
-        renderMessages();
-        toast('Chat deleted');
-      } catch (ex) { toast(ex.message, 'error'); }
-    });
-    list.appendChild(el);
-  }
-  list.scrollTop = 0;
-}
-
-async function newConversation() {
-  // Runs are detached and per-conversation now, so starting a fresh chat
-  // while another conversation's run is active is safe.
-  try {
-    const c = await api('/api/conversations', { method: 'POST', body: {} });
-    S.conversations.unshift(c);
-    S.activeId = c.id;
-    S.messages = [];
-    renderConvList();
-    renderMessages();
-    openEventStream(c.id);
-    $('#composer-input').focus();
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-async function openConversation(id) {
-  closeEventStream();
-  S.runActive = false;
-  S.activeId = id;
-  renderConvList();
-  const box = $('#messages');
-  box.innerHTML = '<div class="skel" style="max-width:60%"></div><div class="skel" style="max-width:80%;margin-left:auto"></div>';
-  $('#empty-state').hidden = true;
-  try {
-    const data = await api(`/api/conversations/${id}`);
-    if (!data) return; // session expired mid-load; boot() already redirected
-    S.messages = data.messages || [];
-    // Sync title in case it changed server-side.
-    const c = S.conversations.find((x) => x.id === id);
-    if (c && data.conversation) c.title = data.conversation.title;
-    renderConvList();
-  } catch (e) {
-    box.innerHTML = `<div class="conv-empty">Couldn't load this chat.</div>`;
-    return;
-  }
-  renderMessages();
-  openEventStream(id);
-  closeSidebar();
 }
 
 /* ---------- messages ---------- */
@@ -479,10 +361,7 @@ function appendUserMessage(content) {
 /* ---------- user chip + menu ---------- */
 function renderUserChip() {
   const me = S.me;
-  $('#user-name').textContent = me.username;
   $('#user-avatar').textContent = (me.username[0] || '?').toUpperCase();
-  const badge = $('#user-role');
-  badge.hidden = me.role !== 'admin';
   $('#menu-admin').hidden = me.role !== 'admin';
 }
 
@@ -497,7 +376,7 @@ function wireUserMenu() {
     if (act === 'logout') {
       try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
       closeEventStream();
-      S.me = null; S.conversations = []; S.activeId = null; S.messages = [];
+      S.me = null; S.activeId = null; S.messages = [];
       go('login');
     } else if (act === 'settings') go('settings');
     else if (act === 'password') changePasswordModal();
@@ -559,28 +438,22 @@ async function renderChat() {
   renderUserChip();
   if (!chatWired) { wireChat(); chatWired = true; }
   wireUserMenuOnce();
-  await loadConversations();
-  // Deep-link (from a push notification) takes priority over resume.
-  if (S.pendingConvId) {
-    const id = S.pendingConvId;
-    S.pendingConvId = null;
-    if (S.conversations.some((c) => c.id === id)) {
-      await openConversation(id);
+  // One main chat: fetch (or create) it, then subscribe to its event bus.
+  if (!S.activeId) {
+    const box = $('#messages');
+    box.innerHTML = '<div class="skel" style="max-width:60%"></div><div class="skel" style="max-width:80%;margin-left:auto"></div>';
+    $('#empty-state').hidden = true;
+    try {
+      const data = await api('/api/chat');
+      S.activeId = data.conversation.id;
+      S.messages = data.messages || [];
+    } catch {
+      box.innerHTML = `<div class="conv-empty">Couldn't load the chat.</div>`;
       return;
     }
-    // Unknown conversation (deleted?): fall through to normal resume.
   }
-  // Deep-link or resume: pick the newest conversation, or start fresh.
-  if (!S.activeId && S.conversations.length) {
-    S.activeId = S.conversations[0].id;
-    try {
-      const data = await api(`/api/conversations/${S.activeId}`);
-      S.messages = data.messages || [];
-    } catch { S.messages = []; }
-  }
-  renderConvList();
   renderMessages();
-  if (S.activeId) openEventStream(S.activeId);
+  openEventStream(S.activeId);
   updateComposer();
 }
 
@@ -611,12 +484,6 @@ function wireChat() {
 
   $('#composer').addEventListener('submit', (e) => { e.preventDefault(); sendMessage(); });
   $('#stop-btn').addEventListener('click', stopStream);
-  $('#new-chat').onclick = newConversation;
-
-  // Bottom nav (mobile, in-flow below the composer)
-  $('#bn-chats').onclick = openSidebar;
-  $('#bn-new').onclick = () => { newConversation(); };
-  $('#bn-settings').onclick = () => go('settings');
 
   updateComposer();
 }
@@ -637,13 +504,14 @@ async function sendMessage() {
   const content = input.value.trim();
   if (!content) return;
 
-  // Ensure there's a conversation to post into.
+  // Ensure the main chat is loaded before posting into it.
   if (!S.activeId) {
     try {
-      const c = await api('/api/conversations', { method: 'POST', body: {} });
-      S.conversations.unshift(c);
-      S.activeId = c.id;
-      renderConvList();
+      const data = await api('/api/chat');
+      S.activeId = data.conversation.id;
+      S.messages = data.messages || [];
+      renderMessages();
+      openEventStream(S.activeId);
     } catch (e) { toast(e.message, 'error'); return; }
   }
   const convId = S.activeId;
@@ -651,7 +519,6 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
   updateComposer();
-  closeSidebar();
 
   // Optimistic bubble, reconciled with the real row id below. The server
   // also publishes the row on the bus, which can arrive before the POST
@@ -907,14 +774,6 @@ function onBusImage(d) {
   const msg = S.messages.find((x) => x.id === d.message_id);
   if (msg) (msg.attachments = msg.attachments || []).push({ url: d.url, filename: d.filename });
   scrollBottom();
-}
-
-// Refresh the sidebar list without the skeleton flash.
-async function loadConversationsQuiet() {
-  try {
-    S.conversations = await api('/api/conversations');
-    renderConvList();
-  } catch { /* non-fatal */ }
 }
 
 /* ============================================================
@@ -1176,7 +1035,7 @@ async function submit2fa(e) {
       return;
     }
     S.me = d.user;
-    S.conversations = [];
+
     S.activeId = null;
     S.messages = [];
     hide2faStep();
@@ -1195,7 +1054,7 @@ async function passkeyLogin() {
     const cred = await navigator.credentials.get({ publicKey: webauthnOptionsFromJson(options) });
     const d = await api('/api/auth/passkey/login/verify', { method: 'POST', body: JSON.stringify({ token, response: webauthnCredToJson(cred) }) });
     S.me = d;
-    S.conversations = [];
+
     S.activeId = null;
     S.messages = [];
     go('chat');
@@ -1205,38 +1064,6 @@ async function passkeyLogin() {
     errEl.hidden = false;
   }
 }
-
-/* ---------- conversation rename ---------- */
-function startRename(c, el) {
-  const titleEl = el.querySelector('.conv-title');
-  const old = c.title || 'New chat';
-  const input = document.createElement('input');
-  input.className = 'conv-rename';
-  input.value = old;
-  titleEl.replaceWith(input);
-  input.focus();
-  input.setSelectionRange(input.value.length, input.value.length);
-  let done = false;
-  const finish = async (save) => {
-    if (done) return;
-    done = true;
-    const val = input.value.trim();
-    if (save && val && val !== old) {
-      try {
-        const d = await api(`/api/conversations/${c.id}`, { method: 'PATCH', body: JSON.stringify({ title: val }) });
-        c.title = d.title || val;
-      } catch (err) { toast('Rename failed: ' + err.message); }
-    }
-    renderConvList();
-  };
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') finish(true);
-    else if (e.key === 'Escape') finish(false);
-  });
-  input.addEventListener('blur', () => finish(true));
-  input.addEventListener('click', (e) => e.stopPropagation());
-}
-
 
 /* ---------- settings ---------- */
 const SETTINGS_TABS = ['security', 'sessions', 'heartbeat', 'notifications'];

@@ -225,4 +225,25 @@ export function setSetting(key, value) {
     .run(key, String(value));
 }
 
+// Orion has a single main chat per user — no conversation list. This
+// returns the user's main conversation, adopting their most recent
+// regular chat (pre-single-chat history) or creating a fresh one.
+export function getOrCreateMainConversation(userId) {
+  const existing = db
+    .prepare(
+      "SELECT id FROM conversations WHERE user_id = ? AND kind IN ('chat', 'main') ORDER BY updated_at DESC LIMIT 1"
+    )
+    .get(userId);
+  if (existing) {
+    db.prepare("UPDATE conversations SET kind = 'main' WHERE id = ? AND kind = 'chat'").run(existing.id);
+    return existing.id;
+  }
+  const now = Date.now();
+  return Number(
+    db
+      .prepare("INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, ?, 'main', ?, ?)")
+      .run(userId, 'Main chat', now, now).lastInsertRowid
+  );
+}
+
 export { db };

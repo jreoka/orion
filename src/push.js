@@ -88,7 +88,7 @@ export async function notifyUser(userId, { title, body, convId } = {}) {
   const payload = JSON.stringify({
     title: title || 'Orion',
     body: body || '',
-    url: convId ? `/#/chat/${convId}` : '/#/chat',
+    url: '/#/chat',
   });
   let sent = 0;
   for (const s of subs) {

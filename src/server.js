@@ -5,7 +5,7 @@ import cookieParser from 'cookie-parser';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, getSetting, setSetting, DATA_DIR } from './db.js';
+import { db, getSetting, setSetting, DATA_DIR, getOrCreateMainConversation } from './db.js';
 import {
   signup,
   loginStep1,
@@ -45,7 +45,6 @@ import { isRunLocked, requestStop } from './runlock.js';
 import {
   validateTaskInput,
   publicTask,
-  getOrCreateTaskConversation,
   fireTask,
   scheduleTask,
   unscheduleTask,
@@ -209,6 +208,34 @@ function getConv(id, userId) {
   return db.prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?').get(id, userId);
 }
 
+// The client sees user/assistant turns only; the agent replays tool rows
+// from the DB directly when it needs context.
+function conversationPayload(conv) {
+  const messages = db
+    .prepare(
+      `SELECT id, role, content, created_at FROM messages
+       WHERE conversation_id = ? AND role != 'tool' ORDER BY id`
+    )
+    .all(conv.id)
+    .map((m) => ({
+      ...m,
+      attachments: db
+        .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
+        .all(m.id)
+        .map((a) => ({ id: a.id, filename: a.filename, url: `/api/files/${a.id}` })),
+    }));
+  return {
+    conversation: { id: conv.id, title: conv.title, kind: conv.kind, task_id: conv.task_id, created_at: conv.created_at, updated_at: conv.updated_at },
+    messages,
+  };
+}
+
+// Single main chat: the only conversation the client ever opens.
+app.get('/api/chat', requireAuth, (req, res) => {
+  const conv = getConv(getOrCreateMainConversation(req.user.id), req.user.id);
+  res.json(conversationPayload(conv));
+});
+
 app.get('/api/conversations', requireAuth, (req, res) => {
   const rows = db
     .prepare('SELECT id, title, kind, task_id, created_at, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC')
@@ -228,25 +255,7 @@ app.post('/api/conversations', requireAuth, (req, res) => {
 app.get('/api/conversations/:id', requireAuth, (req, res) => {
   const conv = getConv(req.params.id, req.user.id);
   if (!conv) return res.status(404).json({ error: 'Not found' });
-  // The client sees user/assistant turns only; the agent replays tool rows
-  // from the DB directly when it needs context.
-  const messages = db
-    .prepare(
-      `SELECT id, role, content, created_at FROM messages
-       WHERE conversation_id = ? AND role != 'tool' ORDER BY id`
-    )
-    .all(conv.id)
-    .map((m) => ({
-      ...m,
-      attachments: db
-        .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
-        .all(m.id)
-        .map((a) => ({ id: a.id, filename: a.filename, url: `/api/files/${a.id}` })),
-    }));
-  res.json({
-    conversation: { id: conv.id, title: conv.title, kind: conv.kind, task_id: conv.task_id, created_at: conv.created_at, updated_at: conv.updated_at },
-    messages,
-  });
+  res.json(conversationPayload(conv));
 });
 
 app.patch('/api/conversations/:id', requireAuth, asyncRoute(async (req, res) => {
@@ -442,7 +451,7 @@ app.delete('/api/tasks/:id', requireAuth, (req, res) => {
 app.post('/api/tasks/:id/run', requireAuth, asyncRoute(async (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!task) return res.status(404).json({ error: 'Not found' });
-  const convId = getOrCreateTaskConversation(req.user.id, task);
+  const convId = getOrCreateMainConversation(req.user.id);
   if (isRunLocked(convId)) {
     throw httpError(409, 'A run is already in progress for this task');
   }

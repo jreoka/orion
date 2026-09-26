@@ -3,11 +3,11 @@
 // heartbeat conversation with a quiet-instruction: if nothing needs the
 // user's attention the model replies HEARTBEAT_QUIET and we throw the whole
 // check away (no notification noise, no history clutter).
-import { db, getSetting } from './db.js';
+import { db, getSetting, getOrCreateMainConversation } from './db.js';
 import { httpError } from './auth.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
-import { registerController, unregisterController } from './runs.js';
+import { registerController, unregisterController, chainPendingUserMessages } from './runs.js';
 import { notifyConversation } from './push.js';
 
 const CHECK_MS = 5 * 60 * 1000;
@@ -48,28 +48,13 @@ export function putHeartbeatSettings(userId, body) {
   return getHeartbeatSettings(userId);
 }
 
-function getOrCreateHeartbeatConversation(userId) {
-  const existing = db
-    .prepare("SELECT id FROM conversations WHERE user_id = ? AND kind = 'heartbeat'")
-    .get(userId);
-  if (existing) return existing.id;
-  const now = Date.now();
-  return Number(
-    db
-      .prepare(
-        "INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, 'Heartbeat', 'heartbeat', ?, ?)"
-      )
-      .run(userId, now, now).lastInsertRowid
-  );
-}
-
 export async function runHeartbeatFor(userId) {
   const s = getHeartbeatSettings(userId);
   if (!s.enabled) return { ok: false, reason: 'disabled' };
 
-  const convId = getOrCreateHeartbeatConversation(userId);
+  const convId = getOrCreateMainConversation(userId);
   if (!tryAcquireRun(convId)) {
-    console.log(`[orion] heartbeat for user ${userId} skipped: conversation ${convId} busy`);
+    console.log(`[orion] heartbeat for user ${userId} skipped: main chat busy`);
     return { ok: false, reason: 'busy' };
   }
 
@@ -78,8 +63,10 @@ export async function runHeartbeatFor(userId) {
     .get(convId).m;
 
   const controller = registerController(convId);
+  let userMsgId = null;
+  let finalText = '';
   try {
-    const { finalText } = await runAgent({
+    const r = await runAgent({
       userId,
       conversationId: convId,
       userText: s.prompt || DEFAULT_PROMPT,
@@ -89,14 +76,20 @@ export async function runHeartbeatFor(userId) {
       systemExtra: HEARTBEAT_SYSTEM_EXTRA,
       historyLimit: 20,
     });
+    finalText = r?.finalText || '';
+    userMsgId = r?.userMsgId ?? null;
 
     const now = Date.now();
     if ((finalText || '').trim() === 'HEARTBEAT_QUIET') {
-      // Nothing to report: delete the check's messages (and their
-      // attachments) so the heartbeat conversation stays clean.
+      // Nothing to report: delete the check's own messages (and their
+      // attachments) so the main chat stays clean — but never touch
+      // messages the user sent mid-check.
       const ids = db
-        .prepare('SELECT id FROM messages WHERE conversation_id = ? AND id > ?')
-        .all(convId, maxIdBefore)
+        .prepare(
+          `SELECT id FROM messages WHERE conversation_id = ? AND id > ?
+           AND (role != 'user' OR id = ?)`
+        )
+        .all(convId, maxIdBefore, userMsgId ?? -1)
         .map((r) => r.id);
       if (ids.length) {
         const ph = ids.map(() => '?').join(',');
@@ -108,7 +101,7 @@ export async function runHeartbeatFor(userId) {
     }
     db.prepare('UPDATE user_settings SET last_heartbeat_at = ? WHERE user_id = ?').run(now, userId);
     // The heartbeat had something to say: ping the user if they aren't
-    // watching the heartbeat conversation live.
+    // watching the chat live.
     try {
       const snippet = String(finalText || '').replace(/\s+/g, ' ').trim().slice(0, 140);
       await notifyConversation(userId, convId, { title: 'Orion', body: `Heartbeat: ${snippet}` });
@@ -123,6 +116,12 @@ export async function runHeartbeatFor(userId) {
     unregisterController(convId);
     clearStop(convId);
     releaseRun(convId);
+    // The user may have written into the main chat mid-check: answer them.
+    try {
+      chainPendingUserMessages(convId, userId, maxIdBefore, userMsgId);
+    } catch (e) {
+      console.error(`[orion] heartbeat chain for user ${userId} failed:`, e?.message || e);
+    }
   }
 }
 
