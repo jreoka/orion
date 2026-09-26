@@ -233,55 +233,8 @@ async function boot() {
   }
   wireGlobal();
   await render();
-  layoutDebugOverlay();
 }
 document.addEventListener('DOMContentLoaded', boot);
-
-/* ---------- temporary layout diagnostics (empty-state scroll) ---------- */
-function layoutDebugOverlay() {
-  // TEMPORARY: always report (was ?debuglayout-gated). Remove after diagnosis.
-  const silent = !new URLSearchParams(location.search).has('debuglayout');
-  setTimeout(() => {
-    const r = (el) => {
-      if (!el) return 'missing';
-      const cs = getComputedStyle(el);
-      return `${el.offsetHeight}px h / ${el.scrollHeight}px scrollH (display:${cs.display} hidden:${el.hidden})`;
-    };
-    const metrics = {
-      ua: navigator.userAgent,
-      innerHeight: window.innerHeight,
-      innerWidth: window.innerWidth,
-      dpr: window.devicePixelRatio,
-      supportsDvh: CSS.supports('height', '100dvh'),
-      supportsHas: CSS.supports('selector(:has(*))'),
-      docScrollH: document.documentElement.scrollHeight,
-      bodyScrollH: document.body.scrollHeight,
-      app: r(document.getElementById('app')),
-      viewChat: r(document.getElementById('view-chat')),
-      chatMain: r(document.getElementById('chat-main')),
-      chatHeader: r(document.getElementById('chat-header')),
-      messages: r(document.getElementById('messages')),
-      emptyState: r(document.getElementById('empty-state')),
-      composerWrap: r(document.querySelector('.composer-wrap')),
-      messagesCount: typeof S !== 'undefined' ? S.messages.length : -1,
-      url: location.href,
-    };
-    // Report back to the server so the developer can read it from logs.
-    fetch('/api/debug/layout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-      body: JSON.stringify(metrics),
-    }).catch(() => {});
-    if (silent) return; // report only, no overlay
-    const lines = Object.entries(metrics).map(([k, v]) => `${k}: ${v}`);
-    const pre = document.createElement('pre');
-    pre.textContent = lines.join('\n');
-    pre.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#000;color:#0f0;'
-      + 'font-size:11px;line-height:1.5;padding:12px;white-space:pre-wrap;margin:0;'
-      + 'max-height:80vh;overflow:auto;font-family:monospace;';
-    document.body.appendChild(pre);
-  }, 2000);
-}
 
 /* ============================================================
    Auth view
