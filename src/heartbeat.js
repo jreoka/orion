@@ -2,7 +2,7 @@
 // agent against the user's main chat with a quiet-instruction: if nothing
 // needs the user's attention the model replies HEARTBEAT_QUIET and we throw
 // the whole check away (no notification noise, no history clutter).
-import { db, getSetting, getOrCreateMainConversation } from './db.js';
+import { db, getSetting, getOrCreateConversation } from './db.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
 import { registerController, unregisterController, chainPendingUserMessages } from './runs.js';
@@ -41,7 +41,7 @@ function touchHeartbeatAt(userId, now) {
 
 export async function runHeartbeatFor(userId) {
   const prompt = getHeartbeatPrompt(userId);
-  const convId = getOrCreateMainConversation(userId);
+  const convId = getOrCreateConversation(userId);
   if (!tryAcquireRun(convId)) {
     console.log(`[orion] heartbeat for user ${userId} skipped: main chat busy`);
     return { ok: false, reason: 'busy' };

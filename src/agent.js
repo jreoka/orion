@@ -36,7 +36,7 @@ Your tools:
 - web_fetch: fetch a URL and get its readable text back. Use it for docs, articles, API responses — anything on the web.
 - browser_shot: take a real screenshot of a URL with headless Chromium and attach it to your reply so the user can see it. You receive the screenshot as vision too — actually look at it and describe or verify what it genuinely shows. Use it when the user wants to SEE a page, or to verify how a page you built looks.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
-- send_update: speak to the user mid-run. Use it for meaningful progress updates during long multi-step work — a sentence or two, not a narration of every tool call.
+- send_update: post a progress note mid-run. It appears as a slim status line in the chat (not a full message card), so use it for meaningful milestones during long multi-step work — a sentence or two, not a narration of every tool call.
 - react_to_message: add or remove an emoji reaction on a chat message — acknowledge the user's message with ❤️, mark something done with ✅, laugh along with 😂, etc. Use sparingly: a reaction is a warm touch, not a substitute for a reply. You may react to the user's messages or your own.
 - schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in the main chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
 
@@ -467,12 +467,12 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       if (text.length > 2000) throw new Error('send_update: text too long (max 2000 characters)');
       const now = Date.now();
       const info = db
-        .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
-        .run(conversationId, 'assistant', text, now);
+        .prepare('INSERT INTO messages (conversation_id, role, content, kind, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(conversationId, 'assistant', text, 'update', now);
       const id = Number(info.lastInsertRowid);
       publish(conversationId, {
         type: 'message',
-        message: { id, role: 'assistant', content: text, created_at: now },
+        message: { id, role: 'assistant', content: text, kind: 'update', created_at: now },
       });
       return { text: 'Update sent.' };
     }
@@ -486,7 +486,7 @@ export async function loadHistory(conversationId, limit) {
   if (limit && Number.isFinite(limit) && limit > 0) {
     rows = db
       .prepare(
-        'SELECT id, role, content, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?'
+        'SELECT id, role, content, kind, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?'
       )
       .all(conversationId, Math.ceil(limit));
     rows.reverse();
@@ -496,7 +496,7 @@ export async function loadHistory(conversationId, limit) {
   } else {
     rows = db
       .prepare(
-        'SELECT id, role, content, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id'
+        'SELECT id, role, content, kind, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id'
       )
       .all(conversationId);
   }
@@ -901,7 +901,7 @@ export async function runAgentLoop({
     if (!assistantId) return;
     try {
       const row = db
-        .prepare('SELECT id, role, content, created_at FROM messages WHERE id = ?')
+        .prepare('SELECT id, role, content, kind, created_at FROM messages WHERE id = ?')
         .get(assistantId);
       if (row) publish(conversationId, { type: 'message', message: row });
     } catch {

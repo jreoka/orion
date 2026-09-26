@@ -585,6 +585,14 @@ function messageEl(m) {
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + (m.role === 'user' ? 'user' : 'assistant');
   wrap.dataset.mid = m.id || '';
+  if (m.kind === 'update') {
+    // Mid-run progress note: a slim status line, not a full message card,
+    // so a working run reads as one answer with a work log — not a stack
+    // of separate messages.
+    wrap.classList.add('update');
+    wrap.innerHTML = `<div class="upd"><span class="content">${md(m.content || '')}</span></div>`;
+    return wrap;
+  }
   if (m.role === 'user') {
     const imgs = (m.attachments || []).length
       ? `<div class="u-imgs">${(m.attachments || []).map(attachmentHtml).join('')}</div>` : '';
@@ -930,6 +938,12 @@ function renderSidebar() {
   if (!list) return;
   list.innerHTML = '';
   let activeTitle = 'New chat';
+  if (S.conversations.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'conv-empty';
+    empty.textContent = 'No chats yet — press + to start one.';
+    list.appendChild(empty);
+  }
   for (const c of S.conversations) {
     if (c.id === S.activeId) activeTitle = c.title || 'New chat';
     const el = document.createElement('div');
@@ -1131,9 +1145,9 @@ async function renderChat() {
   if (!chatWired) { wireChat(); chatWired = true; }
   wireUserMenuOnce();
   wireSidebarOnce();
-  // Open the most recent chat. If none exists, stay on the empty state —
-  // nothing is auto-created on page load; the first sent message (or the
-  // + button) creates the chat.
+  // Open the most recent chat. If none exists, create one quietly so the
+  // page always lands in a regular chat tab — a chat is created only when
+  // none exist, so refreshing never duplicates.
   if (!S.activeId) {
     const box = $('#messages');
     box.innerHTML = '<div class="skel" style="max-width:60%;"></div><div class="skel" style="max-width:80%;margin-left:auto"></div>';
@@ -1145,7 +1159,8 @@ async function renderChat() {
         S.activeId = list[0].id;
         setMessages(data);
       } else {
-        S.activeId = null;
+        const conv = await api('/api/conversations', { method: 'POST', body: { title: 'New chat' } });
+        S.activeId = conv.id;
         setMessages({ messages: [], hasMoreOlder: false });
       }
     } catch {
@@ -1440,7 +1455,7 @@ function onBusMessage(m) {
       reconcileLocal(local, m);
       return;
     }
-    msg = { id: m.id, role: m.role, content: m.content || '', attachments: m.attachments || [], reactions: m.reactions || [] };
+    msg = { id: m.id, role: m.role, content: m.content || '', kind: m.kind || 'message', attachments: m.attachments || [], reactions: m.reactions || [] };
     S.messages.push(msg);
     $('#messages').appendChild(messageEl(msg));
     trimRenderedTop();

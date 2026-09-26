@@ -91,6 +91,7 @@ addColumn('sessions', 'user_agent', 'TEXT');
 addColumn('sessions', 'last_seen_at', 'INTEGER');
 addColumn('conversations', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
 addColumn('conversations', 'task_id', 'INTEGER');
+addColumn('messages', 'kind', "TEXT NOT NULL DEFAULT 'message'");
 // Phase 3: abuse lock + weekly token limits.
 // NOTE: weekly_token_limit is deliberately NULLABLE — NULL means unlimited
 // (see setWeeklyLimit in usage.js). It must never be NOT NULL.
@@ -245,21 +246,20 @@ export function setSetting(key, value) {
 // Orion has a single main chat per user — no conversation list. This
 // returns the user's main conversation, adopting their most recent
 // regular chat (pre-single-chat history) or creating a fresh one.
-export function getOrCreateMainConversation(userId) {
+export function getOrCreateConversation(userId) {
+  // All chats are equal — there is no special "main" chat. Return the most
+  // recently updated conversation, creating one only when none exist.
   const existing = db
     .prepare(
-      "SELECT id FROM conversations WHERE user_id = ? AND kind IN ('chat', 'main') ORDER BY updated_at DESC LIMIT 1"
+      "SELECT id FROM conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1"
     )
     .get(userId);
-  if (existing) {
-    db.prepare("UPDATE conversations SET kind = 'main' WHERE id = ? AND kind = 'chat'").run(existing.id);
-    return existing.id;
-  }
+  if (existing) return existing.id;
   const now = Date.now();
   return Number(
     db
-      .prepare("INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, ?, 'main', ?, ?)")
-      .run(userId, 'Main chat', now, now).lastInsertRowid
+      .prepare("INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, ?, 'chat', ?, ?)")
+      .run(userId, 'New chat', now, now).lastInsertRowid
   );
 }
 

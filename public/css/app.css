@@ -343,6 +343,7 @@ button.avatar.lg:hover { opacity: .85; }
 .conv-item:hover .conv-menu-btn, .conv-item:focus-within .conv-menu-btn { opacity: 1; }
 .conv-menu-btn:hover { background: var(--paper-3); color: var(--ink); }
 @media (hover: none) { .conv-menu-btn { opacity: .7; } }
+.conv-empty { padding: 18px 16px; color: var(--ink-3); font-size: 13.5px; font-style: italic; line-height: 1.5; }
 #side-backdrop {
   position: fixed; inset: 0; background: rgba(28, 24, 19, .35); z-index: 90;
 }
@@ -657,7 +658,17 @@ button.avatar.lg:hover { opacity: .85; }
 /* Consecutive assistant messages belong to one run: tuck them into a single
    visual group and keep one + for the group instead of one per message. */
 .msg.assistant + .msg.assistant { margin-top: -8px; }
-.msg.assistant:has(+ .msg.assistant) .rx-row { display: none; }
+.msg.assistant:has(+ .msg.assistant) .rx-row:not(:has(.rx-chip)) { display: none; }
+/* Mid-run progress notes: a slim work-log line, not a message card. */
+.msg.update { margin: 0; padding: 1px 0; }
+.msg.update + .msg.assistant { margin-top: -8px; }
+.msg.assistant + .msg.update { margin-top: -6px; }
+.msg.update + .msg.update { margin-top: -8px; }
+.upd { display: flex; gap: 8px; align-items: baseline; color: var(--ink-3); font-size: 13.5px; line-height: 1.55; }
+.upd::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--ink-3); opacity: .6; flex-shrink: 0; transform: translateY(-1px); }
+.upd .content > *:first-child { margin-top: 0; }
+.upd .content > *:last-child { margin-bottom: 0; }
+.upd .content p { margin: 0 0 4px; }
 /* No reactions yet: the lone + floats in the gap under the message instead
    of reserving a full empty row. */
 .msg .bubble, .a-body { position: relative; }

@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, getSetting, setSetting, DATA_DIR, getOrCreateMainConversation, groupedReactions, normalizeEmoji, setReaction } from './db.js';
+import { db, getSetting, setSetting, DATA_DIR, getOrCreateConversation, groupedReactions, normalizeEmoji, setReaction } from './db.js';
 import {
   signup,
   loginStep1,
@@ -248,7 +248,7 @@ function conversationPayload(conv, limit = 80) {
   const n = Math.max(1, Math.min(200, Number(limit) || 80));
   const messages = db
     .prepare(
-      `SELECT id, role, content, created_at FROM messages
+      `SELECT id, role, content, kind, created_at FROM messages
        WHERE conversation_id = ? AND role != 'tool' ORDER BY id DESC LIMIT ?`
     )
     .all(conv.id, n)
@@ -310,7 +310,7 @@ app.delete('/api/messages/:id/reactions/:emoji', requireAuth, (req, res) => {
 
 // Single main chat: the only conversation the client ever opens.
 app.get('/api/chat', requireAuth, (req, res) => {
-  const conv = getConv(getOrCreateMainConversation(req.user.id), req.user.id);
+  const conv = getConv(getOrCreateConversation(req.user.id), req.user.id);
   res.json(conversationPayload(conv, req.query.limit));
 });
 
@@ -323,7 +323,7 @@ app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
   if (!Number.isFinite(before)) return res.status(400).json({ error: 'before is required' });
   const messages = db
     .prepare(
-      `SELECT id, role, content, created_at FROM messages
+      `SELECT id, role, content, kind, created_at FROM messages
        WHERE conversation_id = ? AND role != 'tool' AND id < ?
        ORDER BY id DESC LIMIT ?`
     )
@@ -353,9 +353,9 @@ app.post('/api/conversations', requireAuth, (req, res) => {
   const now = Date.now();
   const title = String(req.body?.title || 'New chat').slice(0, 120) || 'New chat';
   const info = db
-    .prepare("INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, ?, 'side', ?, ?)")
+    .prepare("INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, ?, 'chat', ?, ?)")
     .run(req.user.id, title, now, now);
-  res.json({ id: Number(info.lastInsertRowid), title, kind: 'side', created_at: now, updated_at: now });
+  res.json({ id: Number(info.lastInsertRowid), title, kind: 'chat', created_at: now, updated_at: now });
 });
 
 app.get('/api/conversations/:id', requireAuth, (req, res) => {
@@ -517,7 +517,7 @@ app.post('/api/reset', requireAuth, asyncRoute(async (req, res) => {
   if (totpEnabled(req.user.id) && !verifySecondFactor(req.user.id, totp_code || '')) {
     return res.status(403).json({ error: 'Wrong two-factor code.' });
   }
-  const convId = getOrCreateMainConversation(req.user.id);
+  const convId = getOrCreateConversation(req.user.id);
   abortRun(convId); // stop any in-flight run before wiping its messages
   const msgIds = db.prepare('SELECT id FROM messages WHERE conversation_id = ?').all(convId).map((m) => m.id);
   if (msgIds.length) {
@@ -611,7 +611,7 @@ app.delete('/api/tasks/:id', requireAuth, (req, res) => {
 app.post('/api/tasks/:id/run', requireAuth, asyncRoute(async (req, res) => {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!task) return res.status(404).json({ error: 'Not found' });
-  const convId = getOrCreateMainConversation(req.user.id);
+  const convId = getOrCreateConversation(req.user.id);
   if (isRunLocked(convId)) {
     throw httpError(409, 'A run is already in progress for this task');
   }
