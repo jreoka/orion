@@ -41,7 +41,11 @@ async function api(path, { method = 'GET', body } = {}) {
 /* ---------- state ---------- */
 const S = {
   me: null,
-  activeId: null,     // the single main chat's conversation id
+  activeId: null,     // the open conversation's id (main chat or a side chat)
+  conversations: [],  // [{id, title, kind, running, updated_at}] for the sidebar
+  runByConv: {},      // conversation id -> true while a run is known-active there
+  lastSeenAt: {},     // conversation id -> timestamp the user last opened it
+  switching: false,   // a conversation switch is in flight
   messages: [],        // [{id, role, content, attachments}]
   runActive: false,    // an agent run is in flight for the open conversation
   evt: null,           // EventSource for the open conversation's event bus
@@ -798,16 +802,228 @@ function changePasswordModal() {
   });
 }
 
+/* ============================================================
+   Sidebar: main chat + side chats
+   ============================================================ */
+function timeAgo(ts) {
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  const d = Math.floor(h / 24);
+  if (d < 7) return d + 'd ago';
+  return new Date(ts).toLocaleDateString();
+}
+
+// Refresh the conversation list (titles, activity, running flags) without
+// disturbing the open chat. Called on every run end, on window focus, and
+// after create/rename/delete. (This is the function setRunActive always
+// expected — its absence used to crash run cleanup.)
+async function loadConversationsQuiet() {
+  try {
+    const rows = await api('/api/conversations');
+    if (!Array.isArray(rows)) return;
+    S.conversations = rows;
+    for (const c of rows) {
+      if (c.running) S.runByConv[c.id] = true;
+      else if (c.id !== S.activeId) delete S.runByConv[c.id];
+    }
+    renderSidebar();
+  } catch { /* sidebar refresh is best-effort */ }
+}
+
+function renderSidebar() {
+  const list = $('#conv-list');
+  if (!list) return;
+  list.innerHTML = '';
+  let activeTitle = 'Main chat';
+  for (const c of S.conversations) {
+    if (c.id === S.activeId) activeTitle = c.title || 'Untitled';
+    const el = document.createElement('div');
+    el.className = 'conv-item' + (c.id === S.activeId ? ' active' : '');
+    el.setAttribute('role', 'button');
+    el.tabIndex = 0;
+    el.title = c.title || 'Untitled';
+    const seen = S.lastSeenAt[c.id] || 0;
+    const hasNew = c.id !== S.activeId && seen > 0 && c.updated_at > seen;
+    const working = !!(c.running || S.runByConv[c.id]);
+    el.innerHTML = `
+      <div class="conv-meta">
+        <div class="conv-title">${c.kind === 'main' ? '<span class="kind-tag">Main</span>' : ''}${esc(c.title || 'Untitled')}</div>
+        <div class="conv-sub">${working ? 'working…' : esc(timeAgo(c.updated_at))}</div>
+      </div>
+      ${working ? '<span class="conv-dot working" aria-label="Agent working"></span>'
+                : hasNew ? '<span class="conv-dot" aria-label="New activity"></span>' : ''}
+      <button class="conv-menu-btn" aria-label="Chat options" title="Chat options">⋯</button>`;
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.conv-menu-btn')) return;
+      switchConversation(c.id);
+    });
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchConversation(c.id); }
+    });
+    el.querySelector('.conv-menu-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openConvMenu(c, e.currentTarget);
+    });
+    list.appendChild(el);
+  }
+  const t = $('#chat-title');
+  if (t) t.textContent = activeTitle;
+}
+
+function closeConvMenu() { document.getElementById('conv-menu')?.remove(); }
+
+function openConvMenu(conv, anchor) {
+  closeConvMenu();
+  const isMain = conv.kind === 'main';
+  const menu = document.createElement('div');
+  menu.id = 'conv-menu';
+  menu.className = 'menu';
+  menu.innerHTML = `
+    <button data-act="rename">Rename</button>
+    ${isMain ? '<button data-act="clear">Clear chat…</button>'
+             : '<button data-act="delete" class="danger">Delete</button>'}`;
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.position = 'fixed';
+  menu.style.zIndex = 120;
+  menu.style.top = Math.min(window.innerHeight - 130, r.bottom + 6) + 'px';
+  menu.style.left = Math.max(8, Math.min(window.innerWidth - 220, r.left - 170)) + 'px';
+  menu.style.right = 'auto';
+  menu.addEventListener('click', (e) => {
+    const act = e.target.closest('button')?.dataset.act;
+    if (!act) return;
+    closeConvMenu();
+    if (act === 'rename') renameChatModal(conv);
+    else if (act === 'delete') deleteChatModal(conv);
+    else if (act === 'clear') resetEverythingModal();
+  });
+  setTimeout(() => document.addEventListener('click', closeConvMenu, { once: true }), 0);
+}
+
+function renameChatModal(conv) {
+  const bd = openModal(`
+    <h3>Rename chat</h3>
+    <form id="rename-form">
+      <label class="field"><span>Name</span>
+        <input id="rename-input" type="text" maxlength="120" required value="${esc(conv.title || '')}">
+      </label>
+      <p id="rename-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-x="cancel">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>`);
+  const input = bd.querySelector('#rename-input');
+  input.focus(); input.select();
+  bd.querySelector('[data-x=cancel]').onclick = closeModal;
+  bd.querySelector('#rename-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = bd.querySelector('#rename-error');
+    err.hidden = true;
+    try {
+      await api(`/api/conversations/${conv.id}`, { method: 'PATCH', body: { title: input.value.trim() } });
+      closeModal();
+      await loadConversationsQuiet();
+    } catch (ex) { err.textContent = ex.message || 'Rename failed.'; err.hidden = false; }
+  });
+}
+
+function deleteChatModal(conv) {
+  const bd = openModal(`
+    <h3>Delete “${esc(conv.title || 'Untitled')}”?</h3>
+    <p class="muted">This removes the side chat and all of its messages. This can't be undone.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" data-x="cancel">Cancel</button>
+      <button type="button" class="btn danger-ghost" id="del-confirm">Delete</button>
+    </div>`);
+  bd.querySelector('[data-x=cancel]').onclick = closeModal;
+  bd.querySelector('#del-confirm').onclick = async () => {
+    try {
+      await api(`/api/conversations/${conv.id}`, { method: 'DELETE' });
+      closeModal();
+      delete S.runByConv[conv.id];
+      delete S.lastSeenAt[conv.id];
+      toast('Side chat deleted');
+      await loadConversationsQuiet();
+      if (conv.id === S.activeId) {
+        const main = S.conversations.find((c) => c.kind === 'main');
+        if (main) await switchConversation(main.id);
+      }
+    } catch (ex) { toast(ex.message || 'Delete failed', 'error'); }
+  };
+}
+
+async function switchConversation(id) {
+  if (id === S.activeId || S.switching) return;
+  S.switching = true;
+  saveDraft();
+  closeConvMenu();
+  closeSidebarDrawer();
+  try {
+    const data = await api(`/api/conversations/${id}`);
+    closeEventStream();
+    S.activeId = id;
+    setMessages(data);
+    S.lastSeenAt[id] = Date.now();
+    renderSidebar();
+    renderMessages();
+    openEventStream(id);
+    restoreDraft();
+    updateComposer();
+  } catch (ex) {
+    toast(ex.message || 'Could not open chat', 'error');
+  } finally {
+    S.switching = false;
+  }
+}
+
+async function newSideChat() {
+  try {
+    const conv = await api('/api/conversations', { method: 'POST', body: {} });
+    await loadConversationsQuiet();
+    await switchConversation(conv.id);
+    $('#composer-input')?.focus();
+  } catch (ex) { toast(ex.message || 'Could not create chat', 'error'); }
+}
+
+function openSidebarDrawer() {
+  $('#sidebar')?.classList.add('open');
+  const b = $('#side-backdrop');
+  if (b) b.hidden = false;
+}
+function closeSidebarDrawer() {
+  $('#sidebar')?.classList.remove('open');
+  const b = $('#side-backdrop');
+  if (b) b.hidden = true;
+}
+
+let sidebarWired = false;
+function wireSidebarOnce() {
+  if (sidebarWired) return;
+  sidebarWired = true;
+  $('#new-chat-btn')?.addEventListener('click', newSideChat);
+  $('#menu-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openSidebarDrawer(); });
+  $('#side-backdrop')?.addEventListener('click', closeSidebarDrawer);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && S.me) loadConversationsQuiet();
+  });
+}
+
 /* ---------- chat view entry ---------- */
 let chatWired = false;
 async function renderChat() {
   renderUserChip();
   if (!chatWired) { wireChat(); chatWired = true; }
   wireUserMenuOnce();
-  // One main chat: fetch (or create) it, then subscribe to its event bus.
+  wireSidebarOnce();
+  // Main chat: fetch (or create) it, then subscribe to its event bus.
   if (!S.activeId) {
     const box = $('#messages');
-    box.innerHTML = '<div class="skel" style="max-width:60%"></div><div class="skel" style="max-width:80%;margin-left:auto"></div>';
+    box.innerHTML = '<div class="skel" style="max-width:60%;"></div><div class="skel" style="max-width:80%;margin-left:auto"></div>';
     $('#empty-state').hidden = true;
     try {
       const data = await api('/api/chat');
@@ -818,6 +1034,9 @@ async function renderChat() {
       return;
     }
   }
+  S.lastSeenAt[S.activeId] = Date.now();
+  restoreDraft();
+  await loadConversationsQuiet();
   renderMessages();
   openEventStream(S.activeId);
   updateComposer();
@@ -838,12 +1057,10 @@ function wireUserMenuOnce() { if (!userMenuWired) { wireUserMenu(); userMenuWire
 function wireChat() {
   const input = $('#composer-input');
 
-  // Persist the draft so a tab reload (e.g. the auto-reload after a deploy)
-  // never eats what the user was typing.
-  const DRAFT_KEY = 'orion-composer-draft';
-  const saveDraft = () => { try { sessionStorage.setItem(DRAFT_KEY, input.value); } catch {} };
-  const clearDraft = () => { try { sessionStorage.removeItem(DRAFT_KEY); } catch {} };
-  S.clearComposerDraft = clearDraft;
+  // Persist the draft per conversation, so a tab reload (e.g. the
+  // auto-reload after a deploy) never eats what the user was typing,
+  // and switching chats keeps each draft separate.
+  S.clearComposerDraft = () => clearDraft();
 
   // Auto-grow, Enter to send.
   input.addEventListener('input', () => {
@@ -859,13 +1076,27 @@ function wireChat() {
   $('#composer').addEventListener('submit', (e) => { e.preventDefault(); sendMessage(); });
   $('#stop-btn').addEventListener('click', stopStream);
 
-  // Restore an unsent draft from before a reload.
-  try {
-    const d = sessionStorage.getItem(DRAFT_KEY);
-    if (d) { input.value = d; input.dispatchEvent(new Event('input')); }
-  } catch {}
-
+  // Draft restore happens in renderChat, once the conversation id is known.
   updateComposer();
+}
+
+// Composer drafts live in sessionStorage, keyed per conversation.
+function draftKey() { return 'orion-composer-draft-' + (S.activeId || 'none'); }
+function saveDraft() {
+  try { sessionStorage.setItem(draftKey(), $('#composer-input').value); } catch {}
+}
+function clearDraft() {
+  try { sessionStorage.removeItem(draftKey()); } catch {}
+}
+function restoreDraft() {
+  try {
+    const d = sessionStorage.getItem(draftKey());
+    if (d) {
+      const input = $('#composer-input');
+      input.value = d;
+      input.dispatchEvent(new Event('input'));
+    }
+  } catch {}
 }
 
 function updateComposer() {
@@ -980,6 +1211,10 @@ function paintContent(msg) {
 
 function setRunActive(on) {
   S.runActive = on;
+  if (S.activeId) {
+    if (on) S.runByConv[S.activeId] = true;
+    else delete S.runByConv[S.activeId];
+  }
   if (!on) {
     for (const id of S.liveIds) {
       const el = msgElById(id);
@@ -989,6 +1224,7 @@ function setRunActive(on) {
     S.liveIds.clear();
     loadConversationsQuiet(); // pick up the server-side title
   }
+  renderSidebar();
   updateComposer();
 }
 

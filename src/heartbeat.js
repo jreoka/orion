@@ -11,9 +11,9 @@ import { notifyConversation } from './push.js';
 const CHECK_MS = 5 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000; // fixed: no user option
 const DEFAULT_PROMPT =
-  'Check in: review the recent conversation and tell me anything that needs my attention.';
+  'Check in: review the recent conversation and tell me anything that still needs my attention.';
 const HEARTBEAT_SYSTEM_EXTRA =
-  'This is a scheduled heartbeat check. If nothing needs the user\'s attention, reply with exactly: HEARTBEAT_QUIET and nothing else.';
+  'This is a scheduled heartbeat check. Only speak up about something that still needs the user\'s action or decision — an unfinished task, an unanswered question, a problem that is still open. Do not re-report past mistakes or incidents that were already fixed, acknowledged, or resolved; those need no attention and bringing them up again is noise. If nothing actionable remains, reply with exactly: HEARTBEAT_QUIET and nothing else.';
 
 function globalSettings() {
   return {

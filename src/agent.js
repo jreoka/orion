@@ -1008,7 +1008,7 @@ export async function runAgentLoop({
 
     // Auto-title: first exchange in an untitled conversation.
     const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId);
-    if (conv && conv.title === 'New chat' && userText) {
+    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && userText) {
       const t = userText.slice(0, 40);
       db.prepare('UPDATE conversations SET title = ? WHERE id = ?')
         .run(userText.length > 40 ? t + '…' : t, conversationId);

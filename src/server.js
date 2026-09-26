@@ -343,18 +343,19 @@ app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
 
 app.get('/api/conversations', requireAuth, (req, res) => {
   const rows = db
-    .prepare('SELECT id, title, kind, task_id, created_at, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC')
-    .all(req.user.id);
+    .prepare("SELECT id, title, COALESCE(kind,'side') AS kind, task_id, created_at, updated_at FROM conversations WHERE user_id = ? ORDER BY CASE WHEN kind = 'main' THEN 0 ELSE 1 END, updated_at DESC")
+    .all(req.user.id)
+    .map((c) => ({ ...c, running: isRunLocked(c.id) }));
   res.json(rows);
 });
 
 app.post('/api/conversations', requireAuth, (req, res) => {
   const now = Date.now();
-  const title = String(req.body?.title || 'New chat').slice(0, 120) || 'New chat';
+  const title = String(req.body?.title || 'New side chat').slice(0, 120) || 'New side chat';
   const info = db
-    .prepare('INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)')
+    .prepare("INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, ?, 'side', ?, ?)")
     .run(req.user.id, title, now, now);
-  res.json({ id: Number(info.lastInsertRowid), title, created_at: now, updated_at: now });
+  res.json({ id: Number(info.lastInsertRowid), title, kind: 'side', created_at: now, updated_at: now });
 });
 
 app.get('/api/conversations/:id', requireAuth, (req, res) => {
@@ -381,6 +382,7 @@ function deleteConversationFiles(convId) {
 app.delete('/api/conversations/:id', requireAuth, (req, res) => {
   const conv = getConv(req.params.id, req.user.id);
   if (!conv) return res.status(404).json({ error: 'Not found' });
+  if (conv.kind === 'main') return res.status(403).json({ error: 'The main chat cannot be deleted.' });
   const msgIds = db.prepare('SELECT id FROM messages WHERE conversation_id = ?').all(conv.id).map((m) => m.id);
   if (msgIds.length) {
     const placeholders = msgIds.map(() => '?').join(',');
