@@ -331,11 +331,6 @@ button.avatar.lg:hover { opacity: .85; }
   display: flex; align-items: center; gap: 6px;
 }
 .conv-sub { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
-.kind-tag {
-  font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--accent); border: 1px solid var(--accent); border-radius: 20px;
-  padding: 1px 7px; flex-shrink: 0;
-}
 .conv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 .conv-dot.working { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
@@ -347,7 +342,6 @@ button.avatar.lg:hover { opacity: .85; }
 .conv-item:hover .conv-menu-btn, .conv-item:focus-within .conv-menu-btn { opacity: 1; }
 .conv-menu-btn:hover { background: var(--paper-3); color: var(--ink); }
 @media (hover: none) { .conv-menu-btn { opacity: .7; } }
-.side-foot { padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); font-size: 12px; border-top: 1px solid var(--hairline); }
 #side-backdrop {
   position: fixed; inset: 0; background: rgba(28, 24, 19, .35); z-index: 90;
 }

@@ -41,8 +41,8 @@ async function api(path, { method = 'GET', body } = {}) {
 /* ---------- state ---------- */
 const S = {
   me: null,
-  activeId: null,     // the open conversation's id (main chat or a side chat)
-  conversations: [],  // [{id, title, kind, running, updated_at}] for the sidebar
+  activeId: null,     // the open conversation's id
+  conversations: [],  // [{id, title, running, updated_at}] for the sidebar
   runByConv: {},      // conversation id -> true while a run is known-active there
   lastSeenAt: {},     // conversation id -> timestamp the user last opened it
   switching: false,   // a conversation switch is in flight
@@ -803,7 +803,7 @@ function changePasswordModal() {
 }
 
 /* ============================================================
-   Sidebar: main chat + side chats
+   Sidebar: the chat list
    ============================================================ */
 function timeAgo(ts) {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -838,20 +838,20 @@ function renderSidebar() {
   const list = $('#conv-list');
   if (!list) return;
   list.innerHTML = '';
-  let activeTitle = 'Main chat';
+  let activeTitle = 'New chat';
   for (const c of S.conversations) {
-    if (c.id === S.activeId) activeTitle = c.title || 'Untitled';
+    if (c.id === S.activeId) activeTitle = c.title || 'New chat';
     const el = document.createElement('div');
     el.className = 'conv-item' + (c.id === S.activeId ? ' active' : '');
     el.setAttribute('role', 'button');
     el.tabIndex = 0;
-    el.title = c.title || 'Untitled';
+    el.title = c.title || 'New chat';
     const seen = S.lastSeenAt[c.id] || 0;
     const hasNew = c.id !== S.activeId && seen > 0 && c.updated_at > seen;
     const working = !!(c.running || S.runByConv[c.id]);
     el.innerHTML = `
       <div class="conv-meta">
-        <div class="conv-title">${c.kind === 'main' ? '<span class="kind-tag">Main</span>' : ''}${esc(c.title || 'Untitled')}</div>
+        <div class="conv-title">${esc(c.title || 'New chat')}</div>
         <div class="conv-sub">${working ? 'working…' : esc(timeAgo(c.updated_at))}</div>
       </div>
       ${working ? '<span class="conv-dot working" aria-label="Agent working"></span>'
@@ -878,14 +878,12 @@ function closeConvMenu() { document.getElementById('conv-menu')?.remove(); }
 
 function openConvMenu(conv, anchor) {
   closeConvMenu();
-  const isMain = conv.kind === 'main';
   const menu = document.createElement('div');
   menu.id = 'conv-menu';
   menu.className = 'menu';
   menu.innerHTML = `
     <button data-act="rename">Rename</button>
-    ${isMain ? '<button data-act="clear">Clear chat…</button>'
-             : '<button data-act="delete" class="danger">Delete</button>'}`;
+    <button data-act="delete" class="danger">Delete</button>`;
   document.body.appendChild(menu);
   const r = anchor.getBoundingClientRect();
   menu.style.position = 'fixed';
@@ -899,7 +897,6 @@ function openConvMenu(conv, anchor) {
     closeConvMenu();
     if (act === 'rename') renameChatModal(conv);
     else if (act === 'delete') deleteChatModal(conv);
-    else if (act === 'clear') resetEverythingModal();
   });
   setTimeout(() => document.addEventListener('click', closeConvMenu, { once: true }), 0);
 }
@@ -934,8 +931,8 @@ function renameChatModal(conv) {
 
 function deleteChatModal(conv) {
   const bd = openModal(`
-    <h3>Delete “${esc(conv.title || 'Untitled')}”?</h3>
-    <p class="muted">This removes the side chat and all of its messages. This can't be undone.</p>
+    <h3>Delete “${esc(conv.title || 'New chat')}”?</h3>
+    <p class="muted">This removes the chat and all of its messages. This can't be undone.</p>
     <div class="modal-actions">
       <button type="button" class="btn" data-x="cancel">Cancel</button>
       <button type="button" class="btn danger-ghost" id="del-confirm">Delete</button>
@@ -947,11 +944,13 @@ function deleteChatModal(conv) {
       closeModal();
       delete S.runByConv[conv.id];
       delete S.lastSeenAt[conv.id];
-      toast('Side chat deleted');
+      toast('Chat deleted');
       await loadConversationsQuiet();
       if (conv.id === S.activeId) {
-        const main = S.conversations.find((c) => c.kind === 'main');
-        if (main) await switchConversation(main.id);
+        // Fall back to the most recent remaining chat, or a fresh one.
+        const next = S.conversations[0];
+        if (next) await switchConversation(next.id);
+        else await newChat();
       }
     } catch (ex) { toast(ex.message || 'Delete failed', 'error'); }
   };
@@ -981,7 +980,7 @@ async function switchConversation(id) {
   }
 }
 
-async function newSideChat() {
+async function newChat() {
   try {
     const conv = await api('/api/conversations', { method: 'POST', body: {} });
     await loadConversationsQuiet();
@@ -1005,7 +1004,7 @@ let sidebarWired = false;
 function wireSidebarOnce() {
   if (sidebarWired) return;
   sidebarWired = true;
-  $('#new-chat-btn')?.addEventListener('click', newSideChat);
+  $('#new-chat-btn')?.addEventListener('click', newChat);
   $('#menu-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openSidebarDrawer(); });
   $('#side-backdrop')?.addEventListener('click', closeSidebarDrawer);
   document.addEventListener('visibilitychange', () => {
@@ -1020,7 +1019,7 @@ async function renderChat() {
   if (!chatWired) { wireChat(); chatWired = true; }
   wireUserMenuOnce();
   wireSidebarOnce();
-  // Main chat: fetch (or create) it, then subscribe to its event bus.
+  // Default chat: fetch (or create) it, then subscribe to its event bus.
   if (!S.activeId) {
     const box = $('#messages');
     box.innerHTML = '<div class="skel" style="max-width:60%;"></div><div class="skel" style="max-width:80%;margin-left:auto"></div>';
@@ -1119,7 +1118,7 @@ async function sendMessage() {
   if (S.pendingUploads.some((p) => p.uploading)) return; // wait for uploads
   if (!content && !staged.length) return;
 
-  // Ensure the main chat is loaded before posting into it.
+  // Ensure a chat is loaded before posting into it.
   if (!S.activeId) {
     try {
       const data = await api('/api/chat');
