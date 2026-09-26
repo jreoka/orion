@@ -120,11 +120,13 @@ export async function runConversation(
   userId,
   userText,
   chainDepth = 0,
-  maxChain = MAX_CHAINED_RUNS
+  maxChain = MAX_CHAINED_RUNS,
+  runStart = 0 // start time of the outermost run; carried through chains
 ) {
   const id = Number(conversationId);
   const startMaxId =
     db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM messages WHERE conversation_id = ?').get(id).m;
+  if (chainDepth === 0 && !runStart) runStart = Date.now();
 
   const controller = new AbortController();
   controllers.set(id, controller);
@@ -163,27 +165,34 @@ export async function runConversation(
     .prepare("SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND id > ? AND role = 'user'")
     .get(id, startMaxId).c;
   if (pending > 0 && !shuttingDown && tryAcquireRun(id)) {
-    return runConversation(id, userId, userText, chainDepth + 1, maxChain);
+    return runConversation(id, userId, userText, chainDepth + 1, maxChain, runStart);
   }
 
   // Outermost run of this trigger finished: ping the user if they aren't
   // watching this conversation live. Chained runs notify only once, here.
   // Skip when the conversation was deleted mid-run (nothing to deep-link).
+  // Only notify for substantial work: quick Q&A shouldn't buzz the phone.
+  // A run counts as substantial when it ran longer than a minute or ended
+  // in a non-done status (stopped/error). Reminders, scheduled tasks, and
+  // heartbeat findings always notify via their own paths.
   if (chainDepth === 0) {
-    try {
-      const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(id);
-      if (conv) {
-        const last = db
-          .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1")
-          .get(id);
-        const snippet = String(last?.content || '').replace(/\s+/g, ' ').trim().slice(0, 140);
-        await notifyConversation(userId, id, {
-          title: 'Orion',
-          body: `${conv.title || 'Chat'}${runStatus !== 'done' ? ` (${runStatus})` : ''}: ${snippet || 'finished'}`,
-        });
+    const substantial = Date.now() - runStart > 60_000 || runStatus !== 'done';
+    if (substantial) {
+      try {
+        const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(id);
+        if (conv) {
+          const last = db
+            .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1")
+            .get(id);
+          const snippet = String(last?.content || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+          await notifyConversation(userId, id, {
+            title: 'Orion',
+            body: `${conv.title || 'Chat'}${runStatus !== 'done' ? ` (${runStatus})` : ''}: ${snippet || 'finished'}`,
+          });
+        }
+      } catch (e) {
+        console.warn('[orion] run-end push failed:', e?.message || e);
       }
-    } catch (e) {
-      console.warn('[orion] run-end push failed:', e?.message || e);
     }
   }
 
