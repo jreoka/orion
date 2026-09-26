@@ -681,6 +681,14 @@ button.avatar.lg:hover { opacity: .85; }
    ============================================================ */
 .rx-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 0; }
 .rx-row:has(.rx-chip) { margin-top: 8px; }
+/* Reactions on your own message float beneath the bubble instead of
+   stretching it taller — same placement as the hover buttons, with room
+   reserved so the chips never overlap the next message. */
+.msg.user .rx-row:has(.rx-chip) {
+  position: absolute; top: 100%; right: 4px; margin: 6px 0 0;
+  flex-wrap: nowrap; /* one line, extending left — never a wrapped column */
+}
+.msg.user:has(.rx-chip) .bubble { margin-bottom: 40px; }
 /* Consecutive assistant messages belong to one run: tuck them into a single
    visual group and keep one + for the group instead of one per message. */
 .msg.assistant + .msg.assistant { margin-top: -8px; }
