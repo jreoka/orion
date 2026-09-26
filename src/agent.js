@@ -905,6 +905,42 @@ export async function loadHistory(conversationId, limit) {
       )
       .all(conversationId);
   }
+  // Repair split tool sequences. If the user sent messages while a run was
+  // between its tool_calls and their results, the stored order is
+  // assistant(tool_calls) → user → tool → tool — and models choke on the
+  // split sequence (some return empty). Present it as
+  // assistant(tool_calls) → tool → tool → user instead: the tool group
+  // stays intact and the user's question is still asked, in order.
+  // A tool_calls with no results at all (run died mid-turn) is stripped —
+  // providers reject calls without results.
+  {
+    const repaired = [];
+    let i = 0;
+    while (i < rows.length) {
+      const r = rows[i];
+      if (r.role === 'assistant' && r.tool_calls) {
+        const tools = [];
+        const deferredUsers = [];
+        let j = i + 1;
+        while (j < rows.length && (rows[j].role === 'tool' || rows[j].role === 'user')) {
+          if (rows[j].role === 'user') deferredUsers.push(rows[j]);
+          else tools.push(rows[j]);
+          j++;
+        }
+        if (tools.length) {
+          repaired.push(r, ...tools, ...deferredUsers);
+        } else {
+          const { tool_calls: _dropped, ...rest } = r;
+          repaired.push(rest, ...deferredUsers);
+        }
+        i = j;
+      } else {
+        repaired.push(r);
+        i++;
+      }
+    }
+    rows = repaired;
+  }
   const out = [];
   for (const r of rows) {
     if (r.role === 'tool') {
