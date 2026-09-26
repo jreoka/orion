@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && npm i -g playwright@1.49.0
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    NODE_PATH=/usr/local/lib/node_modules
+    NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules
 
 # The base image ships user `pwuser` (uid 1000); rename it to `agent` so the
 # VM's user matches what the platform expects.
