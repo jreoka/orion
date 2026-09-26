@@ -1013,3 +1013,21 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
 [data-theme="dark"] .send-btn:hover:not(:disabled) { background: #d8cdb4; }
 [data-theme="dark"] .modal-backdrop { background: rgba(0, 0, 0, .6); }
 [data-theme="dark"] #lightbox { background: rgba(8, 6, 4, .96); }
+/* Message action buttons (copy / react): the base style paints them in
+   var(--paper), which is the dark page background itself — invisible
+   except for a faint border. Lift them off the background. */
+[data-theme="dark"] .rx-add, [data-theme="dark"] .rx-copy {
+  background: var(--paper-2); border-color: var(--ink-3); color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+}
+[data-theme="dark"] .rx-add:hover, [data-theme="dark"] .rx-copy:hover {
+  background: var(--paper-3); color: var(--ink); border-color: var(--ink-2);
+}
+/* Under the light user bubble they should match the bubble, not the page. */
+[data-theme="dark"] .msg.user .rx-add, [data-theme="dark"] .msg.user .rx-copy {
+  background: var(--ink); border-color: transparent; color: var(--paper);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+}
+[data-theme="dark"] .msg.user .rx-add:hover, [data-theme="dark"] .msg.user .rx-copy:hover {
+  background: #f6f1e3; color: var(--paper);
+}
