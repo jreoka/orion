@@ -181,6 +181,15 @@ app.get('/api/auth/config', (req, res) => {
   res.json({ signup_enabled: userCount === 0 || getSetting('signup_enabled', '1') === '1' });
 });
 
+// Temporary layout diagnostics receiver (empty-state scroll bug). No auth —
+// only receives anonymous layout metrics, never user data.
+app.post('/api/debug/layout', (req, res) => {
+  try {
+    console.log('[layout-debug]', JSON.stringify(req.body).slice(0, 2000));
+  } catch {}
+  res.json({ ok: true });
+});
+
 app.post('/api/auth/signup', asyncRoute(async (req, res) => {
   const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
   if (userCount > 0 && getSetting('signup_enabled', '1') !== '1') {
