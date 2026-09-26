@@ -1393,6 +1393,7 @@ function setRunActive(on) {
     else delete S.runByConv[S.activeId];
   }
   if (!on) {
+    clearToolStatus(); // the single live status line never survives a run
     for (const id of S.liveIds) {
       const el = msgElById(id);
       el?.querySelector('.typing-dots')?.remove();
@@ -1563,43 +1564,44 @@ function onBusToken(d) {
   keepPlace();
 }
 
+// One quiet status line per in-flight assistant message: a general phrase
+// about what the run is doing, updated in place — never a row per tool.
+// Removed when the run ends (see setRunActive).
+const TOOL_STATUS_PHRASES = {
+  exec: 'Running a command…',
+  read_file: 'Reading files…',
+  write_file: 'Writing files…',
+  list_files: 'Looking through files…',
+  web_fetch: 'Reading a web page…',
+  browser_shot: 'Looking at a web page…',
+  delegate: 'Working on a subtask…',
+  react_to_message: 'Reacting…',
+  vault_request: 'Preparing a secure form…',
+  vault_list: 'Checking the vault…',
+  vault_delete: 'Updating the vault…',
+  schedule_task: 'Scheduling…',
+  list_tasks: 'Checking scheduled tasks…',
+  update_task: 'Updating a scheduled task…',
+  delete_task: 'Removing a scheduled task…',
+};
 function onBusTool(d) {
-  if (!d || d.message_id == null) return;
+  if (!d || d.message_id == null || d.status !== 'start') return;
+  if (d.name === 'send_update') return; // the agent's own update line; no redundant status
   const toolsEl = msgElById(d.message_id)?.querySelector('.tools');
   if (!toolsEl) return;
-  let rows = S.toolRows.get(d.message_id);
-  if (!rows) { rows = []; S.toolRows.set(d.message_id, rows); }
-  let row = [...rows].reverse().find((r) => r.name === d.name && r.open);
-  if (!row) {
-    const div = document.createElement('div');
-    div.className = 'tool-row';
-    div.innerHTML = `
-      <button class="tool-head" type="button">
-        <span class="dot running"></span>
-        <span class="tname">⚙ ${esc(d.name || 'tool')}</span>
-        <span class="tsummary"></span>
-        <span class="tchev">▾</span>
-      </button>
-      <div class="tool-detail"></div>`;
-    div.querySelector('.tool-head').addEventListener('click', () => div.classList.toggle('open'));
-    toolsEl.appendChild(div);
-    row = { name: d.name, el: div, open: true };
-    rows.push(row);
+  let st = toolsEl.querySelector('.tool-status');
+  if (!st) {
+    st = document.createElement('div');
+    st.className = 'tool-status';
+    st.innerHTML = '<span class="dot running"></span><span class="ttext"></span>';
+    toolsEl.appendChild(st);
   }
-  const dot = row.el.querySelector('.dot');
-  const sum = row.el.querySelector('.tsummary');
-  const detail = row.el.querySelector('.tool-detail');
-  const summary = d.summary || (d.args ? String(d.args).slice(0, 120) : '');
-  if (summary) { sum.textContent = summary; detail.textContent = summary; }
-  if (d.status === 'done') {
-    dot.classList.remove('running');
-    dot.classList.add('done');
-    row.open = false;
-    if (d.result_summary) detail.textContent = d.result_summary;
-  } else {
-    sum.textContent = sum.textContent || 'Running…';
-  }
+  st.querySelector('.ttext').textContent = TOOL_STATUS_PHRASES[d.name] || 'Working…';
   keepPlace();
+}
+
+function clearToolStatus() {
+  document.querySelectorAll('.tool-status').forEach((el) => el.remove());
 }
 
 function onBusImage(d) {
