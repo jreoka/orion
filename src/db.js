@@ -54,6 +54,16 @@ CREATE TABLE IF NOT EXISTS attachments (
   mime TEXT,
   path TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS reactions (
+  id INTEGER PRIMARY KEY,
+  message_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  emoji TEXT NOT NULL,
+  actor TEXT NOT NULL DEFAULT 'user',
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_unique ON reactions(message_id, user_id, emoji);
+CREATE INDEX IF NOT EXISTS idx_reactions_msg ON reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
@@ -244,6 +254,68 @@ export function getOrCreateMainConversation(userId) {
       .prepare("INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, ?, 'main', ?, ?)")
       .run(userId, 'Main chat', now, now).lastInsertRowid
   );
+}
+
+/**
+ * Grouped reactions for one message: [{ emoji, count, mine, agent }].
+ * mine = this account reacted (as the user or via the agent);
+ * agent = the agent (not the user) added this emoji.
+ */
+export function groupedReactions(messageId, userId) {
+  const rows = db
+    .prepare('SELECT emoji, actor, user_id FROM reactions WHERE message_id = ?')
+    .all(messageId);
+  const groups = new Map();
+  for (const r of rows) {
+    let g = groups.get(r.emoji);
+    if (!g) {
+      g = { emoji: r.emoji, count: 0, mine: false, agent: false };
+      groups.set(r.emoji, g);
+    }
+    g.count++;
+    if (r.user_id === userId) g.mine = true;
+    if (r.actor === 'agent') g.agent = true;
+  }
+  return [...groups.values()];
+}
+
+/** One-line reaction summary for model history, or '' when there are none. */
+export function reactionSummary(messageId) {
+  const rows = db
+    .prepare('SELECT emoji, actor, COUNT(*) AS n FROM reactions WHERE message_id = ? GROUP BY emoji, actor')
+    .all(messageId);
+  if (!rows.length) return '';
+  const parts = rows.map((r) => {
+    const who = r.actor === 'agent' ? 'you' : 'the user';
+    return `${r.emoji}${r.n > 1 ? ' ×' + r.n : ''} (${who} reacted)`;
+  });
+  return `\n\n[reactions on this message: ${parts.join('; ')}]`;
+}
+
+/** Validate a reaction emoji: one emoji-ish token, no whitespace, bounded. */
+export function normalizeEmoji(s) {
+  if (typeof s !== 'string') return null;
+  const e = s.trim();
+  if (!e || e.length > 16 || /\s/.test(e)) return null;
+  return e;
+}
+
+/** Add or remove an account's reaction; returns the grouped reactions. */
+export function setReaction(messageId, userId, emoji, actor, add) {
+  if (add) {
+    db.prepare(
+      `INSERT INTO reactions (message_id, user_id, emoji, actor, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(message_id, user_id, emoji) DO UPDATE SET actor = excluded.actor`
+    ).run(messageId, userId, emoji, actor, Date.now());
+  } else {
+    db.prepare('DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(
+      messageId,
+      userId,
+      emoji
+    );
+  }
+  return groupedReactions(messageId, userId);
 }
 
 export { db };

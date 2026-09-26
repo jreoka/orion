@@ -324,6 +324,10 @@ $('#messages').addEventListener('click', async (e) => {
   }
   const img = e.target.closest('.msg-img');
   if (img) openLightbox(img.src);
+  // Reactions: tap a chip to toggle yours, tap + for the emoji picker.
+  const chip = e.target.closest('[data-rx]');
+  if (chip) { toggleReaction(chip); return; }
+  if (e.target.closest('[data-rxadd]')) { openRxPicker(e.target.closest('[data-rxadd]')); return; }
 });
 
 function messageEl(m) {
@@ -331,7 +335,7 @@ function messageEl(m) {
   wrap.className = 'msg ' + (m.role === 'user' ? 'user' : 'assistant');
   wrap.dataset.mid = m.id || '';
   if (m.role === 'user') {
-    wrap.innerHTML = `<div class="bubble">${md(m.content)}</div>`;
+    wrap.innerHTML = `<div class="bubble">${md(m.content)}<div class="rx-row" data-rxrow>${rxRowInner(m)}</div></div>`;
   } else {
     wrap.innerHTML = `
       <div class="a-avatar">
@@ -344,9 +348,90 @@ function messageEl(m) {
         <div class="tools"></div>
         <div class="content">${m.content ? md(m.content) : ''}</div>
         <div class="imgs">${(m.attachments || []).map(attachmentHtml).join('')}</div>
+        <div class="rx-row" data-rxrow>${rxRowInner(m)}</div>
       </div>`;
   }
   return wrap;
+}
+
+/* ---------- reactions ---------- */
+const RX_EMOJI = ['❤️', '👍', '👎', '😂', '😮', '😢', '🎉', '🙏', '👏', '🔥', '✅', '🤔', '👀', '💯'];
+
+function rxChipHtml(r) {
+  return `<button class="rx-chip${r.mine ? ' mine' : ''}" data-rx="${esc(r.emoji)}" aria-label="Toggle ${esc(r.emoji)} reaction" title="${esc(r.agent ? 'Reacted by Orion' : 'Reacted by you')}">${esc(r.emoji)}${r.count > 1 ? `<span class="rx-n">${r.count}</span>` : ''}</button>`;
+}
+
+function rxRowInner(m) {
+  const chips = (m.reactions || []).map(rxChipHtml).join('');
+  return `${chips}<button class="rx-add" data-rxadd aria-label="Add reaction" title="Add reaction">+</button>`;
+}
+
+// Refresh one message's reaction row from a grouped-reactions payload.
+function applyReactions(messageId, reactions) {
+  const msg = S.messages.find((x) => x.id === messageId);
+  if (msg) msg.reactions = reactions;
+  const row = msgElById(messageId)?.querySelector('[data-rxrow]');
+  if (row) row.innerHTML = rxRowInner({ reactions });
+}
+
+async function toggleReaction(chip) {
+  const mid = chip.closest('.msg')?.dataset.mid;
+  if (!mid || String(mid).startsWith('local-')) return;
+  const emoji = chip.dataset.rx;
+  try {
+    const d = chip.classList.contains('mine')
+      ? await api(`/api/messages/${mid}/reactions/${encodeURIComponent(emoji)}`, { method: 'DELETE' })
+      : await api(`/api/messages/${mid}/reactions`, { method: 'POST', body: { emoji } });
+    applyReactions(d.message_id, d.reactions);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function addReaction(mid, emoji) {
+  if (!mid || String(mid).startsWith('local-')) return;
+  try {
+    const d = await api(`/api/messages/${mid}/reactions`, { method: 'POST', body: { emoji } });
+    applyReactions(d.message_id, d.reactions);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function closeRxPicker() {
+  document.getElementById('rx-picker')?.remove();
+  document.removeEventListener('click', closeRxPickerOutside, true);
+}
+function closeRxPickerOutside(e) {
+  if (!e.target.closest('#rx-picker') && !e.target.closest('[data-rxadd]')) closeRxPicker();
+}
+
+function openRxPicker(btn) {
+  const wasOpen = !!document.getElementById('rx-picker');
+  closeRxPicker();
+  if (wasOpen) return; // tapping the + again dismisses
+  const mid = btn.closest('.msg')?.dataset.mid;
+  if (!mid || String(mid).startsWith('local-')) return;
+  const p = document.createElement('div');
+  p.className = 'rx-picker';
+  p.id = 'rx-picker';
+  p.setAttribute('role', 'menu');
+  p.innerHTML = RX_EMOJI.map((e) => `<button data-pick="${e}" role="menuitem" aria-label="React ${e}">${e}</button>`).join('');
+  document.body.appendChild(p);
+  // Anchor above the button, clamped to the viewport.
+  const r = btn.getBoundingClientRect();
+  p.style.visibility = 'hidden';
+  const pw = p.offsetWidth, ph = p.offsetHeight;
+  let left = Math.min(Math.max(8, r.left + r.width / 2 - pw / 2), window.innerWidth - pw - 8);
+  let top = r.top - ph - 10;
+  if (top < 8) top = Math.min(r.bottom + 10, window.innerHeight - ph - 8);
+  p.style.left = left + 'px';
+  p.style.top = Math.max(8, top) + 'px';
+  p.style.visibility = '';
+  p.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pick]');
+    if (!b) return;
+    closeRxPicker();
+    addReaction(mid, b.dataset.pick);
+  });
+  // Skip the click that opened the picker.
+  setTimeout(() => document.addEventListener('click', closeRxPickerOutside, true), 0);
 }
 
 function appendUserMessage(content) {
@@ -599,6 +684,10 @@ function openEventStream(convId) {
   es.addEventListener('run_started', () => setRunActive(true));
   es.addEventListener('run_ended', () => setRunActive(false));
   es.addEventListener('chat_cleared', () => clearChatState()); // another client reset the chat
+  es.addEventListener('reaction', (e) => {
+    const d = parseBusEvent(e);
+    if (d && d.message_id != null) applyReactions(d.message_id, d.reactions || []);
+  });
   es.addEventListener('message', (e) => onBusMessage(parseBusEvent(e)?.message));
   es.addEventListener('token', (e) => onBusToken(parseBusEvent(e)));
   es.addEventListener('tool', (e) => onBusTool(parseBusEvent(e)));
@@ -659,7 +748,7 @@ function onBusMessage(m) {
       reconcileLocal(local, m);
       return;
     }
-    msg = { id: m.id, role: m.role, content: m.content || '', attachments: m.attachments || [] };
+    msg = { id: m.id, role: m.role, content: m.content || '', attachments: m.attachments || [], reactions: m.reactions || [] };
     S.messages.push(msg);
     $('#messages').appendChild(messageEl(msg));
     $('#empty-state').hidden = true;

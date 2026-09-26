@@ -5,7 +5,7 @@ import cookieParser from 'cookie-parser';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, getSetting, setSetting, DATA_DIR, getOrCreateMainConversation } from './db.js';
+import { db, getSetting, setSetting, DATA_DIR, getOrCreateMainConversation, groupedReactions, normalizeEmoji, setReaction } from './db.js';
 import {
   signup,
   loginStep1,
@@ -224,12 +224,50 @@ function conversationPayload(conv) {
         .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
         .all(m.id)
         .map((a) => ({ id: a.id, filename: a.filename, url: `/api/files/${a.id}` })),
+      reactions: groupedReactions(m.id, conv.user_id),
     }));
   return {
     conversation: { id: conv.id, title: conv.title, kind: conv.kind, task_id: conv.task_id, created_at: conv.created_at, updated_at: conv.updated_at },
     messages,
   };
 }
+
+// ---- reactions ------------------------------------------------------------
+// Emoji reactions on messages: the user taps chips in the UI, the agent uses
+// the react_to_message tool. Updates stream live over the conversation bus.
+
+// Message row + its conversation, or null when the message isn't the user's.
+function getMessageConv(messageId, userId) {
+  return (
+    db
+      .prepare(
+        `SELECT m.id, m.conversation_id FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE m.id = ? AND c.user_id = ?`
+      )
+      .get(Number(messageId), userId) || null
+  );
+}
+
+app.post('/api/messages/:id/reactions', requireAuth, (req, res) => {
+  const mc = getMessageConv(req.params.id, req.user.id);
+  if (!mc) return res.status(404).json({ error: 'Not found' });
+  const emoji = normalizeEmoji(req.body?.emoji);
+  if (!emoji) return res.status(400).json({ error: 'Invalid emoji.' });
+  const reactions = setReaction(mc.id, req.user.id, emoji, 'user', true);
+  publish(mc.conversation_id, { type: 'reaction', message_id: mc.id, reactions });
+  res.json({ message_id: mc.id, reactions });
+});
+
+app.delete('/api/messages/:id/reactions/:emoji', requireAuth, (req, res) => {
+  const mc = getMessageConv(req.params.id, req.user.id);
+  if (!mc) return res.status(404).json({ error: 'Not found' });
+  const emoji = normalizeEmoji(req.params.emoji); // express already URL-decodes params
+  if (!emoji) return res.status(400).json({ error: 'Invalid emoji.' });
+  const reactions = setReaction(mc.id, req.user.id, emoji, 'user', false);
+  publish(mc.conversation_id, { type: 'reaction', message_id: mc.id, reactions });
+  res.json({ message_id: mc.id, reactions });
+});
 
 // Single main chat: the only conversation the client ever opens.
 app.get('/api/chat', requireAuth, (req, res) => {

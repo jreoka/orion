@@ -10,7 +10,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, DATA_DIR } from './db.js';
+import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, groupedReactions } from './db.js';
 import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
 import { publish } from './events.js';
 import { recordUsage, isOverLimit, LIMIT_REACHED_MESSAGE } from './usage.js';
@@ -202,6 +202,27 @@ export const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'react_to_message',
+      description:
+        'Add or remove an emoji reaction on a chat message — e.g. acknowledge the user\u2019s message with \u2764\uFE0F, mark something done with \u2705, or laugh along with \uD83D\uDE02. Reactions are visible to the user in the chat and show up in conversation history.',
+      parameters: {
+        type: 'object',
+        properties: {
+          message_id: { type: 'number', description: 'Message id to react to' },
+          emoji: { type: 'string', description: 'Single emoji, e.g. ❤️' },
+          action: {
+            type: 'string',
+            enum: ['add', 'remove'],
+            description: 'Add or remove the reaction (default: add)',
+          },
+        },
+        required: ['message_id', 'emoji'],
+      },
+    },
+  },
 ];
 
 const DELEGATE_TOOL = {
@@ -256,6 +277,7 @@ function summarizeTool(name, args) {
     case 'list_tasks': return 'list tasks';
     case 'update_task':
     case 'delete_task': return 'task ' + s(args.id, 20);
+    case 'react_to_message': return (args.action === 'remove' ? 'unreact ' : 'react ') + s(args.emoji, 10);
     default: return name;
   }
 }
@@ -417,6 +439,24 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       unscheduleTask(Number(args.id));
       return { text: `Deleted task #${args.id}.` };
     }
+    case 'react_to_message': {
+      const mid = Number(args.message_id);
+      if (!Number.isFinite(mid)) throw new Error('react_to_message: message_id is required');
+      const emoji = normalizeEmoji(args.emoji);
+      if (!emoji) throw new Error('react_to_message: emoji must be a single emoji');
+      const row = db
+        .prepare('SELECT id FROM messages WHERE id = ? AND conversation_id = ?')
+        .get(mid, conversationId);
+      if (!row) throw new Error(`react_to_message: no message #${args.message_id} in this chat`);
+      const add = (args.action || 'add') !== 'remove';
+      setReaction(mid, userId, emoji, 'agent', add);
+      publish(conversationId, {
+        type: 'reaction',
+        message_id: mid,
+        reactions: groupedReactions(mid, userId),
+      });
+      return { text: add ? `Reacted ${emoji} to message #${mid}.` : `Removed ${emoji} from message #${mid}.` };
+    }
     case 'send_update': {
       const text = String(args.text ?? '').trim();
       if (!text) throw new Error('send_update: text is required (1–2000 characters)');
@@ -442,7 +482,7 @@ function loadHistory(conversationId, limit) {
   if (limit && Number.isFinite(limit) && limit > 0) {
     rows = db
       .prepare(
-        'SELECT role, content, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?'
+        'SELECT id, role, content, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?'
       )
       .all(conversationId, Math.ceil(limit));
     rows.reverse();
@@ -452,7 +492,7 @@ function loadHistory(conversationId, limit) {
   } else {
     rows = db
       .prepare(
-        'SELECT role, content, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id'
+        'SELECT id, role, content, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id'
       )
       .all(conversationId);
   }
@@ -461,7 +501,9 @@ function loadHistory(conversationId, limit) {
       if (r.role === 'tool') {
         return { role: 'tool', tool_call_id: r.tool_call_id, content: r.content || '' };
       }
-      const m = { role: r.role, content: r.content || '' };
+      // Reactions ride along as a plain-text suffix so the model sees who
+      // reacted to what without any schema changes.
+      const m = { role: r.role, content: (r.content || '') + reactionSummary(r.id) };
       if (r.tool_calls) {
         try {
           m.tool_calls = JSON.parse(r.tool_calls);
