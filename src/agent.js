@@ -1284,7 +1284,7 @@ async function runToolLoop({
  */
 export async function runAgent({
   userId, conversationId, userText, settings,
-  shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd,
+  shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle,
 }) {
   const now = Date.now();
   const info = db
@@ -1296,7 +1296,7 @@ export async function runAgent({
     type: 'message',
     message: { id: userMsgId, role: 'user', content: userText, created_at: now },
   });
-  const r = await runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd });
+  const r = await runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle });
   return { ...r, userMsgId };
 }
 
@@ -1307,15 +1307,16 @@ export async function runAgent({
  */
 export async function runAgentContinuation({
   userId, conversationId, userText, settings,
-  shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd,
+  shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle,
 }) {
-  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd });
+  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle });
 }
 
 export async function runAgentLoop({
   userId, conversationId, userText, settings,
   shouldAbort, signal, systemExtra, historyLimit,
   onExecStart, onExecEnd, // optional: track the in-flight sandbox exec (Stop support)
+  noAutoTitle, // system-injected prompts (heartbeat, tasks) must never title a chat
 }) {
   const deadlineAt = Date.now() + RUN_CAP_MS;
   // Default replay cap: the whole conversation is unbounded and callers
@@ -1497,9 +1498,11 @@ export async function runAgentLoop({
       appendStoppedNote(row?.content || '');
     }
 
-    // Auto-title: first exchange in an untitled conversation.
+    // Auto-title: first exchange in an untitled conversation. Never from a
+    // system-injected prompt — a heartbeat check or task run must not leave
+    // chats titled "Check in…" / "Task: …".
     const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId);
-    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && userText) {
+    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && userText && !noAutoTitle) {
       const t = userText.slice(0, 40);
       db.prepare('UPDATE conversations SET title = ? WHERE id = ?')
         .run(userText.length > 40 ? t + '…' : t, conversationId);

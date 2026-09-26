@@ -99,6 +99,7 @@ export async function runHeartbeatFor(userId) {
       signal: controller.signal,
       systemExtra: HEARTBEAT_SYSTEM_EXTRA,
       historyLimit: 20,
+      noAutoTitle: true, // the injected check-in prompt must never title a chat
       onExecStart: (execId) => trackExecStart(convId, userId, execId),
       onExecEnd: (execId) => trackExecEnd(convId, execId),
     });

@@ -115,6 +115,7 @@ export async function fireTask(taskId, { manual = false } = {}) {
       settings: globalSettings(),
       shouldAbort: () => isStopRequested(convId),
       signal: controller.signal,
+      noAutoTitle: true, // the synthetic task prompt must never title a chat
       onExecStart: (execId) => trackExecStart(convId, task.user_id, execId),
       onExecEnd: (execId) => trackExecEnd(convId, execId),
     });
