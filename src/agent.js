@@ -1358,10 +1358,6 @@ export async function runAgentLoop({
   let assistantId = null;
   let status = 'done'; // done | error | stopped
   // Assistant message IDs created during this run, in turn order. At run end
-  // the client collapses every turn except the final substantive one, so a
-  // finished run reads as one answer instead of a stack of play-by-play rows.
-  const runAssistantIds = [];
-
   // Bridge the loop's emit() calls onto the conversation event bus.
   const busEmit = (type, data) => {
     try {
@@ -1460,7 +1456,6 @@ export async function runAgentLoop({
             .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
             .run(conversationId, 'assistant', '', Date.now()).lastInsertRowid
         );
-        runAssistantIds.push(assistantId);
         publish(conversationId, {
           type: 'message',
           message: { id: assistantId, role: 'assistant', content: '', created_at: Date.now() },
@@ -1524,27 +1519,6 @@ export async function runAgentLoop({
     return { finalText: '', status };
   } finally {
     publishAssistantRow();
-    // Intermediate turns: non-empty assistant rows from this run except the
-    // final substantive one. Empty tool-only turns are invisible anyway, so
-    // they need no toggle. Cosmetic only — never fail the run_ended frame.
-    let intermediateIds = [];
-    try {
-      if (runAssistantIds.length > 1) {
-        const placeholders = runAssistantIds.map(() => '?').join(',');
-        const rows = db
-          .prepare(
-            `SELECT id, content FROM messages WHERE id IN (${placeholders}) ` +
-              `AND role = 'assistant' AND kind = 'message'`
-          )
-          .all(...runAssistantIds);
-        const byId = new Map(rows.map((r) => [Number(r.id), String(r.content || '')]));
-        const nonEmpty = runAssistantIds.filter((id) => byId.get(Number(id))?.trim());
-        const finalId = nonEmpty.length ? nonEmpty[nonEmpty.length - 1] : null;
-        intermediateIds = nonEmpty.filter((id) => id !== finalId);
-      }
-    } catch {
-      intermediateIds = [];
-    }
-    publish(conversationId, { type: 'run_ended', status, intermediate_ids: intermediateIds });
+    publish(conversationId, { type: 'run_ended', status });
   }
 }

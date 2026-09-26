@@ -427,7 +427,6 @@ async function loadOlder() {
     const frag = document.createDocumentFragment();
     for (const m of missing) frag.appendChild(messageEl(m)); // S.messages order: oldest first
     box.insertBefore(frag, ensureOlderSpinner().nextSibling);
-    applyCollapseGroups(); // re-attached turns belong under existing "earlier steps" toggles
     box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
     return;
   }
@@ -444,7 +443,6 @@ async function loadOlder() {
     const frag = document.createDocumentFragment();
     for (const m of batch) frag.appendChild(messageEl(m));
     box.insertBefore(frag, ensureOlderSpinner().nextSibling);
-    applyCollapseGroups(); // paged-up turns stay tucked under "earlier steps" toggles
     box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
   } catch {
     /* a failed page just means scrolling up tries again later */
@@ -1579,14 +1577,7 @@ function openEventStream(convId) {
     setRunActive(running);
   });
   es.addEventListener('run_started', () => setRunActive(true));
-  es.addEventListener('run_ended', (e) => {
-    const d = parseBusEvent(e) || {};
-    setRunActive(false);
-    // Finished runs read as one answer: collapse the intermediate turns.
-    if (Array.isArray(d.intermediate_ids) && d.intermediate_ids.length) {
-      addCollapseGroup(S.activeId, d.intermediate_ids);
-    }
-  });
+  es.addEventListener('run_ended', () => setRunActive(false));
   es.addEventListener('chat_cleared', () => clearChatState()); // another client reset the chat
   es.addEventListener('reaction', (e) => {
     const d = parseBusEvent(e);
@@ -1786,70 +1777,6 @@ function hideRunStatus() {
   document.getElementById('run-status')?.remove();
 }
 
-// Collapsed intermediate runs: conversation id -> [{ ids: [...] }].
-// A finished multi-turn run reads as one answer; the earlier turns hide
-// behind a slim "N earlier steps" toggle. Persisted so the cleanup survives
-// a reload. History in the DB is untouched — the model still sees it all.
-let collapseGroups = {};
-try { collapseGroups = JSON.parse(localStorage.getItem('orion-collapsed-v1') || '{}'); } catch { collapseGroups = {}; }
-function saveCollapseGroups() {
-  try {
-    let total = 0;
-    for (const cid of Object.keys(collapseGroups)) total += collapseGroups[cid].length;
-    if (total > 200) {
-      for (const cid of Object.keys(collapseGroups)) {
-        while (collapseGroups[cid].length && total > 200) { collapseGroups[cid].shift(); total--; }
-        if (!collapseGroups[cid].length) delete collapseGroups[cid];
-      }
-    }
-    localStorage.setItem('orion-collapsed-v1', JSON.stringify(collapseGroups));
-  } catch { /* storage unavailable — the collapse just won't survive a reload */ }
-}
-function addCollapseGroup(convId, ids) {
-  if (!convId || !ids?.length) return;
-  const key = String(convId);
-  const idSet = new Set(ids.map(Number).filter((n) => n > 0));
-  if (!idSet.size) return;
-  const groups = (collapseGroups[key] ||= []);
-  if (groups.some((g) => g.ids.some((id) => idSet.has(id)))) return; // already collapsed
-  groups.push({ ids: [...idSet] });
-  saveCollapseGroups();
-  applyCollapseGroups();
-}
-function applyCollapseGroups() {
-  const groups = collapseGroups[String(S.activeId)] || [];
-  for (const g of groups) {
-    const key = g.ids.join(',');
-    let firstEl = null;
-    for (const id of g.ids) {
-      const el = msgElById(id);
-      if (!el) continue;
-      if (!firstEl) firstEl = el;
-      el.style.display = 'none';
-    }
-    if (!firstEl) continue;
-    if (firstEl.parentElement.querySelector(`.intermediate-toggle[data-g="${CSS.escape(key)}"]`)) continue;
-    const n = g.ids.length;
-    const t = document.createElement('div');
-    t.className = 'intermediate-toggle';
-    t.dataset.g = key;
-    t.textContent = `\u22EF ${n} earlier step${n === 1 ? '' : 's'}`;
-    t.title = 'Show the intermediate steps';
-    t.addEventListener('click', () => expandCollapseGroup(g));
-    firstEl.before(t);
-  }
-}
-function expandCollapseGroup(g) {
-  const key = String(S.activeId);
-  collapseGroups[key] = (collapseGroups[key] || []).filter((x) => x !== g);
-  if (!collapseGroups[key].length) delete collapseGroups[key];
-  saveCollapseGroups();
-  for (const id of g.ids) {
-    const el = msgElById(id);
-    if (el) el.style.display = '';
-  }
-  document.querySelector(`.intermediate-toggle[data-g="${CSS.escape(g.ids.join(','))}"]`)?.remove();
-}
 function onBusTool(d) {
   if (!d || d.status !== 'start') return;
   if (d.name === 'send_update') return; // the agent's own update line; no redundant status
