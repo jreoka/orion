@@ -77,6 +77,9 @@ export async function ensureImage() {
 }
 
 // Create (if missing) and start the user's container. Idempotent.
+// Auto-heal: a container that exists but won't start (dead, paused,
+// corrupted state) is force-removed and recreated rather than failing
+// the run.
 export async function ensureSandbox(userId) {
   const docker = getDocker();
   await ensureImage();
@@ -89,13 +92,8 @@ export async function ensureSandbox(userId) {
     else throw e;
   }
 
-  let container = docker.getContainer(cname);
-  try {
-    const info = await container.inspect();
-    if (!info.State?.Running) await container.start();
-  } catch (e) {
-    if (e.statusCode !== 404) throw e;
-    container = await docker.createContainer({
+  const createFresh = async () => {
+    const container = await docker.createContainer({
       name: cname,
       Image: SANDBOX_IMAGE,
       Cmd: ['sleep', 'infinity'],
@@ -108,6 +106,29 @@ export async function ensureSandbox(userId) {
       },
     });
     await container.start();
+    return container;
+  };
+
+  let container = docker.getContainer(cname);
+  try {
+    const info = await container.inspect();
+    if (!info.State?.Running) {
+      try {
+        await container.start();
+      } catch (startErr) {
+        // Wedged container: remove it and create a fresh one.
+        console.warn(`[orion] sandbox ${cname} would not start (${startErr.message}); recreating`);
+        try {
+          await container.remove({ force: true });
+        } catch {
+          /* already gone */
+        }
+        container = await createFresh();
+      }
+    }
+  } catch (e) {
+    if (e.statusCode !== 404) throw e;
+    container = await createFresh();
   }
   return container;
 }

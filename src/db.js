@@ -60,6 +60,67 @@ CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);
 `);
 
+// ---- idempotent v2 migrations (ALTER TABLE is safe to re-run) --------------
+function addColumn(table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+}
+
+addColumn('users', 'totp_secret', 'TEXT');
+addColumn('users', 'totp_enabled', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('users', 'totp_pending_secret', 'TEXT');
+addColumn('sessions', 'ip', 'TEXT');
+addColumn('sessions', 'user_agent', 'TEXT');
+addColumn('sessions', 'last_seen_at', 'INTEGER');
+addColumn('conversations', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
+addColumn('conversations', 'task_id', 'INTEGER');
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS totp_backup_codes (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  code_hash TEXT NOT NULL,
+  used_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS passkey_credentials (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  credential_id TEXT UNIQUE NOT NULL,
+  public_key TEXT NOT NULL,
+  counter INTEGER NOT NULL DEFAULT 0,
+  transports TEXT,
+  name TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'cron',
+  cron_expr TEXT,
+  run_at INTEGER,
+  prompt TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_run_at INTEGER,
+  next_run_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id INTEGER PRIMARY KEY,
+  heartbeat_enabled INTEGER NOT NULL DEFAULT 0,
+  heartbeat_interval_hours INTEGER NOT NULL DEFAULT 6,
+  heartbeat_prompt TEXT NOT NULL DEFAULT '',
+  last_heartbeat_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkey_credentials(user_id);
+CREATE INDEX IF NOT EXISTS idx_backup_codes_user ON totp_backup_codes(user_id);
+`);
+
 // NOTE: `messages.tool_call_id` is one column beyond the original sketch —
 // tool-role rows need it to be replayable as valid OpenAI history.
 
