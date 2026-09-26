@@ -610,7 +610,6 @@ function renderMessages() {
   // Windowed: only the latest RENDER_WINDOW messages hit the DOM.
   const win = S.messages.slice(-RENDER_WINDOW);
   for (const m of win) box.appendChild(messageEl(m));
-  applyCollapseGroups();
   scrollBottom(true);
 }
 
@@ -1707,7 +1706,6 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
     }
   }
   if (added) {
-    applyCollapseGroups(); // a late row may belong to an already-collapsed run
     noteNewMessage();
   } else keepPlace();
 }
