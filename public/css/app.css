@@ -695,15 +695,14 @@ button.avatar.lg:hover { opacity: .85; }
 .rx-n { font-size: 12px; font-family: var(--sans); font-weight: 600; color: var(--ink-2); }
 .rx-add, .rx-copy {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; padding: 0 0 2px;
+  width: 32px; height: 32px; padding: 0;
   border-radius: 50%; border: 1px solid var(--ink-3);
   background: var(--paper); color: var(--ink-2);
   box-shadow: 0 1px 2px rgba(28, 24, 19, .1);
-  font-size: 17px; line-height: 1; cursor: pointer;
+  cursor: pointer;
   opacity: 0; transition: opacity .15s, background .12s;
 }
-.rx-copy { padding: 0; }
-.rx-copy svg { display: block; }
+.rx-add svg, .rx-copy svg { display: block; }
 .msg:hover .rx-add, .msg:hover .rx-copy,
 .rx-row:focus-within .rx-add, .rx-row:focus-within .rx-copy { opacity: 1; }
 .rx-add:hover, .rx-copy:hover { background: var(--paper-2); color: var(--ink); border-color: var(--ink-2); }
