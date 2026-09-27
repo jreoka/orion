@@ -1054,7 +1054,7 @@ function collapseWorkLogs() {
     seg.forEach((el, i) => {
       if (el.classList && el.classList.contains('msg') && el.classList.contains('update')) {
         group.push(el); // send_update note — always intermediate
-      } else if (i !== finalIdx && isIntermediateCandidate(el) && !el.querySelector('.imgs, .u-imgs')) {
+      } else if (i !== finalIdx && isIntermediateCandidate(el) && !el.querySelector('.imgs > *, .u-imgs > *')) {
         group.push(el); // plain mid-run text — intermediate (keep ones with images visible)
       }
     });
