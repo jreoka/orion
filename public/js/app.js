@@ -707,9 +707,12 @@ async function loadOlder() {
   // S.messages. Re-attach those first — otherwise scrolling up dead-ends on
   // messages the client already has but can't see. Key by the raw dataset
   // string: optimistic local bubbles use ids like 'local-<ts>', which
-  // Number() turns into NaN and would resurrect as duplicates.
+  // Number() turns into NaN and would resurrect as duplicates. Match ALL
+  // descendants, not just direct children — rows folded into a
+  // <details class="worklog"> tray are nested inside .wl-body, and treating
+  // them as missing re-attaches a duplicate copy on every scroll-up.
   const inDom = new Set();
-  for (const n of box.querySelectorAll(':scope > [data-mid]')) inDom.add(n.dataset.mid);
+  for (const n of box.querySelectorAll('[data-mid]')) inDom.add(n.dataset.mid);
   const missing = S.messages.filter((m) => !inDom.has(String(m.id)));
   if (missing.length) {
     const prevHeight = box.scrollHeight;
