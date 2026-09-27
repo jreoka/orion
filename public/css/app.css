@@ -502,7 +502,7 @@ button.avatar.lg:hover { opacity: .85; }
   min-width: 228px;
 }
 .messages {
-  flex: 1; overflow-y: auto;
+  flex: 1; min-height: 0; overflow-y: auto;
   padding: 34px 26px 18px;
   display: flex; flex-direction: column; gap: 28px;
   scroll-behavior: smooth;
