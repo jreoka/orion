@@ -1,12 +1,13 @@
 // Orion service worker — offline-capable app shell, never caches the API.
 'use strict';
 
-const VERSION = 'orion-v3';
+const VERSION = 'orion-v4';
 const SHELL = [
   '/',
   '/index.html',
   '/css/app.css',
   '/js/app.js',
+  '/js/dictation.js',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png'
@@ -14,7 +15,7 @@ const SHELL = [
 // App code: always try the network first so deploys land without a hard
 // refresh; fall back to cache when offline. Icons are immutable blobs,
 // so they stay cache-first.
-const NETWORK_FIRST = new Set(['/', '/index.html', '/css/app.css', '/js/app.js', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png']);
+const NETWORK_FIRST = new Set(['/', '/index.html', '/css/app.css', '/js/app.js', '/js/dictation.js', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png']);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

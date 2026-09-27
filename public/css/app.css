@@ -708,6 +708,36 @@ button.avatar.lg:hover { opacity: .85; }
   margin-bottom: 3px;
 }
 .attach-btn:hover { border-color: var(--ink-2); color: var(--ink); transform: scale(1.06); }
+/* Dictation: mic button sits left of the send button; while recording it
+   glows red and a quantized wave strip appears above the composer. */
+.mic-btn {
+  width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0;
+  border: 1px solid var(--hairline); background: transparent; color: var(--ink-2);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: border-color .12s, color .12s, transform .12s var(--ease), background .12s;
+  margin-bottom: 3px;
+}
+.mic-btn:hover { border-color: var(--ink-2); color: var(--ink); transform: scale(1.06); }
+.mic-btn[hidden] { display: none !important; }
+.mic-btn.recording {
+  background: var(--danger); border-color: var(--danger); color: #fff;
+  animation: mic-pulse 1.4s ease-out infinite;
+}
+@keyframes mic-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(168, 50, 38, .5); }
+  100% { box-shadow: 0 0 0 9px rgba(168, 50, 38, 0); }
+}
+.dictation-bar {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--lift); border: 1px solid var(--hairline); border-radius: 14px;
+  padding: 6px 14px 6px 16px; margin-bottom: 8px;
+}
+.dictation-bar[hidden] { display: none !important; }
+#dictation-wave { flex: 1 1 auto; min-width: 0; height: 46px; display: block; }
+.dictation-time {
+  font-family: var(--sans); font-size: 12.5px; color: var(--danger);
+  font-variant-numeric: tabular-nums; flex-shrink: 0; min-width: 34px; text-align: right;
+}
 .attach-tray {
   display: flex; flex-wrap: wrap; gap: 8px;
   padding: 2px 4px 10px;
