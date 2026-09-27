@@ -1904,12 +1904,23 @@ export async function runAgentLoop({
   const stoppedNoteText = () =>
     isShutdownAbort?.() ? '(interrupted by server restart — resuming automatically)' : '(stopped by user)';
   const appendStoppedNote = (partial, note) => {
-    if (!assistantId) return;
     try {
       const base = partial || '';
       const marker = note || stoppedNoteText();
       const content = base ? base + '\n\n' + marker : marker;
-      db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, assistantId);
+      if (assistantId) {
+        db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, assistantId);
+      } else {
+        // Stopped before the first turn created a row (e.g. a stale stop
+        // flag tripped the very first shouldAbort check): without a row the
+        // chat is left hanging with no reply and no explanation. Create one
+        // so the user sees what happened instead of a "broken" bot.
+        const now = Date.now();
+        const info = db
+          .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
+          .run(conversationId, 'assistant', content, now);
+        assistantId = Number(info.lastInsertRowid);
+      }
     } catch {
       /* ignore */
     }

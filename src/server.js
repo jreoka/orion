@@ -678,9 +678,13 @@ function removeDataDir(rel) {
 // can't write into rows we're removing, then DB rows, then bytes.
 // requestStop (not just abortRun) is what trips the agent loop's
 // between-step shouldAbort() checks — without it the loop could start new
-// tool calls after the delete instead of unwinding.
+// tool calls after the delete instead of unwinding. Only flag a stop when
+// a run is actually in flight: an unconditional requestStop with no run to
+// consume it leaves a permanent poison flag (nothing ever calls clearStop),
+// and SQLite reuses the deleted id for a future conversation — whose first
+// run would then die instantly and silently on its first shouldAbort check.
 function deleteConversation(convId) {
-  requestStop(convId);
+  if (isRunLocked(convId)) requestStop(convId);
   abortRun(convId);
   const msgIds = db
     .prepare('SELECT id FROM messages WHERE conversation_id = ?')
