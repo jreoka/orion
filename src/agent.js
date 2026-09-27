@@ -1343,6 +1343,7 @@ async function runToolLoop({
     'Continue the task now — do not repeat completed steps, and end with ' +
     'a clear summary for the user.]';
   let emptyStalls = 0;
+  let emptyRetries = 0; // bare retries for transient empty completions
   const note = (text) => {
     try {
       onNote(text);
@@ -1479,6 +1480,15 @@ async function runToolLoop({
       ) {
         emptyStalls++;
         convo.push({ role: 'user', content: RESUME_NUDGE_EMPTY });
+        continue;
+      }
+      // Transient empty: the provider sometimes answers 200 with no content
+      // and no tool calls at all (seen flaky on free-tier models — the same
+      // request succeeds on retry). Give it a couple of bare retries before
+      // accepting silence; the no-silence fallback below still owns the miss
+      // if they all come back empty.
+      if (!(content || '').trim() && !isChild && emptyRetries < 2) {
+        emptyRetries++;
         continue;
       }
       break; // final answer
