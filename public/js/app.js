@@ -777,25 +777,38 @@ function schedulePaintRail() {
   railRaf = requestAnimationFrame(() => { railRaf = 0; paintTurnRail(); });
 }
 
-// Highlight the tick for the turn the user is currently reading: the last
-// user message at or above the viewport's reading line. The line sits at
-// the vertical midpoint (not near the top), so when turns are close
-// together the one the user is actually looking at wins — not just the
-// topmost one above an arbitrary near-top threshold.
+// Highlight the tick for the turn the user is currently reading: the
+// visible user message closest to the viewport's vertical center. The old
+// "last message above a line" approach broke at both extremes — near the
+// top it picked the topmost turn, at the very top everything sat above the
+// line so it stuck on the last turn.
 function paintTurnRail() {
   const track = document.querySelector('#turn-rail .rail-track');
   if (!track || !track.children.length) return;
   const box = document.getElementById('messages');
   const boxRect = box.getBoundingClientRect();
-  const line = boxRect.top + boxRect.height * 0.5;
-  let activeMid = null;
-  for (const n of box.querySelectorAll(':scope > [data-mid]')) {
+  const viewTop = boxRect.top;
+  const viewBottom = boxRect.bottom;
+  const midY = viewTop + (viewBottom - viewTop) / 2;
+  let bestMid = null;
+  let bestDist = Infinity;
+  for (const n of box.querySelectorAll('[data-mid]')) {
     if (!n.classList.contains('user')) continue;
-    if (n.getBoundingClientRect().top <= line) activeMid = n.dataset.mid;
-    else break;
+    const r = n.getBoundingClientRect();
+    if (r.bottom < viewTop || r.top > viewBottom) continue; // not visible
+    const dist = Math.abs((r.top + r.bottom) / 2 - midY);
+    if (dist < bestDist) { bestDist = dist; bestMid = n.dataset.mid; }
+  }
+  // Fallback: scrolled past everything — highlight the last turn above.
+  if (!bestMid) {
+    for (const n of box.querySelectorAll('[data-mid]')) {
+      if (!n.classList.contains('user')) continue;
+      if (n.getBoundingClientRect().bottom <= viewTop) bestMid = n.dataset.mid;
+      else break;
+    }
   }
   for (const t of track.children) {
-    t.classList.toggle('active', t.dataset.mid === String(activeMid));
+    t.classList.toggle('active', t.dataset.mid === String(bestMid));
   }
 }
 
