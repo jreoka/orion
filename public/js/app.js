@@ -2129,14 +2129,14 @@ async function refreshUsage() {
     const u = await api('/api/usage');
     if (!u) { box.hidden = true; return; }
     box.hidden = false;
-    const fill = $('#usage-fill');
+    const fill = $('#side-usage-fill');
     const unlimited = u.limit === null || u.limit === undefined;
     if (unlimited) {
       // No cap: full-width shimmer, no percentage.
       fill.style.width = '100%';
       fill.classList.remove('warn', 'danger');
-      $('#usage-pct').textContent = '∞';
-      $('#usage-tokens').textContent =
+      $('#side-usage-pct').textContent = '∞';
+      $('#side-usage-tokens').textContent =
         `${formatCompactTokens(u.total_tokens)} tokens · ${usageResetIn()}`;
       box.querySelector('.usage-track').removeAttribute('aria-valuenow');
     } else {
@@ -2144,8 +2144,8 @@ async function refreshUsage() {
       fill.style.width = pct + '%';
       fill.classList.toggle('warn', pct >= 75 && pct < 90);
       fill.classList.toggle('danger', pct >= 90);
-      $('#usage-pct').textContent = pct + '%';
-      $('#usage-tokens').textContent =
+      $('#side-usage-pct').textContent = pct + '%';
+      $('#side-usage-tokens').textContent =
         `${formatCompactTokens(u.total_tokens)} / ${formatCompactTokens(u.limit)} · ${usageResetIn()}`;
       box.querySelector('.usage-track').setAttribute('aria-valuenow', pct);
     }
@@ -3706,15 +3706,17 @@ async function renderUsageCard() {
     const u = await api('/api/usage');
     const used = u.total_tokens || 0;
     const lim = u.limit;
+    const fill = $('#usage-fill');
     if (lim === null || lim === undefined) {
-      $('#usage-text').textContent = `${fmtTokens(used)} used this week — no limit set.`;
-      $('#usage-bar-wrap').hidden = true;
+      $('#usage-text').textContent = `${formatCompactTokens(used)} tokens · ${usageResetIn()} · no limit set`;
+      fill.style.width = '100%';
+      fill.className = 'usage-fill shiny';
+      $('#usage-bar-wrap').hidden = false;
     } else {
       const pct = Math.min(100, (used / lim) * 100);
-      $('#usage-text').textContent = `${fmtTokens(used)} of ${fmtTokens(lim)} used this week`;
-      const fill = $('#usage-fill');
+      $('#usage-text').textContent = `${formatCompactTokens(used)} of ${formatCompactTokens(lim)} · ${usageResetIn()}`;
       fill.style.width = pct.toFixed(1) + '%';
-      fill.className = 'usage-fill' + (pct >= 100 ? ' full' : pct >= 90 ? ' hot' : '');
+      fill.className = 'usage-fill shiny' + (pct >= 90 ? ' danger' : pct >= 75 ? ' warn' : '');
       $('#usage-bar-wrap').hidden = false;
     }
   } catch {

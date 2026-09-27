@@ -294,15 +294,11 @@ button.avatar.lg:hover { opacity: .85; }
 
 /* ---------- usage bars ---------- */
 .usage-bar {
-  height: 6px; border-radius: 3px; background: var(--hairline);
-  overflow: hidden; margin-top: 6px; max-width: 420px;
+  position: relative; height: 10px; border-radius: 999px;
+  background: var(--paper-3);
+  box-shadow: inset 0 1px 2px rgba(28, 24, 19, .12);
+  overflow: hidden; margin-top: 8px; max-width: 420px;
 }
-.usage-fill {
-  height: 100%; background: var(--accent); border-radius: 3px;
-  transition: width .3s var(--ease);
-}
-.usage-fill.hot { background: #c07a1e; }
-.usage-fill.full { background: var(--danger); }
 .usage-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .usage-pct { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 /* ---------- Main column ---------- */
@@ -388,6 +384,13 @@ button.avatar.lg:hover { opacity: .85; }
   margin-top: 7px; font-size: 12px; color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
+/* Shared animated blue-purple shiny gradient — for working dots,
+   live indicators, and anywhere else that needs the shimmer. */
+.shiny {
+  background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5) !important;
+  background-size: 220% 220% !important;
+  animation: usage-swirl 3s ease-in-out infinite !important;
+}
 /* Sidebar date groups: quiet small-caps-ish label above each bucket. */
 .conv-group {
   font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
@@ -412,7 +415,7 @@ button.avatar.lg:hover { opacity: .85; }
 .conv-item.active .conv-title { color: var(--ink); font-weight: 600; }
 .conv-sub { font-size: 12px; color: var(--ink-3); margin-top: 1px; }
 .conv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-.conv-dot.working { animation: pulse 1.2s ease-in-out infinite; }
+.conv-dot.working { background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 2.5s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 /* A run finished while the user was looking at another chat: a green check
    where the working light was. Dismissed when the chat is opened. */
@@ -644,8 +647,11 @@ button.avatar.lg:hover { opacity: .85; }
 
 /* streaming caret */
 .caret::after {
-  content: "▍"; color: var(--accent);
-  animation: blink 1s steps(1) infinite;
+  content: "▍";
+  background: linear-gradient(120deg, #4f6df5, #c026d3, #4f6df5);
+  background-size: 220% 220%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: usage-swirl 2s ease-in-out infinite;
   margin-left: 1px;
 }
 @keyframes blink { 50% { opacity: 0; } }
@@ -666,7 +672,7 @@ button.avatar.lg:hover { opacity: .85; }
 }
 .tool-head:hover { color: var(--ink); }
 .tool-head .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-.tool-head .dot.running { animation: blink 1s steps(1) infinite; }
+.tool-head .dot.running { background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 2.5s ease-in-out infinite; }
 .tool-head .dot.done { background: var(--success); animation: none; }
 .tool-head .tname { font-family: var(--mono); font-size: 12.5px; }
 .tool-head .tsummary { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-3); }
@@ -695,8 +701,9 @@ button.avatar.lg:hover { opacity: .85; }
 .msg.msg-empty { display: none; }
 #run-status .dot {
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--accent); flex-shrink: 0;
-  animation: blink 1s steps(1) infinite;
+  flex-shrink: 0;
+  background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%;
+  animation: usage-swirl 2.5s ease-in-out infinite;
   margin-left: -16px; /* dot (7px) + gap (9px): text starts flush with message text */
 }
 #run-status .ttext {
@@ -983,7 +990,7 @@ button.avatar.lg:hover { opacity: .85; }
 /* While the run is in flight the tray stays open with a pulsing dot. */
 .wl-live-dot { display: none; width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); align-self: center; }
-.worklog[data-live] .wl-live-dot { display: inline-block; animation: wl-pulse 1.6s ease-in-out infinite; }
+.worklog[data-live] .wl-live-dot { display: inline-block; background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 2.5s ease-in-out infinite; }
 @keyframes wl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
 .wl-body { padding: 4px 0 4px; border-top: 1px dashed var(--hairline); margin-top: 2px; }
 .wl-body .msg { animation: none; }
