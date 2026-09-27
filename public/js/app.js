@@ -630,6 +630,30 @@ function ensureOlderSpinner() {
   olderSpinner.innerHTML = '<span class="spin"></span>';
   return olderSpinner;
 }
+// Invisible sentinel at the very top of the message list. An
+// IntersectionObserver watches it and pages in older history when it
+// becomes visible — more reliable than a scrollTop threshold, which can
+// miss on momentum scrolls or when the scroll container's geometry shifts
+// under late-loading content.
+let olderSentinel = null;
+function ensureOlderSentinel() {
+  if (olderSentinel) return olderSentinel;
+  olderSentinel = document.createElement('div');
+  olderSentinel.id = 'older-sentinel';
+  olderSentinel.setAttribute('aria-hidden', 'true');
+  return olderSentinel;
+}
+let olderObserver = null;
+function wireOlderObserver() {
+  const box = $('#messages');
+  if (olderObserver) olderObserver.disconnect();
+  olderObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting) loadOlder();
+    }
+  }, { root: box, rootMargin: '400px 0px 0px 0px', threshold: 0 });
+  olderObserver.observe(ensureOlderSentinel());
+}
 function showOlderSpinner(on) {
   ensureOlderSpinner().hidden = !on;
 }
@@ -675,6 +699,7 @@ function reattachMissingOlder() {
 async function fetchOlderBatch() {
   if (!S.activeId || !S.messages.length) return false;
   S.loadingOlder = true;
+  S.loadingOlderSince = Date.now();
   showOlderSpinner(true);
   try {
     const data = await api(`/api/conversations/${S.activeId}/messages?before=${S.messages[0].id}&limit=${OLDER_BATCH}`);
@@ -694,6 +719,11 @@ async function fetchOlderBatch() {
 }
 
 async function loadOlder() {
+  // Safety: if a previous fetch never settled (network hang, unhandled
+  // rejection), don't let the guard flag block loading forever.
+  if (S.loadingOlder && Date.now() - (S.loadingOlderSince || 0) > 30000) {
+    S.loadingOlder = false;
+  }
   if (S.loadingOlder || !S.messages.length || !S.activeId) return;
   // Re-attach trimmed nodes first — even when the server has nothing older
   // left (hasMoreOlder false), or scrolling up dead-ends on messages the
@@ -883,8 +913,8 @@ function wireJumpPill() {
     if (nearBottom()) hideJump();
     else paintJump();
     schedulePaintRail();
-    // Near the top with older history available: page it in.
-    if ($('#messages').scrollTop < 600) loadOlder();
+    // Older-history paging is driven by the IntersectionObserver on
+    // #older-sentinel (see wireOlderObserver), not a scrollTop threshold.
   }, { passive: true });
   // Images finish loading after the scroll already happened (lazy
   // attachments, markdown embeds) and push the bottom further down. If
@@ -1151,7 +1181,9 @@ function renderMessages() {
   // destroy it mid-run or the chat goes silent until the next tool event.
   const status = document.getElementById('run-status');
   box.innerHTML = '';
+  box.appendChild(ensureOlderSentinel());
   box.appendChild(ensureOlderSpinner());
+  wireOlderObserver();
   const empty = $('#empty-state');
   empty.hidden = S.messages.length > 0;
   // When the empty state shows, hide the (empty) messages container too —
