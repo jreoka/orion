@@ -248,7 +248,7 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
 #passkey-btn { margin-top: 10px; }
 #passkey-btn[hidden] { display: none; }
 /* Turnstile appears only after the first Log in / Create account press. */
-#turnstile-slot { display: flex; justify-content: center; margin: 14px 0 2px; }
+#turnstile-slot { display: flex; justify-content: center; margin: 2px 0 14px; }
 #turnstile-slot[hidden] { display: none; }
 
 /* ============================================================
