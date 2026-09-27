@@ -513,6 +513,7 @@ function setAuthMode(mode) {
 function wireGlobal() {
   wirePushNudge();
   wireLongPress();
+  wireComposerGlobalKeys();
   // Profile (incl. avatar) is fetched once at boot; re-fetch when the tab
   // becomes visible again so changes made on another device appear
   // without a manual reload.
@@ -1037,6 +1038,46 @@ function wireUploads() {
   $('#composer-input').addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.files || [])];
     if (files.length) { e.preventDefault(); handleFiles(files); }
+  });
+}
+
+/* The composer works without being clicked first: typing anywhere drops
+   text into the message box, pasting anywhere attaches image files, and
+   Enter sends when the box isn't focused. Desktop-oriented, harmless on
+   touch. Only active on the chat view; never steals keys from editable
+   fields, focused buttons/links (their native Enter/Space activation wins),
+   or open overlays like the message sheet. */
+function wireComposerGlobalKeys() {
+  const chatVisible = () => S.me && !$('#view-chat').hidden;
+  const overlayOpen = () => document.getElementById('msg-sheet');
+  const isEditable = (el) =>
+    !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName || ''));
+
+  document.addEventListener('keydown', (e) => {
+    if (!chatVisible() || overlayOpen()) return;
+    const t = e.target;
+    if (isEditable(t)) return; // composer, login, settings, admin: own handlers
+    if (e.ctrlKey || e.metaKey || e.altKey) return; // browser/app shortcuts
+    if (t && t.closest && t.closest('button, a, summary, select, [role="button"]')) return;
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(); // no-ops when there's nothing to send
+      return;
+    }
+    // Printable character (space excluded so it keeps scrolling the page):
+    // focus the composer and let the browser deliver the keystroke there.
+    if (e.key.length === 1 && e.key !== ' ') $('#composer-input')?.focus();
+  });
+
+  document.addEventListener('paste', (e) => {
+    if (!chatVisible() || overlayOpen()) return;
+    if (isEditable(e.target)) return; // composer input has its own handler
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length) {
+      e.preventDefault();
+      handleFiles(files);
+      $('#composer-input')?.focus();
+    }
   });
 }
 
