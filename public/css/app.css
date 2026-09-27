@@ -1119,13 +1119,7 @@ button.avatar.lg:hover { opacity: .85; }
 .rx-add:hover, .rx-copy:hover { background: var(--paper-2); color: var(--ink); border-color: var(--ink-2); }
 @media (hover: none) { .rx-add, .rx-copy { opacity: .5; } }
 /* Chips inside the ink user bubble. */
-.msg.user .rx-chip { background: rgba(244, 240, 232, .13); border-color: transparent; color: var(--paper); }
-.msg.user .rx-chip:hover { background: rgba(244, 240, 232, .22); }
-.msg.user .rx-chip.mine { background: rgba(244, 240, 232, .26); }
 .msg.user .rx-n { color: var(--paper); opacity: .8; }
-[data-theme="dark"] .msg.user .rx-chip { background: rgba(236, 228, 211, .14); color: var(--ink); }
-[data-theme="dark"] .msg.user .rx-chip:hover { background: rgba(236, 228, 211, .22); }
-[data-theme="dark"] .msg.user .rx-chip.mine { background: rgba(236, 228, 211, .28); }
 [data-theme="dark"] .msg.user .rx-n { color: var(--ink); }
 .rx-picker {
   position: fixed; z-index: 200;
