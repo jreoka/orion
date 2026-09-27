@@ -668,7 +668,7 @@ button.avatar.lg:hover { opacity: .85; }
 /* ---------- jump-to-latest: circular side button ---------- */
 .jump-latest {
   position: absolute; right: 18px;
-  bottom: calc(158px + env(safe-area-inset-bottom));
+  bottom: calc(118px + env(safe-area-inset-bottom));
   width: 46px; height: 46px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   background: var(--ink); color: var(--paper);
