@@ -26,6 +26,15 @@ const BLOCKED_TITLE_RE = /just a moment|attention required|access denied|verify 
 const BLOCKED_BODY_RE =
   /verify you are (a )?human|prove you are (a )?human|are you a robot|confirm you are (a )?human|press (&|and) hold|access denied|request (has been )?blocked|reference #[0-9a-f-]{8,}/i;
 
+// Thrown when a site's bot protection refuses us. Carries exit code 3 so
+// the agent knows to try a different source instead of retrying.
+class BlockedError extends Error {
+  constructor(why) {
+    super(`orion-browser: BLOCKED — ${why}`);
+    this.exitCode = 3;
+  }
+}
+
 async function main() {
   const [, , cmd, url, outPath] = process.argv;
   if (!cmd || !url || !['text', 'shot'].includes(cmd) || (cmd === 'shot' && !outPath)) {
@@ -41,8 +50,7 @@ async function main() {
     }
   })();
   const blocked = (why) => {
-    console.error(`orion-browser: BLOCKED — ${host} refused automated access (${why})`);
-    process.exit(3);
+    throw new BlockedError(`${host} refused automated access (${why})`);
   };
 
   const browser = await chromium.launch({
@@ -99,5 +107,5 @@ async function main() {
 
 main().catch((e) => {
   console.error('orion-browser: ' + (e && e.message ? e.message : e));
-  process.exit(1);
+  process.exit(e && e.exitCode === 3 ? 3 : 1);
 });
