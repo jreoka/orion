@@ -1037,6 +1037,7 @@ function openMsgMenu(msgEl, x, y) {
     ${isLocal ? '' : '<button data-act="react" role="menuitem">Add reaction…</button>'}`;
   document.body.appendChild(menu);
   const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  menu.style.right = 'auto'; // .menu sets right:0 — with both left+right set, fixed positioning stretches to the edge
   menu.style.left = Math.min(Math.max(8, x), window.innerWidth - mw - 8) + 'px';
   menu.style.top = Math.min(Math.max(8, y), window.innerHeight - mh - 8) + 'px';
   menu.addEventListener('click', (e) => {
