@@ -542,6 +542,11 @@ button.avatar.lg:hover { opacity: .85; }
 .content tbody tr:last-child th, .content tbody tr:last-child td { border-bottom: 0; }
 .content thead th { font-family: var(--serif); font-weight: 700; background: var(--paper-2); white-space: nowrap; border-bottom: 1px solid var(--hairline); }
 .content tbody tr:nth-child(even) td { background: var(--accent-soft); }
+.content ul, .content ol { margin: 10px 0; padding-left: 1.5em; }
+.content li { margin: 4px 0; }
+.content li::marker { color: var(--ink-3); }
+.content blockquote { border-left: 2px solid var(--hairline); margin: 12px 0; padding: 2px 0 2px 14px; color: var(--ink-2); }
+.content blockquote p { margin: 0 0 6px; }
 .a-body p { margin: 0 0 14px; }
 .a-body p:last-child { margin-bottom: 0; }
 .a-body a { color: var(--accent); }

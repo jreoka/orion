@@ -92,107 +92,11 @@
 </button>
 <div class="wrap" id="root"><div class="err"><p>Loading…</p></div></div>
 <div id="lb" role="dialog" aria-label="Image viewer"><img alt=""></div>
+<script src="/js/markdown.js"></script>
 <script>
 (function () {
   const token = location.pathname.split('/').pop();
   const root = document.getElementById('root');
-  const esc = (s) => String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-  // Compact markdown subset: headings, bold, italic, code, links, images, lists, quotes, tables.
-  function inlineMd(t) {
-    t = esc(t);
-    t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
-    t = t.replace(/!\[([^\]]*)\]\((https?:[^)\s]+)\)/g, '<img class="msg-img" src="$2" alt="$1" loading="lazy">');
-    t = t.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-    t = t.replace(/(^|\s)(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
-    t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    t = t.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    return t;
-  }
-  // Split a table row on unescaped pipes ("| a | b |" -> ["a", "b"]).
-  function splitTableRow(line) {
-    const cells = [];
-    let cur = '';
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '\\' && line[i + 1] === '|') { cur += '|'; i++; }
-      else if (ch === '|') { cells.push(cur); cur = ''; }
-      else cur += ch;
-    }
-    cells.push(cur);
-    let out = cells.length && cells[0].trim() === '' ? cells.slice(1) : cells;
-    if (out.length && out[out.length - 1].trim() === '') out = out.slice(0, -1);
-    return out.map((c) => c.trim());
-  }
-  function isDelimRow(line) {
-    if (!line.includes('|')) return false;
-    const cells = splitTableRow(line);
-    return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
-  }
-  function delimAlign(cell) {
-    const left = cell.startsWith(':'), right = cell.endsWith(':');
-    if (left && right) return 'center';
-    if (right) return 'right';
-    return 'left';
-  }
-  // If lines[i] starts a GFM pipe table (header + delimiter row), render it.
-  function tryParseTable(lines, i) {
-    const header = lines[i];
-    if (!header.includes('|')) return null;
-    const delim = lines[i + 1];
-    if (delim == null || !isDelimRow(delim)) return null;
-    const aligns = splitTableRow(delim).map(delimAlign);
-    const headCells = splitTableRow(header);
-    const n = Math.max(headCells.length, aligns.length);
-    while (headCells.length < n) headCells.push('');
-    while (aligns.length < n) aligns.push('left');
-    let html = '<div class="tbl-wrap"><table><thead><tr>';
-    for (let c = 0; c < n; c++)
-      html += `<th style="text-align:${aligns[c]}">${inlineMd(headCells[c])}</th>`;
-    html += '</tr></thead><tbody>';
-    let j = i + 2;
-    for (; j < lines.length; j++) {
-      if (!lines[j].includes('|')) break;
-      const rowCells = splitTableRow(lines[j]);
-      if (!rowCells.length) break;
-      html += '<tr>';
-      for (let c = 0; c < n; c++)
-        html += `<td style="text-align:${aligns[c]}">${inlineMd(rowCells[c] || '')}</td>`;
-      html += '</tr>';
-    }
-    html += '</tbody></table></div>';
-    return { html, nextIndex: j };
-  }
-  function md(src) {
-    const lines = String(src || '').split('\n');
-    let html = '', inList = null, para = [];
-    const flushPara = () => { if (para.length) { html += '<p>' + inlineMd(para.join(' ')) + '</p>'; para = []; } };
-    const closeList = () => { if (inList) { html += inList === 'ul' ? '</ul>' : '</ol>'; inList = null; } };
-    for (let li = 0; li < lines.length; li++) {
-      const line = lines[li];
-      const h = line.match(/^(#{1,3})\s+(.*)/);
-      const ul = line.match(/^\s*[-*]\s+(.*)/);
-      const ol = line.match(/^\s*\d+[.)]\s+(.*)/);
-      const q = line.match(/^\s*>\s?(.*)/);
-      const fence = /^\s*```/.test(line);
-      if (fence) { flushPara(); closeList(); html += '<pre><code>[code]</code></pre>'; continue; }
-      const tbl = tryParseTable(lines, li);
-      if (tbl) { flushPara(); closeList(); html += tbl.html; li = tbl.nextIndex - 1; continue; }
-      if (h) { flushPara(); closeList(); html += `<h${h[1].length}>${inlineMd(h[2])}</h${h[1].length}>`; continue; }
-      if (ul || ol) {
-        flushPara();
-        const kind = ul ? 'ul' : 'ol';
-        if (inList !== kind) { closeList(); html += `<${kind}>`; inList = kind; }
-        html += '<li>' + inlineMd((ul || ol)[1]) + '</li>'; continue;
-      }
-      if (q) { flushPara(); closeList(); html += '<blockquote>' + inlineMd(q[1]) + '</blockquote>'; continue; }
-      if (!line.trim()) { flushPara(); closeList(); continue; }
-      para.push(line.trim());
-    }
-    flushPara(); closeList();
-    return html;
-  }
 
   function isImageFile(name) { return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name || ''); }
 
@@ -251,6 +155,7 @@
       }
       html += '</div><footer>Shared from Orion — read-only.</footer>';
       root.innerHTML = html;
+      wireCopyButtons(root);
     })
     .catch((e) => {
       root.innerHTML = `<div class="err"><h1>This link doesn't work anymore.</h1>` +
