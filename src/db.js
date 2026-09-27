@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS reactions (
   actor TEXT NOT NULL DEFAULT 'user',
   created_at INTEGER NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_unique ON reactions(message_id, user_id, emoji);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_unique ON reactions(message_id, user_id, emoji, actor);
 CREATE INDEX IF NOT EXISTS idx_reactions_msg ON reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
@@ -128,6 +128,23 @@ addColumn('attachments', 'user_id', 'INTEGER');
 addColumn('attachments', 'staged', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('attachments', 'size', 'INTEGER');
 addColumn('attachments', 'created_at', 'INTEGER');
+
+// Reactions: the unique index used to be (message_id, user_id, emoji), which
+// made the agent's reaction and the user's the same row — tapping the same
+// emoji the agent used overwrote its reaction instead of counting to 2.
+// Rebuild the index with actor in the key so each side holds its own row.
+try {
+  const idx = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_reactions_unique'")
+    .get();
+  if (idx && !idx.sql.includes('actor')) {
+    console.log('[orion] migrating idx_reactions_unique to include actor');
+    db.exec('DROP INDEX idx_reactions_unique');
+    db.exec('CREATE UNIQUE INDEX idx_reactions_unique ON reactions(message_id, user_id, emoji, actor)');
+  }
+} catch (e) {
+  console.warn('[orion] reactions index migration skipped:', e?.message || e);
+}
 
 // Repair: phase-3 briefly declared weekly_token_limit NOT NULL, which made
 // "unlimited" (NULL) impossible to store. If that constraint is present,
@@ -447,13 +464,14 @@ export function setReaction(messageId, userId, emoji, actor, add) {
     db.prepare(
       `INSERT INTO reactions (message_id, user_id, emoji, actor, created_at)
        VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(message_id, user_id, emoji) DO UPDATE SET actor = excluded.actor`
+       ON CONFLICT(message_id, user_id, emoji, actor) DO NOTHING`
     ).run(messageId, userId, emoji, actor, Date.now());
   } else {
-    db.prepare('DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?').run(
+    db.prepare('DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ? AND actor = ?').run(
       messageId,
       userId,
-      emoji
+      emoji,
+      actor
     );
   }
   return groupedReactions(messageId, userId);
