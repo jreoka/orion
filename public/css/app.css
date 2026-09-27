@@ -278,11 +278,16 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
     linear-gradient(var(--ink), var(--ink)) padding-box,
     linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5) border-box;
   background-size: auto, 300% 300%;
-  animation: avatar-border-swirl 4s ease-in-out infinite;
+  animation: avatar-border-swirl 13s ease-in-out infinite;
 }
 @keyframes avatar-border-swirl {
-  0%, 100% { background-position: 0 0, 0% 50%; }
-  50% { background-position: 0 0, 100% 50%; }
+  0% { background-position: 0 0, 10% 40%; }
+  16% { background-position: 0 0, 80% 15%; }
+  33% { background-position: 0 0, 25% 85%; }
+  50% { background-position: 0 0, 90% 60%; }
+  66% { background-position: 0 0, 20% 25%; }
+  83% { background-position: 0 0, 65% 90%; }
+  100% { background-position: 0 0, 10% 40%; }
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .avatar.lg { width: 64px; height: 64px; font-size: 26px; cursor: pointer; }
@@ -361,7 +366,7 @@ button.avatar.lg:hover { opacity: .85; }
   border-radius: 999px;
   background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5);
   background-size: 220% 220%;
-  animation: usage-swirl 4s ease-in-out infinite;
+  animation: usage-swirl 14s ease-in-out infinite;
   transition: width .6s ease;
 }
 /* Sweeping shine across the fill. */
@@ -372,12 +377,23 @@ button.avatar.lg:hover { opacity: .85; }
   animation: usage-shine 2.8s linear infinite;
 }
 @keyframes usage-swirl {
-  0%, 100% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
+  0% { background-position: 0% 40%; }
+  13% { background-position: 75% 15%; }
+  27% { background-position: 30% 85%; }
+  41% { background-position: 95% 60%; }
+  55% { background-position: 15% 25%; }
+  69% { background-position: 60% 95%; }
+  83% { background-position: 85% 35%; }
+  100% { background-position: 0% 40%; }
 }
 @keyframes usage-shine {
-  0% { background-position: 180% 0; }
-  100% { background-position: -80% 0; }
+  0% { background-position: 200% 20%; opacity: 0; }
+  8% { opacity: .9; }
+  30% { background-position: -60% 80%; opacity: 0; }
+  52% { background-position: 160% 40%; opacity: 0; }
+  60% { opacity: .9; }
+  82% { background-position: -40% 65%; opacity: 0; }
+  100% { background-position: 200% 20%; opacity: 0; }
 }
 /* Getting full: orange, then red. */
 .usage-fill.warn {
@@ -398,7 +414,7 @@ button.avatar.lg:hover { opacity: .85; }
 .shiny {
   background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5) !important;
   background-size: 220% 220% !important;
-  animation: usage-swirl 3s ease-in-out infinite !important;
+  animation: usage-swirl 12s ease-in-out infinite !important;
 }
 /* Sidebar date groups: quiet small-caps-ish label above each bucket. */
 .conv-group {
@@ -424,7 +440,7 @@ button.avatar.lg:hover { opacity: .85; }
 .conv-item.active .conv-title { color: var(--ink); font-weight: 600; }
 .conv-sub { font-size: 12px; color: var(--ink-3); margin-top: 1px; }
 .conv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-.conv-dot.working { background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 2.5s ease-in-out infinite; }
+.conv-dot.working { background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 11s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 /* A run finished while the user was looking at another chat: a green check
    where the working light was. Dismissed when the chat is opened. */
@@ -660,7 +676,7 @@ button.avatar.lg:hover { opacity: .85; }
   background: linear-gradient(120deg, #4f6df5, #c026d3, #4f6df5);
   background-size: 220% 220%;
   -webkit-background-clip: text; background-clip: text; color: transparent;
-  animation: usage-swirl 2s ease-in-out infinite;
+  animation: usage-swirl 10s ease-in-out infinite;
   margin-left: 1px;
 }
 @keyframes blink { 50% { opacity: 0; } }
@@ -681,7 +697,7 @@ button.avatar.lg:hover { opacity: .85; }
 }
 .tool-head:hover { color: var(--ink); }
 .tool-head .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-.tool-head .dot.running { background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 2.5s ease-in-out infinite; }
+.tool-head .dot.running { background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 11s ease-in-out infinite; }
 .tool-head .dot.done { background: var(--success); animation: none; }
 .tool-head .tname { font-family: var(--mono); font-size: 12.5px; }
 .tool-head .tsummary { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-3); }
@@ -712,7 +728,7 @@ button.avatar.lg:hover { opacity: .85; }
   width: 7px; height: 7px; border-radius: 50%;
   flex-shrink: 0;
   background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%;
-  animation: usage-swirl 2.5s ease-in-out infinite;
+  animation: usage-swirl 11s ease-in-out infinite;
   margin-left: -16px; /* dot (7px) + gap (9px): text starts flush with message text */
 }
 #run-status .ttext {
@@ -999,7 +1015,7 @@ button.avatar.lg:hover { opacity: .85; }
 /* While the run is in flight the tray stays open with a pulsing dot. */
 .wl-live-dot { display: none; width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); align-self: center; }
-.worklog[data-live] .wl-live-dot { display: inline-block; background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 2.5s ease-in-out infinite; }
+.worklog[data-live] .wl-live-dot { display: inline-block; background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 11s ease-in-out infinite; }
 @keyframes wl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
 .wl-body { padding: 4px 0 4px; border-top: 1px dashed var(--hairline); margin-top: 2px; }
 .wl-body .msg { animation: none; }
