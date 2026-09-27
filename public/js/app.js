@@ -3539,6 +3539,7 @@ function openUserActionsMenu(u, anchor, isSelf) {
     try {
       await api(`/api/admin/users/${u.id}/limit`, { method: 'PATCH', body: { weekly_token_limit: parsed.value } });
       await loadAdminUsers();
+      if (S.me && u.id === S.me.id) { refreshUsage(); renderUsageCard(); }
       toast(`Limit updated for ${u.username}`);
     } catch (e) { toast(e.message, 'error'); }
   });
