@@ -236,6 +236,67 @@ async function boot() {
 }
 document.addEventListener('DOMContentLoaded', boot);
 
+/* Temporary on-device layout diagnostics (?debuglayout). Reports real
+   measurements from the phone — do not guess at phone-only layout bugs. */
+(function () {
+  if (!new URLSearchParams(location.search).has('debuglayout')) return;
+  setTimeout(() => {
+    const r = (el) => {
+      if (!el) return 'missing';
+      const cs = getComputedStyle(el);
+      const rc = el.getBoundingClientRect();
+      return `${el.offsetHeight}px h / ${el.scrollHeight}px scrollH / rectTop ${Math.round(rc.top)} rectBottom ${Math.round(rc.bottom)} (display:${cs.display})`;
+    };
+    // Tallest children inside #messages — identifies WHAT is too tall.
+    const box = document.getElementById('messages');
+    let tallest = [];
+    if (box) {
+      tallest = [...box.children]
+        .map((el) => ({
+          h: el.offsetHeight,
+          cls: el.className && el.className.baseVal !== undefined ? '[svg]' : String(el.className || el.id || el.tagName).slice(0, 60),
+          id: el.id || '',
+        }))
+        .sort((a, b) => b.h - a.h)
+        .slice(0, 6)
+        .map((t) => `${t.cls}${t.id ? '#' + t.id : ''}: ${t.h}px`);
+    }
+    const metrics = {
+      ua: navigator.userAgent,
+      inner: `${window.innerWidth}x${window.innerHeight}`,
+      visualViewport: window.visualViewport ? `${Math.round(window.visualViewport.width)}x${Math.round(window.visualViewport.height)}` : 'n/a',
+      dpr: window.devicePixelRatio,
+      supportsDvh: CSS.supports('height', '100dvh'),
+      docScrollH: document.documentElement.scrollHeight,
+      bodyScrollH: document.body.scrollHeight,
+      app: r(document.getElementById('app')),
+      viewChat: r(document.getElementById('view-chat')),
+      chatMain: r(document.getElementById('chat-main')),
+      messages: r(box),
+      messagesScrollTop: box ? box.scrollTop : 'n/a',
+      messagesChildren: box ? box.children.length : 'n/a',
+      tallestChildren: tallest,
+      composerWrap: r(document.querySelector('.composer-wrap')),
+      url: location.href,
+    };
+    fetch('/api/debug/layout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify(metrics),
+    }).catch(() => {});
+    const lines = [];
+    for (const [k, v] of Object.entries(metrics)) {
+      lines.push(Array.isArray(v) ? `${k}:\n  ${v.join('\n  ')}` : `${k}: ${v}`);
+    }
+    const pre = document.createElement('pre');
+    pre.textContent = lines.join('\n');
+    pre.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#000;color:#0f0;'
+      + 'font-size:11px;line-height:1.5;padding:12px;white-space:pre-wrap;margin:0;'
+      + 'max-height:85vh;overflow:auto;font-family:monospace;';
+    document.body.appendChild(pre);
+  }, 2500);
+})();
+
 /* ============================================================
    Auth view
    ============================================================ */

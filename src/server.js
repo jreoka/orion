@@ -176,6 +176,15 @@ function authFailed(req, kind, account, opts) {
 
 // Public: lets the login page hide the signup tab when public signups are
 // off. The first-ever account can always sign up (it becomes the admin).
+// Temporary layout diagnostics receiver (?debuglayout). No auth —
+// only receives anonymous layout metrics, never user data.
+app.post('/api/debug/layout', (req, res) => {
+  try {
+    console.log('[layout-debug]', JSON.stringify(req.body).slice(0, 3000));
+  } catch {}
+  res.json({ ok: true });
+});
+
 app.get('/api/auth/config', (req, res) => {
   const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
   res.json({ signup_enabled: userCount === 0 || getSetting('signup_enabled', '1') === '1' });
