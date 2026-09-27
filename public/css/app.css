@@ -198,7 +198,7 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
   transition: background .18s;
 }
 .toggle .knob::after {
-  content: ""; position: absolute; top: 3px; left: 3px;
+  content: ""; position: absolute; top: 2px; left: 2px;
   width: 23px; height: 23px; border-radius: 50%;
   background: var(--lift);
   border: 1px solid var(--hairline);
