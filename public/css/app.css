@@ -1012,6 +1012,18 @@ button.avatar.lg:hover { opacity: .85; }
 .modal .muted { font-size: 14.5px; font-style: italic; margin-bottom: 20px; line-height: 1.6; }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; flex-wrap: wrap; }
 
+/* ---------- shared chats ---------- */
+.shared-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 2px; border-bottom: 1px solid var(--hairline);
+}
+.shared-row:last-child { border-bottom: none; }
+.shared-info { flex: 1; min-width: 0; }
+.shared-title { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shared-meta { font-family: var(--sans); font-size: 12.5px; color: var(--ink-3); margin-top: 3px; }
+.shared-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.shared-actions .btn { padding: 7px 12px; font-size: 13.5px; }
+
 #toasts {
   position: fixed; bottom: calc(22px + env(safe-area-inset-bottom)); left: 50%;
   transform: translateX(-50%); z-index: 200;

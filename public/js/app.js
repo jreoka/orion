@@ -1404,6 +1404,7 @@ function wireUserMenu() {
       go('login');
     } else if (act === 'settings') go('settings');
     else if (act === 'password') changePasswordModal();
+    else if (act === 'shared') sharedChatsModal();
     else if (act === 'admin') go('admin');
   });
 }
@@ -1562,6 +1563,7 @@ function openConvMenu(conv, anchor) {
   menu.id = 'conv-menu';
   menu.className = 'menu';
   menu.innerHTML = `
+    <button data-act="share">Share</button>
     <button data-act="rename">Rename</button>
     <button data-act="delete" class="danger">Delete</button>`;
   document.body.appendChild(menu);
@@ -1576,6 +1578,7 @@ function openConvMenu(conv, anchor) {
     if (!act) return;
     closeConvMenu();
     if (act === 'rename') renameChatModal(conv);
+    else if (act === 'share') shareChatModal(conv);
     else if (act === 'delete') deleteChatModal(conv);
   });
   setTimeout(() => document.addEventListener('click', closeConvMenu, { once: true }), 0);
@@ -1650,6 +1653,116 @@ function deleteChatModal(conv) {
       }
     } catch (ex) { toast(ex.message || 'Delete failed', 'error'); }
   };
+}
+
+function shareUrlFor(token) { return `${location.origin}/s/${token}`; }
+
+async function shareChatModal(conv) {
+  const bd = openModal(`
+    <h3>Share “${esc(conv.title || 'New chat')}”</h3>
+    <p class="muted">Anyone with the link can read this chat. They can't write to it or see your other chats. Revoking the link (here or in Shared chats) disables it immediately.</p>
+    <p id="share-error" class="form-error" hidden></p>
+    <div id="share-body"><p class="muted">Creating link…</p></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" data-x="cancel">Close</button>
+    </div>`);
+  bd.querySelector('[data-x=cancel]').onclick = closeModal;
+  const body = bd.querySelector('#share-body');
+  const err = bd.querySelector('#share-error');
+  let token;
+  try {
+    token = (await api(`/api/conversations/${conv.id}/share`, { method: 'POST' })).token;
+  } catch (ex) {
+    err.textContent = ex.message || 'Could not create the share link.';
+    err.hidden = false;
+    body.innerHTML = '';
+    return;
+  }
+  const url = shareUrlFor(token);
+  body.innerHTML = `
+    <label class="field"><span>Share link</span>
+      <input id="share-link" type="text" readonly value="${esc(url)}">
+    </label>
+    <div class="modal-actions" style="justify-content:flex-start;margin-top:12px">
+      <button type="button" class="btn primary" id="share-copy">Copy link</button>
+      <button type="button" class="btn danger-ghost" id="share-revoke">Revoke link</button>
+    </div>`;
+  const input = body.querySelector('#share-link');
+  input.addEventListener('focus', () => input.select());
+  body.querySelector('#share-copy').onclick = async (e) => {
+    try { await navigator.clipboard.writeText(url); }
+    catch { input.select(); document.execCommand('copy'); }
+    e.target.textContent = 'Copied ✓';
+    setTimeout(() => { e.target.textContent = 'Copy link'; }, 1500);
+  };
+  body.querySelector('#share-revoke').onclick = async () => {
+    try {
+      await api(`/api/conversations/${conv.id}/share`, { method: 'DELETE' });
+      closeModal();
+      toast('Share link revoked');
+    } catch (ex) { toast(ex.message || 'Revoke failed', 'error'); }
+  };
+}
+
+async function sharedChatsModal() {
+  const bd = openModal(`
+    <h3>Shared chats</h3>
+    <div id="shared-list"><p class="muted">Loading…</p></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" data-x="cancel">Close</button>
+    </div>`);
+  bd.querySelector('[data-x=cancel]').onclick = closeModal;
+  const list = bd.querySelector('#shared-list');
+  const render = async () => {
+    let shares;
+    try {
+      shares = (await api('/api/shared')).shares || [];
+    } catch {
+      list.innerHTML = '<p class="form-error">Couldn\'t load shared chats.</p>';
+      return;
+    }
+    if (!shares.length) {
+      list.innerHTML = '<p class="muted">Nothing shared yet. Right-click a chat in the sidebar and choose Share.</p>';
+      return;
+    }
+    list.innerHTML = shares.map((s) => {
+      const when = s.created_at
+        ? new Date(s.created_at * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+        : '';
+      return `
+      <div class="shared-row">
+        <div class="shared-info">
+          <div class="shared-title">${esc(s.title || 'Untitled chat')}</div>
+          ${when ? `<div class="shared-meta">Shared ${esc(when)}</div>` : ''}
+        </div>
+        <div class="shared-actions">
+          <button type="button" class="btn" data-copy="${esc(s.token)}">Copy link</button>
+          <button type="button" class="btn danger-ghost" data-revoke="${s.conversation_id}">Revoke</button>
+        </div>
+      </div>`;
+    }).join('');
+  };
+  list.addEventListener('click', async (e) => {
+    const copyBtn = e.target.closest('[data-copy]');
+    const revokeBtn = e.target.closest('[data-revoke]');
+    if (copyBtn) {
+      try { await navigator.clipboard.writeText(shareUrlFor(copyBtn.dataset.copy)); }
+      catch { /* clipboard unavailable — link stays visible in the row below */ }
+      copyBtn.textContent = 'Copied ✓';
+      setTimeout(() => { copyBtn.textContent = 'Copy link'; }, 1500);
+    } else if (revokeBtn) {
+      revokeBtn.disabled = true;
+      try {
+        await api(`/api/conversations/${revokeBtn.dataset.revoke}/share`, { method: 'DELETE' });
+        toast('Share link revoked');
+        await render();
+      } catch (ex) {
+        toast(ex.message || 'Revoke failed', 'error');
+        revokeBtn.disabled = false;
+      }
+    }
+  });
+  await render();
 }
 
 async function switchConversation(id) {

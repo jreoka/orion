@@ -643,6 +643,8 @@ function deleteConversation(convId) {
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(convId);
   }
   db.prepare('DELETE FROM conversations WHERE id = ?').run(convId);
+  // A deleted chat's share link dies with it — the row is the link.
+  db.prepare('DELETE FROM shared_chats WHERE conversation_id = ?').run(convId);
   removeDataPaths(paths);
 }
 
@@ -1282,6 +1284,13 @@ app.get('/api/files/:id', requireAuth, (req, res) => {  const att = db.prepare('
       .get(att.message_id, req.user.id);
   }
   if (!allowed) return res.status(404).json({ error: 'Not found' });
+  serveAttachmentFile(att, res);
+});
+
+// Serve an attachment row's bytes with the same safety rules everywhere:
+// path confined to DATA_DIR, active content forced to download + sandboxed
+// so it can never execute as our origin.
+function serveAttachmentFile(att, res) {
   const fp = path.resolve(DATA_DIR, att.path);
   if (!fp.startsWith(path.resolve(DATA_DIR) + path.sep)) {
     return res.status(400).json({ error: 'Bad file path' });
@@ -1308,6 +1317,116 @@ app.get('/api/files/:id', requireAuth, (req, res) => {  const att = db.prepare('
   res.sendFile(fp, (err) => {
     if (err && !res.headersSent) res.status(404).json({ error: 'File missing' });
   });
+}
+
+// ---- chat sharing ------------------------------------------------------------
+// A share link is a public, unguessable token per conversation. The DB row
+// IS the link: revoking (or deleting the chat) removes the row and the link
+// stops resolving.
+
+// One share link per chat — re-sharing returns the existing link.
+app.post('/api/conversations/:id/share', requireAuth, (req, res) => {
+  const conv = getConv(req.params.id, req.user.id);
+  if (!conv) return res.status(404).json({ error: 'Not found' });
+  let row = db.prepare('SELECT token FROM shared_chats WHERE conversation_id = ?').get(conv.id);
+  if (!row) {
+    const token = crypto.randomBytes(24).toString('base64url');
+    try {
+      db.prepare('INSERT INTO shared_chats (conversation_id, user_id, token) VALUES (?, ?, ?)')
+        .run(conv.id, req.user.id, token);
+    } catch {
+      // Lost a race with a parallel share — fall through to the existing row.
+    }
+    row = db.prepare('SELECT token FROM shared_chats WHERE conversation_id = ?').get(conv.id);
+  }
+  res.json({ token: row.token });
+});
+
+// Revoke a chat's share link. The row is gone, so the link stops working.
+app.delete('/api/conversations/:id/share', requireAuth, (req, res) => {
+  const conv = getConv(req.params.id, req.user.id);
+  if (!conv) return res.status(404).json({ error: 'Not found' });
+  const info = db
+    .prepare('DELETE FROM shared_chats WHERE conversation_id = ? AND user_id = ?')
+    .run(conv.id, req.user.id);
+  if (!info.changes) return res.status(404).json({ error: 'Not shared' });
+  res.json({ ok: true });
+});
+
+// All of the current user's live share links.
+app.get('/api/shared', requireAuth, (req, res) => {
+  const shares = db
+    .prepare(
+      `SELECT s.conversation_id, s.token, s.created_at, c.title
+       FROM shared_chats s JOIN conversations c ON c.id = s.conversation_id
+       WHERE s.user_id = ? ORDER BY s.created_at DESC`
+    )
+    .all(req.user.id);
+  res.json({ shares });
+});
+
+// Public: resolve a share token to its chat, or null.
+function getShare(token) {
+  if (!token || typeof token !== 'string' || token.length > 128) return null;
+  return (
+    db
+      .prepare(
+        `SELECT s.*, c.title FROM shared_chats s
+         JOIN conversations c ON c.id = s.conversation_id WHERE s.token = ?`
+      )
+      .get(token) || null
+  );
+}
+
+// Public: the shared chat's transcript — plain user/assistant turns only.
+// Progress notes, vault cards, tool rows, and empty tool-only turns are
+// internal and stay out of the shared page.
+app.get('/api/share/:token', (req, res) => {
+  const share = getShare(req.params.token);
+  if (!share) return res.status(404).json({ error: 'This link is invalid or has been revoked.' });
+  const messages = db
+    .prepare(
+      `SELECT id, role, content, kind, created_at FROM messages
+       WHERE conversation_id = ? AND role != 'tool'
+         AND (kind IS NULL OR kind = 'message')
+         AND NOT (role = 'assistant' AND (content IS NULL OR content = '') AND tool_calls IS NOT NULL)
+       ORDER BY id ASC`
+    )
+    .all(share.conversation_id)
+    .map((m) => ({
+      ...m,
+      attachments: db
+        .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
+        .all(m.id)
+        .map((a) => ({
+          id: a.id,
+          filename: a.filename,
+          url: `/api/share/${share.token}/files/${a.id}`,
+        })),
+    }));
+  res.json({ title: share.title, created_at: share.created_at, messages });
+});
+
+// Public: an attachment scoped to its share token — only files that belong
+// to the shared conversation are reachable this way.
+app.get('/api/share/:token/files/:attId', (req, res) => {
+  const share = getShare(req.params.token);
+  if (!share) return res.status(404).json({ error: 'Not found' });
+  const att = db
+    .prepare(
+      `SELECT a.* FROM attachments a JOIN messages m ON m.id = a.message_id
+       WHERE a.id = ? AND m.conversation_id = ?`
+    )
+    .get(req.params.attId, share.conversation_id);
+  if (!att) return res.status(404).json({ error: 'Not found' });
+  serveAttachmentFile(att, res);
+});
+
+// Public: the read-only shared-chat page. Never cached — a revoked link
+// must stop working immediately, not linger in the browser cache.
+app.get('/s/:token', (req, res) => {
+  res.set('Cache-Control', 'no-cache');
+  res.sendFile(path.join(__dirname, '..', 'public', 'share.html'));
 });
 
 // ---- admin ----------------------------------------------------------------

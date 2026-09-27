@@ -256,6 +256,16 @@ CREATE TABLE IF NOT EXISTS token_usage (
   PRIMARY KEY (user_id, week_start)
 );
 CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
+-- Share links: a public, unguessable token per conversation. Revoking (or
+-- deleting the chat) removes the row, which invalidates the link.
+CREATE TABLE IF NOT EXISTS shared_chats (
+  id INTEGER PRIMARY KEY,
+  conversation_id INTEGER NOT NULL UNIQUE,
+  user_id INTEGER NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_shared_chats_user ON shared_chats(user_id);
 `);
 
 // NOTE: `messages.tool_call_id` is one column beyond the original sketch —
