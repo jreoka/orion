@@ -1501,6 +1501,14 @@ function timeAgo(ts) {
   return new Date(ts).toLocaleDateString();
 }
 
+// The user is looking at the open chat: any message activity there counts
+// as seen, so the sidebar never shows a phantom "new activity" dot on a
+// chat they just watched reply. (lastSeenAt was previously only set when
+// opening a chat, so every replied-then-left chat looked unread.)
+function markSeen() {
+  if (S.activeId != null) S.lastSeenAt[S.activeId] = Date.now();
+}
+
 // Refresh the conversation list (titles, activity, running flags) without
 // disturbing the open chat. Called on every run end, on window focus, and
 // after create/rename/delete. (This is the function setRunActive always
@@ -2167,6 +2175,7 @@ async function sendMessage() {
     return;
   }
   reconcileLocal(local, resp.message);
+  markSeen();
   updateComposer();
   scrollBottom(true);
 }
@@ -2363,6 +2372,7 @@ function onVaultEvent(d) {
 }
 
 function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return;
+  markSeen();
   let added = false;
   let msg = S.messages.find((x) => x.id === m.id);
   if (!msg) {
@@ -2405,6 +2415,7 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
 
 function onBusToken(d) {
   if (!d || d.message_id == null) return;
+  markSeen();
   // The run is now visibly producing text — the status line yields to it.
   // (The next tool-start event re-shows it if the run goes back to tools.)
   hideRunStatus();
