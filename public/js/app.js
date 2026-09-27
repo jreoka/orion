@@ -1811,8 +1811,13 @@ function wireChat() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
 
-  $('#composer').addEventListener('submit', (e) => { e.preventDefault(); sendMessage(); });
-  $('#stop-btn').addEventListener('click', stopStream);
+  $('#composer').addEventListener('submit', (e) => {
+    e.preventDefault();
+    // While a run is active the send button has morphed into the stop
+    // button — clicking it stops the run. Enter still queues a message.
+    if (S.runActive) stopStream();
+    else sendMessage();
+  });
 
   // Draft restore happens in renderChat, once the conversation id is known.
   updateComposer();
@@ -1842,12 +1847,18 @@ function updateComposer() {
   const hasText = input.value.trim().length > 0;
   const uploading = pendingUploads().some((p) => p.uploading);
   const hasFiles = pendingUploads().some((p) => !p.uploading && p.id != null);
-  // Sending mid-run is allowed — the message is queued server-side.
-  // Keep the send button visible/enabled based on text or staged files even
-  // while a run is active; the stop button appears alongside it.
-  $('#send-btn').disabled = uploading || (!hasText && !hasFiles);
-  $('#send-btn').hidden = false;
-  $('#stop-btn').hidden = !S.runActive;
+  // While a run is active the single composer button morphs into the stop
+  // button (Enter still queues a message mid-run).
+  const btn = $('#send-btn');
+  if (S.runActive) {
+    btn.classList.add('is-stop');
+    btn.setAttribute('aria-label', 'Stop');
+    btn.disabled = false;
+  } else {
+    btn.classList.remove('is-stop');
+    btn.setAttribute('aria-label', 'Send');
+    btn.disabled = uploading || (!hasText && !hasFiles);
+  }
 }
 
 async function sendMessage() {
