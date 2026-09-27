@@ -313,6 +313,7 @@ async function boot() {
     S.hasMoreOlder = false; S.loadingOlder = false;
     S.buffers.clear(); S.toolRows.clear(); S.liveIds.clear();
     renderSidebar(); updateComposer();
+    const ub2 = $('#usage-box'); if (ub2) ub2.hidden = true;
     if (route() !== 'login') go('login'); else render();
   };
   try {
@@ -328,6 +329,7 @@ async function boot() {
   loadDoneFlags();
   await render();
   maybeShowPushNudge();
+  if (S.me) { refreshUsage(); startUsageTimer(); }
 }
 document.addEventListener('DOMContentLoaded', boot);
 
@@ -1975,6 +1977,7 @@ function wireUserMenu() {
       closeEventStream();
       S.me = null; S.activeId = null; S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
       S.doneByConv = {}; saveDoneFlags();
+      const ub = $('#usage-box'); if (ub) ub.hidden = true;
       go('login');
     } else if (act === 'settings') go('settings');
     else if (act === 'password') changePasswordModal();
@@ -2089,6 +2092,33 @@ async function afterLogin() {
   S.activeId = null;
   S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
   go('chat');
+  refreshUsage();
+}
+
+// Weekly token usage bar in the sidebar. Blue-purple swirl normally,
+// orange past 75%, red past 90%.
+let usageTimer = null;
+async function refreshUsage() {
+  const box = $('#usage-box');
+  if (!box) return;
+  try {
+    const u = await api('/api/usage');
+    if (!u || u.limit === null || u.limit === undefined) { box.hidden = true; return; }
+    box.hidden = false;
+    const pct = Math.min(100, Math.round((u.total_tokens / u.limit) * 100));
+    const fill = $('#usage-fill');
+    fill.style.width = pct + '%';
+    fill.classList.toggle('warn', pct >= 75 && pct < 90);
+    fill.classList.toggle('danger', pct >= 90);
+    $('#usage-pct').textContent = pct + '%';
+    $('#usage-tokens').textContent =
+      `${formatTokenLimit(u.total_tokens)} / ${formatTokenLimit(u.limit)} tokens · resets Monday`;
+    box.querySelector('.usage-track').setAttribute('aria-valuenow', pct);
+  } catch { box.hidden = true; }
+}
+function startUsageTimer() {
+  if (usageTimer) return;
+  usageTimer = setInterval(refreshUsage, 60000);
 }
 
 // Boot: the server copy wins when set; otherwise adopt this device's
@@ -2135,6 +2165,7 @@ async function loadConversationsQuiet(retried = false) {
           // show the green check where the working light was.
           S.doneByConv[c.id] = true;
           dirty = true;
+          refreshUsage(); // tokens moved
         }
         delete S.runByConv[c.id];
       }
@@ -2948,7 +2979,7 @@ function openEventStream(convId) {
     setRunActive(running);
   });
   es.addEventListener('run_started', () => setRunActive(true));
-  es.addEventListener('run_ended', () => setRunActive(false));
+  es.addEventListener('run_ended', () => { setRunActive(false); refreshUsage(); });
   es.addEventListener('title', (e) => {
     const d = parseBusEvent(e);
     if (!d || !d.title) return;
