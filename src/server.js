@@ -45,7 +45,7 @@ import {
   listPasskeys,
   deletePasskey,
 } from './passkey.js';
-import { publish, subscribe, unsubscribe } from './events.js';
+import { publish, subscribe, unsubscribe, subscribeUser, unsubscribeUser, publishToUser } from './events.js';
 import {
   createVaultRequest as vaultCreateRequest,
   getVaultRequest,
@@ -718,6 +718,30 @@ app.delete('/api/conversations/:id', requireAuth, (req, res) => {
 // and streams all progress (tokens, tool calls, mid-run updates) over the
 // per-conversation event bus. Sending while a run is active is always OK —
 // the message is queued and the in-flight run chains a follow-up run.
+
+// Per-user event stream: usage updates, etc. One per logged-in client.
+app.get('/api/user/events', requireAuth, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  subscribeUser(req.user.id, res);
+  res.write(`event: hello\ndata: ${JSON.stringify({ type: 'hello' })}\n\n`);
+
+  const ping = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      /* dead connection; its 'close' handler cleans up */
+    }
+  }, 20000);
+  res.on('close', () => {
+    clearInterval(ping);
+    unsubscribeUser(req.user.id, res);
+  });
+});
 
 // Long-lived event stream for a conversation. Sends `hello` on connect and
 // a `: ping` comment every 20s (proxies idle-timeout SSE otherwise).
@@ -1631,6 +1655,7 @@ app.patch('/api/admin/users/:id/limit', requireAdmin, asyncRoute(async (req, res
   const target = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
   if (!target) return res.status(404).json({ error: 'Not found' });
   const limit = setWeeklyLimit(id, req.body?.weekly_token_limit ?? null);
+  publishToUser(id, { type: 'usage_updated' });
   res.json({ ok: true, weekly_token_limit: limit });
 }));
 
@@ -1639,6 +1664,7 @@ app.post('/api/admin/users/:id/usage/reset', requireAdmin, asyncRoute(async (req
   const target = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
   if (!target) return res.status(404).json({ error: 'Not found' });
   resetWeeklyUsage(id);
+  publishToUser(id, { type: 'usage_updated' });
   res.json({ ok: true });
 }));
 

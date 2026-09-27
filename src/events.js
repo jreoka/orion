@@ -54,3 +54,43 @@ export function publish(conversationId, event) {
 export function subscriberCount(conversationId) {
   return subs.get(Number(conversationId))?.size || 0;
 }
+
+// ---- per-user channel (usage updates, etc.) ----
+const userSubs = new Map(); // userId -> Set<ServerResponse>
+
+export function subscribeUser(userId, res) {
+  const id = Number(userId);
+  let set = userSubs.get(id);
+  if (!set) {
+    set = new Set();
+    userSubs.set(id, set);
+  }
+  set.add(res);
+}
+
+export function unsubscribeUser(userId, res) {
+  const id = Number(userId);
+  const set = userSubs.get(id);
+  if (!set) return;
+  set.delete(res);
+  if (!set.size) userSubs.delete(id);
+}
+
+/** Publish an event object ({ type, ... }) to every client of the user. */
+export function publishToUser(userId, event) {
+  const set = userSubs.get(Number(userId));
+  if (!set || !set.size) return;
+  let frame;
+  try {
+    frame = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+  } catch {
+    return;
+  }
+  for (const res of set) {
+    try {
+      res.write(frame);
+    } catch {
+      /* dead subscriber; pruned on its 'close' handler */
+    }
+  }
+}

@@ -66,6 +66,7 @@ const S = {
   messages: [],        // [{id, role, content, attachments}]
   runActive: false,    // an agent run is in flight for the open conversation
   evt: null,           // EventSource for the open conversation's event bus
+  userEvt: null,       // EventSource for the per-user event bus (usage updates)
   evtRetry: 0,         // reconnect backoff step
   liveIds: new Set(),  // assistant message ids currently streaming
   buffers: new Map(),  // message id -> accumulated streamed text
@@ -306,6 +307,7 @@ async function boot() {
     // loadConversationsQuiet(), whose 401 would re-enter onUnauthorized
     // and recurse forever. The DOM effects are reproduced inline instead.
     closeEventStream();
+    closeUserEventStream();
     S.runActive = false;
     S.me = null; S.activeId = null; S.messages = [];
     S.conversations = [];
@@ -329,7 +331,7 @@ async function boot() {
   loadDoneFlags();
   await render();
   maybeShowPushNudge();
-  if (S.me) { refreshUsage(); startUsageTimer(); }
+  if (S.me) { refreshUsage(); startUsageTimer(); openUserEventStream(); }
 }
 document.addEventListener('DOMContentLoaded', boot);
 
@@ -1975,6 +1977,7 @@ function wireUserMenu() {
     if (act === 'logout') {
       try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
       closeEventStream();
+      closeUserEventStream();
       S.me = null; S.activeId = null; S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
       S.doneByConv = {}; saveDoneFlags();
       const ub = $('#usage-box'); if (ub) ub.hidden = true;
@@ -2092,7 +2095,7 @@ async function afterLogin() {
   S.activeId = null;
   S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
   go('chat');
-  refreshUsage();
+  refreshUsage(); openUserEventStream();
 }
 
 // Always-compact token count: 1234567 → "1.2M", 10500 → "10.5K", 999 → "999".
@@ -3055,6 +3058,21 @@ function openEventStream(convId) {
   };
 }
 
+// Per-user event stream: live usage updates when an admin changes our
+// limit or resets our usage. Opened once per login, closed on logout.
+function openUserEventStream() {
+  closeUserEventStream();
+  const es = new EventSource('/api/user/events');
+  S.userEvt = es;
+  es.addEventListener('usage_updated', () => { refreshUsage(); renderUsageCard(); });
+  es.onerror = () => {
+    // EventSource auto-reconnects; if the session died the next api() call
+    // surfaces it and the normal logout path closes this stream.
+  };
+}
+function closeUserEventStream() {
+  if (S.userEvt) { try { S.userEvt.close(); } catch {} S.userEvt = null; }
+}
 function closeEventStream() {
   if (S.evt) { try { S.evt.close(); } catch {} S.evt = null; }
   S.liveIds.clear();
