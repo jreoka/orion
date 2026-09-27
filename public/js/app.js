@@ -328,6 +328,7 @@ async function boot() {
   }
   wireGlobal();
   await render();
+  maybeShowPushNudge();
 }
 document.addEventListener('DOMContentLoaded', boot);
 
@@ -510,6 +511,7 @@ function setAuthMode(mode) {
 }
 
 function wireGlobal() {
+  wirePushNudge();
   // Profile (incl. avatar) is fetched once at boot; re-fetch when the tab
   // becomes visible again so changes made on another device appear
   // without a manual reload.
@@ -3632,6 +3634,53 @@ async function renderVaultTab() {
   });
 }
 
+// Shared push opt-in: requests the browser permission (a system prompt the
+// site can't skip) and registers the subscription server-side.
+async function enablePush() {
+  const p = await Notification.requestPermission();
+  if (p !== 'granted') { toast('Notification permission not granted', 'error'); return false; }
+  const { publicKey } = await api('/api/push/vapid-public-key');
+  const reg = await navigator.serviceWorker.ready;
+  const s = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlB64ToU8(publicKey),
+  });
+  await api('/api/push/subscribe', { method: 'POST', body: { subscription: s.toJSON() } });
+  return true;
+}
+// One-time banner nudging toward push opt-in. Browsers require the user to
+// tap the system permission prompt, so push can't be silently "on by
+// default" — this makes it one tap instead of a dig through Settings.
+async function maybeShowPushNudge() {
+  const bar = $('#push-nudge');
+  if (!bar || !S.me) return;
+  try {
+    if (!('PushManager' in window) || !('serviceWorker' in navigator) || !('Notification' in window)) return;
+    if (Notification.permission === 'denied') return; // unfixable here — Settings explains it
+    if (localStorage.getItem('orion-push-nudge') === 'dismissed') return;
+    const reg = await navigator.serviceWorker.ready;
+    if (await reg.pushManager.getSubscription()) return; // already on
+    bar.hidden = false;
+  } catch { /* never block the chat over a nudge */ }
+}
+function wirePushNudge() {
+  const bar = $('#push-nudge');
+  if (!bar) return;
+  $('#push-nudge-enable').onclick = async () => {
+    try {
+      if (await enablePush()) {
+        bar.hidden = true;
+        toast('Push notifications enabled');
+      }
+    } catch (e) {
+      toast('Couldn\u2019t enable notifications: ' + (e.message || e), 'error');
+    }
+  };
+  $('#push-nudge-dismiss').onclick = () => {
+    bar.hidden = true;
+    try { localStorage.setItem('orion-push-nudge', 'dismissed'); } catch {}
+  };
+}
 async function renderNotificationsTab() {
   const box = $('#notif-box');
   if (!('PushManager' in window) || !('serviceWorker' in navigator) || !('Notification' in window)) {
@@ -3667,16 +3716,7 @@ async function renderNotificationsTab() {
         }
         toast('Push notifications disabled');
       } else {
-        const p = await Notification.requestPermission();
-        if (p !== 'granted') { toast('Notification permission not granted', 'error'); renderNotificationsTab(); return; }
-        const { publicKey } = await api('/api/push/vapid-public-key');
-        const reg = await navigator.serviceWorker.ready;
-        const s = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlB64ToU8(publicKey),
-        });
-        await api('/api/push/subscribe', { method: 'POST', body: { subscription: s.toJSON() } });
-        toast('Push notifications enabled');
+        if (await enablePush()) toast('Push notifications enabled');
       }
     } catch (e) {
       toast('Couldn\u2019t update notifications: ' + e.message, 'error');

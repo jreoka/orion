@@ -734,9 +734,20 @@ button.avatar.lg:hover { opacity: .85; }
 .u-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .u-imgs .msg-img { max-width: 220px; }
 
+/* ---------- push nudge: one-tap enable banner ---------- */
+.push-nudge {
+  display: flex; align-items: center; gap: 10px;
+  margin: 8px auto 0; max-width: 720px; width: calc(100% - 32px);
+  padding: 8px 8px 8px 14px;
+  background: var(--paper-2); border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  font-size: 13.5px; color: var(--ink-2);
+}
+.push-nudge[hidden] { display: none; }
+.push-nudge > span { flex: 1; }
+.push-nudge .icon-btn { flex: none; }
 /* ---------- jump-to-latest: circular side button ---------- */
-.jump-latest {
-  position: absolute; right: 18px;
+.jump-latest {  position: absolute; right: 18px;
   bottom: calc(118px + env(safe-area-inset-bottom));
   width: 46px; height: 46px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
