@@ -3553,6 +3553,8 @@ function openUserActionsMenu(u, anchor, isSelf) {
     try {
       await api(`/api/admin/users/${u.id}/usage/reset`, { method: 'POST' });
       await loadAdminUsers();
+      // If they reset their own usage, update the sidebar bar + settings card now.
+      if (S.me && u.id === S.me.id) { refreshUsage(); renderUsageCard(); }
       toast(`Usage reset for ${u.username}`);
     } catch (e) { toast(e.message, 'error'); }
   });
