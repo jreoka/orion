@@ -1,8 +1,10 @@
-// Orion heartbeat: always on, every 30 minutes, no options. We run the
-// agent against the user's main chat with a quiet-instruction: if nothing
-// needs the user's attention the model replies HEARTBEAT_QUIET and we throw
-// the whole check away (no notification noise, no history clutter).
-import { db, getSetting, getOrCreateConversation } from './db.js';
+// Orion heartbeat: always on, every 30 minutes, no options. The check runs
+// in the user's dedicated hidden heartbeat conversation — NEVER inside one
+// of their real chats (a check that runs in a real chat posts follow-ups
+// there). If nothing needs the user's attention the model replies
+// HEARTBEAT_QUIET and we throw the whole check away (no notification noise,
+// no history clutter).
+import { db, getSetting, getOrCreateHeartbeatConversation } from './db.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
 import { registerController, unregisterController, chainPendingUserMessages, trackExecStart, trackExecEnd, clearExecTracking } from './runs.js';
@@ -37,6 +39,46 @@ function touchHeartbeatAt(userId, now) {
      VALUES (?, ?)
      ON CONFLICT(user_id) DO UPDATE SET last_heartbeat_at = excluded.last_heartbeat_at`
   ).run(userId, now);
+}
+
+function relTime(ts) {
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+// Compact digest of recent user-chat activity, so the check still has
+// "recent conversation" context without ever running inside a real chat.
+function recentActivityDigest(userId) {
+  const dayAgo = Date.now() - 24 * 3600 * 1000;
+  const convs = db
+    .prepare(
+      `SELECT id, title, updated_at FROM conversations
+       WHERE user_id = ? AND kind = 'chat' AND updated_at > ?
+       ORDER BY updated_at DESC LIMIT 5`
+    )
+    .all(userId, dayAgo);
+  const lines = [];
+  for (const c of convs) {
+    const msgs = db
+      .prepare(
+        `SELECT role, substr(content, 1, 180) AS snippet FROM messages
+         WHERE conversation_id = ? AND role IN ('user', 'assistant')
+           AND content IS NOT NULL AND length(content) > 0
+         ORDER BY id DESC LIMIT 4`
+      )
+      .all(c.id)
+      .reverse();
+    if (!msgs.length) continue;
+    lines.push(`- "${c.title || 'Untitled'}" (${relTime(c.updated_at)}):`);
+    for (const m of msgs) {
+      lines.push(`  ${m.role}: ${String(m.snippet).replace(/\s+/g, ' ')}`);
+    }
+  }
+  return lines.length ? '\n\nRecent chat activity:\n' + lines.join('\n') : '';
 }
 
 // Delete everything one heartbeat check wrote, except messages from the
@@ -76,15 +118,20 @@ function deleteHeartbeatPrompt(convId, userMsgId) {
 
 export async function runHeartbeatFor(userId) {
   const prompt = getHeartbeatPrompt(userId);
-  const convId = getOrCreateConversation(userId);
+  // Dedicated hidden conversation: the check never touches the user's chats.
+  const convId = getOrCreateHeartbeatConversation(userId);
   if (!tryAcquireRun(convId)) {
-    console.log(`[orion] heartbeat for user ${userId} skipped: main chat busy`);
+    console.log(`[orion] heartbeat for user ${userId} skipped: heartbeat chat busy`);
     return { ok: false, reason: 'busy' };
   }
 
   const maxIdBefore = db
     .prepare('SELECT COALESCE(MAX(id), 0) AS m FROM messages WHERE conversation_id = ?')
     .get(convId).m;
+
+  // The injected check-in prompt, with recent chat activity for context.
+  // (Matched by exact content in the error-path cleanup below.)
+  const checkPrompt = (prompt || DEFAULT_PROMPT) + recentActivityDigest(userId);
 
   const controller = registerController(convId);
   let userMsgId = null;
@@ -93,7 +140,7 @@ export async function runHeartbeatFor(userId) {
     const r = await runAgent({
       userId,
       conversationId: convId,
-      userText: prompt || DEFAULT_PROMPT,
+      userText: checkPrompt,
       settings: globalSettings(),
       shouldAbort: () => isStopRequested(convId),
       signal: controller.signal,
@@ -110,7 +157,7 @@ export async function runHeartbeatFor(userId) {
     const trimmed = (finalText || '').trim();
     if (trimmed === '' || trimmed === 'HEARTBEAT_QUIET') {
       // Nothing to report: delete the check's own messages (and their
-      // attachments) so the main chat stays clean — but never touch
+      // attachments) so the heartbeat chat stays clean — but never touch
       // messages the user sent mid-check.
       scrubHeartbeatMessages(convId, maxIdBefore, userMsgId);
       touchHeartbeatAt(userId, now);
@@ -146,7 +193,7 @@ export async function runHeartbeatFor(userId) {
               `SELECT id FROM messages WHERE conversation_id = ? AND id > ?
                AND role = 'user' AND content = ? ORDER BY id DESC LIMIT 1`
             )
-            .get(convId, maxIdBefore, prompt || DEFAULT_PROMPT)?.id ?? null;
+            .get(convId, maxIdBefore, checkPrompt)?.id ?? null;
       }
       scrubHeartbeatMessages(convId, maxIdBefore, pid ?? -1);
     } catch (se) {
@@ -158,7 +205,8 @@ export async function runHeartbeatFor(userId) {
     clearExecTracking(convId);
     clearStop(convId);
     releaseRun(convId);
-    // The user may have written into the main chat mid-check: answer them.
+    // Chain anything the user managed to write into the heartbeat chat
+    // mid-check (not normally reachable, but harmless to handle).
     try {
       chainPendingUserMessages(convId, userId, maxIdBefore, userMsgId);
     } catch (e) {

@@ -310,9 +310,10 @@ export function deleteSetting(key) {
 export function getOrCreateConversation(userId) {
   // All chats are equal — there is no special "main" chat. Return the most
   // recently updated conversation, creating one only when none exist.
+  // Heartbeat chats are never "the user's chat": they are hidden infra.
   const existing = db
     .prepare(
-      "SELECT id FROM conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1"
+      "SELECT id FROM conversations WHERE user_id = ? AND kind != 'heartbeat' ORDER BY updated_at DESC LIMIT 1"
     )
     .get(userId);
   if (existing) return existing.id;
@@ -321,6 +322,25 @@ export function getOrCreateConversation(userId) {
     db
       .prepare("INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, ?, 'chat', ?, ?)")
       .run(userId, 'New chat', now, now).lastInsertRowid
+  );
+}
+
+// The heartbeat's own conversation: kind='heartbeat', hidden from the
+// sidebar and search. The heartbeat must NEVER run inside one of the
+// user's real chats — it would post follow-ups there (and its injected
+// prompt would briefly masquerade as the user).
+export function getOrCreateHeartbeatConversation(userId) {
+  const existing = db
+    .prepare(
+      "SELECT id FROM conversations WHERE user_id = ? AND kind = 'heartbeat' ORDER BY id DESC LIMIT 1"
+    )
+    .get(userId);
+  if (existing) return existing.id;
+  const now = Date.now();
+  return Number(
+    db
+      .prepare("INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, ?, 'heartbeat', ?, ?)")
+      .run(userId, 'Heartbeat', now, now).lastInsertRowid
   );
 }
 

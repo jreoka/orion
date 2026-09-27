@@ -520,7 +520,7 @@ app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
 
 app.get('/api/conversations', requireAuth, (req, res) => {
   const rows = db
-    .prepare('SELECT id, title, kind, task_id, created_at, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC')
+    .prepare("SELECT id, title, kind, task_id, created_at, updated_at FROM conversations WHERE user_id = ? AND kind != 'heartbeat' ORDER BY updated_at DESC")
     .all(req.user.id)
     .map((c) => ({ ...c, running: isRunLocked(c.id) }));
   res.json(rows);
@@ -541,6 +541,7 @@ app.get('/api/conversations/search', requireAuth, (req, res) => {
            ORDER BY m.id LIMIT 1) AS snippet
        FROM conversations c
        WHERE c.user_id = ?
+         AND c.kind != 'heartbeat'
          AND (c.title LIKE ? ESCAPE '\\' OR EXISTS (
            SELECT 1 FROM messages m2
            WHERE m2.conversation_id = c.id AND m2.content LIKE ? ESCAPE '\\'))
@@ -558,6 +559,7 @@ app.post('/api/conversations', requireAuth, (req, res) => {
     .prepare(
       `SELECT c.id, c.title, c.kind, c.created_at, c.updated_at FROM conversations c
        WHERE c.user_id = ?
+         AND c.kind = 'chat'
          AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id)
        ORDER BY c.updated_at DESC LIMIT 1`
     )
