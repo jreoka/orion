@@ -54,6 +54,10 @@
               <span>Password</span>
               <input id="auth-password" type="password" autocomplete="current-password" minlength="1" required placeholder="••••••••">
             </label>
+            <label class="field" id="auth-confirm-wrap" hidden>
+              <span>Confirm password</span>
+              <input id="auth-confirm" type="password" autocomplete="new-password" minlength="1" placeholder="••••••••">
+            </label>
             <p id="auth-error" class="form-error" hidden></p>
             <div id="turnstile-slot" hidden></div>
             <button type="submit" class="btn primary block" id="auth-submit">Log in</button>

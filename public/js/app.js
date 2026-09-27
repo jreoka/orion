@@ -475,6 +475,11 @@ async function doAuth() {
   btn.disabled = true;
   err.hidden = true;
   try {
+    if (authMode === 'signup' && password !== $('#auth-confirm').value) {
+      err.textContent = 'Passwords do not match.';
+      err.hidden = false;
+      return;
+    }
     const body = { username, password };
     if (S.turnstileToken) body.turnstile_token = S.turnstileToken;
     const res = await api(authMode === 'login' ? '/api/auth/login' : '/api/auth/signup', {
@@ -482,6 +487,7 @@ async function doAuth() {
     });
     if (res && res.need_2fa) { show2faStep(res.challenge); return; }
     $('#auth-password').value = '';
+    $('#auth-confirm').value = '';
     await afterLogin();
   } catch (ex) {
     err.textContent = ex.message;
@@ -504,6 +510,10 @@ function setAuthMode(mode) {
   $('#tab-signup').classList.toggle('active', mode === 'signup');
   $('#auth-submit').textContent = mode === 'login' ? 'Log in' : 'Create account';
   $('#auth-password').setAttribute('autocomplete', mode === 'login' ? 'current-password' : 'new-password');
+  const cw = $('#auth-confirm-wrap');
+  cw.hidden = mode !== 'signup';
+  $('#auth-confirm').required = mode === 'signup';
+  if (mode === 'login') $('#auth-confirm').value = '';
   $('#auth-error').hidden = true;
   updatePasskeyBtn();
 }
