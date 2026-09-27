@@ -807,16 +807,17 @@ function paintTurnRail() {
   // raw would mark everything "visible" and pin the highlight to one end.)
   const viewTop = Math.max(boxRect.top, 0);
   const viewBottom = Math.min(boxRect.bottom, window.innerHeight);
-  const midY = viewTop + (viewBottom - viewTop) / 2;
   let bestMid = null;
   let bestDist = Infinity;
-  // Skip rows hidden inside collapsed work logs (zero-size rect) — their
-  // positions are meaningless. Visible nested rows (expanded logs) count.
+  // The active turn is the topmost visible user message — the turn you're
+  // reading from. Skip rows hidden inside collapsed work logs (zero-size
+  // rect) — their positions are meaningless.
   for (const n of box.querySelectorAll('[data-mid].user')) {
     const r = n.getBoundingClientRect();
     if (!r.width && !r.height) continue; // hidden
     if (r.bottom < viewTop || r.top > viewBottom) continue; // not visible
-    const dist = Math.abs((r.top + r.bottom) / 2 - midY);
+    // Distance from the viewport top; a partially-scrolled turn counts as 0.
+    const dist = Math.max(0, r.top - viewTop);
     if (dist < bestDist) { bestDist = dist; bestMid = n.dataset.mid; }
   }
   // Fallback: scrolled past everything — highlight the last turn above.
@@ -848,6 +849,10 @@ async function jumpToTurn(mid) {
     el.scrollIntoView({ block: 'start', behavior: 'smooth' });
     el.classList.add('turn-flash');
     setTimeout(() => el.classList.remove('turn-flash'), 1200);
+    // If we're already there, no scroll event fires — paint directly.
+    // Also re-paint after the smooth scroll lands.
+    schedulePaintRail();
+    setTimeout(() => schedulePaintRail(), 600);
   } finally {
     S.jumpingTurn = false;
   }
