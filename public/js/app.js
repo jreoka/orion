@@ -951,8 +951,11 @@ function wireJumpPill() {
     // #older-sentinel (see wireOlderObserver), not a scrollTop threshold.
   }, { passive: true });
   // If an ancestor (or the window) is the actual scroller, #messages never
-  // fires scroll — keep the rail highlight in sync anyway.
+  // fires scroll — keep the rail highlight in sync anyway. The wheel event
+  // fires on manual scrolling regardless of which element actually scrolls.
   window.addEventListener('scroll', () => { schedulePaintRail(); }, { passive: true, capture: true });
+  document.addEventListener('wheel', () => { schedulePaintRail(); }, { passive: true });
+  document.addEventListener('touchmove', () => { schedulePaintRail(); }, { passive: true });
   // Images finish loading after the scroll already happened (lazy
   // attachments, markdown embeds) and push the bottom further down. If
   // we're pinned, re-pin. (load doesn't bubble, hence capture.)
