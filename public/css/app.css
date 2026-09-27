@@ -1120,6 +1120,9 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
   #chat-header .wordmark { font-size: 16px; }
 
   .messages { padding: 22px 16px 14px; gap: 24px; }
+  /* The status dot hangs in the left gutter with a -16px margin; on mobile
+     the gutter is only 16px, so ease it in to keep the dot off the edge. */
+  #run-status .dot { margin-left: -8px; }
   .msg .bubble { max-width: 88%; font-size: 15px; }
   .a-body .content { font-size: 16px; }
 
