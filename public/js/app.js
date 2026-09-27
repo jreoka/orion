@@ -2105,6 +2105,20 @@ function formatCompactTokens(n) {
   return String(Math.round(n));
 }
 
+// "resets in 2d 4h" — the weekly bucket rolls over Monday 00:00 UTC.
+function usageResetIn() {
+  const now = Date.now();
+  const d = new Date(now);
+  const daysSinceMonday = (d.getUTCDay() + 6) % 7;
+  const mondayUTC = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - daysSinceMonday);
+  const diff = Math.max(0, mondayUTC + 7 * 86400000 - now);
+  const days = Math.floor(diff / 86400000);
+  const hours = Math.floor((diff % 86400000) / 3600000);
+  if (days > 0) return `resets in ${days}d ${hours}h`;
+  if (hours > 0) return `resets in ${hours}h`;
+  return `resets in ${Math.max(1, Math.floor((diff % 3600000) / 60000))}m`;
+}
+
 // Weekly token usage bar in the sidebar. Blue-purple swirl normally,
 // orange past 75%, red past 90%.
 let usageTimer = null;
@@ -2123,7 +2137,7 @@ async function refreshUsage() {
       fill.classList.remove('warn', 'danger');
       $('#usage-pct').textContent = '∞';
       $('#usage-tokens').textContent =
-        `${formatCompactTokens(u.total_tokens)} tokens this week · no limit`;
+        `${formatCompactTokens(u.total_tokens)} tokens · ${usageResetIn()}`;
       box.querySelector('.usage-track').removeAttribute('aria-valuenow');
     } else {
       const pct = Math.min(100, Math.round((u.total_tokens / u.limit) * 100));
@@ -2132,7 +2146,7 @@ async function refreshUsage() {
       fill.classList.toggle('danger', pct >= 90);
       $('#usage-pct').textContent = pct + '%';
       $('#usage-tokens').textContent =
-        `${formatCompactTokens(u.total_tokens)} / ${formatCompactTokens(u.limit)} tokens · resets Monday`;
+        `${formatCompactTokens(u.total_tokens)} / ${formatCompactTokens(u.limit)} · ${usageResetIn()}`;
       box.querySelector('.usage-track').setAttribute('aria-valuenow', pct);
     }
   } catch { box.hidden = true; }
