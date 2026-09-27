@@ -5,6 +5,20 @@
    ============================================================ */
 'use strict';
 
+/* App shell height: measured, not assumed. On some Android Chrome builds
+   100dvh resolves to the *large* viewport (toolbar hidden) while the
+   toolbar is actually shown — the app then renders ~56px too tall and the
+   composer slides off the bottom of the screen. Pin #app to
+   window.innerHeight and re-pin on every resize (rotation, toolbar
+   show/hide, keyboard). */
+function fitAppHeight() {
+  const app = document.getElementById('app');
+  if (app) app.style.height = window.innerHeight + 'px';
+}
+window.addEventListener('resize', fitAppHeight);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', fitAppHeight);
+fitAppHeight();
+
 /* ---------- tiny helpers ---------- */
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
