@@ -287,7 +287,7 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
 });
 
 app.patch('/api/auth/me', requireAuth, asyncRoute(async (req, res) => {
-  const { password, current_password } = req.body || {};
+  const { password, current_password, theme } = req.body || {};
   if (password !== undefined) {
     if (!verifyPassword(req.user.id, current_password || '')) {
       throw httpError(403, 'Current password is incorrect.');
@@ -296,6 +296,12 @@ app.patch('/api/auth/me', requireAuth, asyncRoute(async (req, res) => {
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(pw), req.user.id);
     // A password change may mean compromise — drop every other session.
     revokeOtherSessions(req.user.id, req.sessionId);
+  }
+  if (theme !== undefined) {
+    // Cross-device theme sync: the toggle writes through here; other
+    // devices pick it up on focus/visible.
+    if (theme !== 'light' && theme !== 'dark') throw httpError(400, 'Invalid theme.');
+    db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, req.user.id);
   }
   res.json({ ok: true });
 }));

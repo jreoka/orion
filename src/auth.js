@@ -128,7 +128,7 @@ export function getUserBySession(token) {
   if (!token) return null;
   const row = db
     .prepare(
-      `SELECT u.id, u.username, u.role, u.disabled, s.expires_at
+      `SELECT u.id, u.username, u.role, u.disabled, u.theme, s.expires_at
        FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ?`
     )
     .get(token);

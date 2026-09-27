@@ -331,6 +331,7 @@ async function boot() {
     suppressHashRender = true;
     go('chat');
   }
+  if (S.me) adoptTheme(); // server theme wins; else push up this device's choice
   wireGlobal();
   await render();
   maybeShowPushNudge();
@@ -527,15 +528,9 @@ function wireGlobal() {
     if (document.hidden) { hiddenAt = Date.now(); return; }
     if (S.me && Date.now() - hiddenAt > 10000) refreshMe().catch(() => {});
   });
-  // Theme toggle (Settings → Appearance), persisted across visits.
+  // Theme toggle (Settings → Appearance). applyTheme() persists locally
+  // and pushes to the server so the choice syncs across devices.
   const themeToggle = $('#theme-toggle');
-  const applyTheme = (dark) => {
-    if (dark) document.documentElement.dataset.theme = 'dark';
-    else document.documentElement.removeAttribute('data-theme');
-    try { localStorage.setItem('orion-theme', dark ? 'dark' : 'light'); } catch (e) {}
-    const m = document.querySelector('meta[name="theme-color"]');
-    if (m) m.setAttribute('content', dark ? '#171310' : '#faf7f0');
-  };
   if (themeToggle) {
     themeToggle.checked = document.documentElement.dataset.theme === 'dark';
     themeToggle.addEventListener('change', () => applyTheme(themeToggle.checked));
@@ -1850,6 +1845,49 @@ function markSeen() {
 // disturbing the open chat. Called on every run end, on window focus, and
 // after create/rename/delete. (This is the function setRunActive always
 // expected — its absence used to crash run cleanup.)
+// ---- theme: synced across devices via the server (users.theme) --------
+function applyTheme(dark, save = true) {
+  if (dark) document.documentElement.dataset.theme = 'dark';
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('orion-theme', dark ? 'dark' : 'light'); } catch (e) {}
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', dark ? '#171310' : '#faf7f0');
+  const t = $('#theme-toggle');
+  if (t) t.checked = dark;
+  // Push the choice to the server so the user's other devices follow.
+  if (save && S.me) {
+    S.themePushedAt = Date.now();
+    api('/api/auth/me', { method: 'PATCH', body: { theme: dark ? 'dark' : 'light' } }).catch(() => {});
+  }
+}
+
+// Boot: the server copy wins when set; otherwise adopt this device's
+// local choice and push it up so all devices converge on it.
+function adoptTheme() {
+  const server = S.me && (S.me.theme === 'dark' || S.me.theme === 'light') ? S.me.theme : null;
+  if (server) { applyTheme(server === 'dark', false); return; }
+  let local = null;
+  try { local = localStorage.getItem('orion-theme'); } catch (e) {}
+  if (local === 'dark' || local === 'light') applyTheme(local === 'dark', true);
+  else applyTheme(false, false);
+}
+
+// Returning to the tab / focusing the window: pick up a theme change
+// made on another device. Skipped briefly after a local toggle so a
+// slow PATCH round-trip can't flicker the just-chosen theme back.
+async function syncThemeFromServer() {
+  if (!S.me) return;
+  if (Date.now() - (S.themePushedAt || 0) < 5000) return;
+  try {
+    const me = await api('/api/auth/me');
+    S.me.theme = me.theme;
+    if (me.theme === 'dark' || me.theme === 'light') {
+      const dark = me.theme === 'dark';
+      if ((document.documentElement.dataset.theme === 'dark') !== dark) applyTheme(dark, false);
+    }
+  } catch { /* best-effort */ }
+}
+
 async function loadConversationsQuiet(retried = false) {
   try {
     const rows = await api('/api/conversations');
@@ -2333,6 +2371,7 @@ function wireSidebarOnce() {
     }
     S.lastSyncAt = Date.now();
     loadConversationsQuiet();
+    syncThemeFromServer(); // pick up a theme change made on another device
     // A tab backgrounded long enough can have its SSE stream die silently
     // (no error event, no heartbeat): re-establish it and restore the
     // Stop button / run state from the server.
@@ -2348,6 +2387,7 @@ function wireSidebarOnce() {
     if (Date.now() - (S.lastSyncAt || 0) < 5000) return;
     S.lastSyncAt = Date.now();
     loadConversationsQuiet();
+    syncThemeFromServer();
   });
 }
 
