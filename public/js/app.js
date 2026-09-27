@@ -990,12 +990,47 @@ function renderMessages() {
   const win = S.messages.slice(-RENDER_WINDOW);
   for (const m of win) box.appendChild(messageEl(m));
   if (status) box.appendChild(status); // keep it last, text intact
+  collapseWorkLogs(); // completed runs read as one question → one answer
   // Full re-render: jump straight to the bottom in the same task as the DOM
   // build, so the first paint is already at the bottom — never a flash of
   // the top followed by a scroll-down. jumpToBottom() overrides the CSS
   // smooth scroll-behavior for the jump (a bare scrollTop assignment still
   // animates otherwise).
   jumpToBottom();
+}
+
+// Fold a finished run's progress notes into a single expandable "Work log"
+// row, so the chat reads as one question → one answer with the mid-run
+// chatter tucked away but still inspectable. Consecutive .msg.update rows
+// become one <details>; the in-flight run's notes (data-live-run) are
+// never touched — they collapse when the run ends.
+function collapseWorkLogs() {
+  const box = document.getElementById('messages');
+  if (!box) return;
+  const kids = [...box.children];
+  let group = [];
+  const flush = () => {
+    if (!group.length) return;
+    const n = group.length;
+    const details = document.createElement('details');
+    details.className = 'worklog';
+    details.innerHTML =
+      `<summary><span class="wl-name">Work log</span>` +
+      `<span class="wl-count">${n} update${n === 1 ? '' : 's'}</span></summary>` +
+      `<div class="wl-body"></div>`;
+    const body = details.querySelector('.wl-body');
+    group[0].before(details);
+    for (const el of group) body.appendChild(el);
+    group = [];
+  };
+  for (const el of kids) {
+    if (el.classList && el.classList.contains('msg') && el.classList.contains('update') && !el.dataset.liveRun) {
+      group.push(el);
+    } else {
+      flush();
+    }
+  }
+  flush();
 }
 
 // Copy-button delegation for code blocks (works for streamed content too).
@@ -1050,6 +1085,10 @@ function messageEl(m) {
     // so a working run reads as one answer with a work log — not a stack
     // of separate messages.
     wrap.classList.add('update');
+    // Never collapse the in-flight run's notes: they stay visible until
+    // the run ends, then setRunActive(false) clears the mark and folds
+    // them into the work log.
+    if (S.runActive) wrap.dataset.liveRun = '1';
     wrap.innerHTML = `<div class="upd"><span class="content">${md(m.content || '')}</span></div>`;
     return wrap;
   }
@@ -2166,6 +2205,11 @@ function setRunActive(on) {
   }
   if (!on) {
     hideRunStatus(); // the single live status line never survives a run
+    // The run's progress notes are done being live: fold them into the
+    // work log so the final answer stands alone.
+    document.querySelectorAll('#messages .msg.update[data-live-run]')
+      .forEach((el) => el.removeAttribute('data-live-run'));
+    collapseWorkLogs();
     // The streaming caret never survives a run either — it may sit on a
     // nested paragraph, not just .content, so clear it everywhere.
     document.querySelectorAll('#messages .caret').forEach((el) => el.classList.remove('caret'));

@@ -809,6 +809,17 @@ button.avatar.lg:hover { opacity: .85; }
 .upd .content > *:first-child { margin-top: 0; }
 .upd .content > *:last-child { margin-bottom: 0; }
 .upd .content p { margin: 0 0 4px; }
+/* A finished run's progress notes fold into one expandable work log, so the
+   final answer stands alone as the only full message card. */
+.worklog { max-width: 720px; width: 100%; margin: 0 auto; }
+.worklog > summary { list-style: none; display: flex; align-items: baseline; gap: 8px; cursor: pointer; color: var(--ink-3); font-size: 13px; padding: 3px 0; }
+.worklog > summary::-webkit-details-marker { display: none; }
+.worklog > summary::before { content: '›'; display: inline-block; transition: transform .18s var(--ease); opacity: .7; }
+.worklog[open] > summary::before { transform: rotate(90deg); }
+.wl-name { font-style: italic; font-family: var(--serif); }
+.wl-count { opacity: .75; font-size: 12.5px; }
+.wl-body { padding: 2px 0 4px; }
+.wl-body .msg { animation: none; }
 /* Secure vault request widget: a locked card with an inline same-origin form. */
 .msg.vault-request { margin: 10px 0; }
 .vault-card {
