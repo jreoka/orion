@@ -2103,17 +2103,28 @@ async function refreshUsage() {
   if (!box) return;
   try {
     const u = await api('/api/usage');
-    if (!u || u.limit === null || u.limit === undefined) { box.hidden = true; return; }
+    if (!u) { box.hidden = true; return; }
     box.hidden = false;
-    const pct = Math.min(100, Math.round((u.total_tokens / u.limit) * 100));
     const fill = $('#usage-fill');
-    fill.style.width = pct + '%';
-    fill.classList.toggle('warn', pct >= 75 && pct < 90);
-    fill.classList.toggle('danger', pct >= 90);
-    $('#usage-pct').textContent = pct + '%';
-    $('#usage-tokens').textContent =
-      `${formatTokenLimit(u.total_tokens)} / ${formatTokenLimit(u.limit)} tokens · resets Monday`;
-    box.querySelector('.usage-track').setAttribute('aria-valuenow', pct);
+    const unlimited = u.limit === null || u.limit === undefined;
+    if (unlimited) {
+      // No cap: full-width shimmer, no percentage.
+      fill.style.width = '100%';
+      fill.classList.remove('warn', 'danger');
+      $('#usage-pct').textContent = '∞';
+      $('#usage-tokens').textContent =
+        `${formatTokenLimit(u.total_tokens)} tokens this week · no limit`;
+      box.querySelector('.usage-track').removeAttribute('aria-valuenow');
+    } else {
+      const pct = Math.min(100, Math.round((u.total_tokens / u.limit) * 100));
+      fill.style.width = pct + '%';
+      fill.classList.toggle('warn', pct >= 75 && pct < 90);
+      fill.classList.toggle('danger', pct >= 90);
+      $('#usage-pct').textContent = pct + '%';
+      $('#usage-tokens').textContent =
+        `${formatTokenLimit(u.total_tokens)} / ${formatTokenLimit(u.limit)} tokens · resets Monday`;
+      box.querySelector('.usage-track').setAttribute('aria-valuenow', pct);
+    }
   } catch { box.hidden = true; }
 }
 function startUsageTimer() {
