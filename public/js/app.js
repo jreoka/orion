@@ -716,6 +716,10 @@ async function loadOlder() {
     const prevTop = box.scrollTop;
     const frag = document.createDocumentFragment();
     for (const m of missing) frag.appendChild(messageEl(m)); // S.messages order: oldest first
+    // Fold finished runs before they hit the DOM — otherwise older runs
+    // flash as loose messages while scrolling up and only jump into work
+    // logs when something later re-folds the whole list.
+    for (const seg of splitRuns([...frag.children])) foldRunSegment(seg);
     box.insertBefore(frag, ensureOlderSpinner().nextSibling);
     box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
     return;
@@ -732,6 +736,9 @@ async function loadOlder() {
     S.messages = [...batch, ...S.messages];
     const frag = document.createDocumentFragment();
     for (const m of batch) frag.appendChild(messageEl(m));
+    // Same fold-before-insert as above: fetched history must arrive
+    // already grouped.
+    for (const seg of splitRuns([...frag.children])) foldRunSegment(seg);
     box.insertBefore(frag, ensureOlderSpinner().nextSibling);
     box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
   } catch {
@@ -1140,14 +1147,11 @@ function renderMessages() {
 // (the model sometimes narrates in ordinary chat text instead of using
 // send_update). The in-flight (trailing) run is never touched — it folds
 // when the run ends.
-function collapseWorkLogs() {
-  const box = document.getElementById('messages');
-  if (!box) return;
-  const kids = [...box.children];
-  // Split into runs at each user message.
+// Split an ordered node list into runs at each user message.
+function splitRuns(nodes) {
   const runs = [];
   let cur = [];
-  for (const el of kids) {
+  for (const el of nodes) {
     const isUser =
       el.classList && el.classList.contains('msg') &&
       el.classList.contains('user') && !el.classList.contains('update');
@@ -1158,12 +1162,27 @@ function collapseWorkLogs() {
     cur.push(el);
   }
   if (cur.length) runs.push(cur);
+  return runs;
+}
+
+function collapseWorkLogs() {
+  const box = document.getElementById('messages');
+  if (!box) return;
+  const runs = splitRuns([...box.children]);
 
   runs.forEach((seg, ri) => {
     const trailing = ri === runs.length - 1;
     // Only the trailing segment can still be in flight — never fold it
     // while a run might be active here.
     if (trailing && (S.runActive || (S.activeId && S.runByConv[S.activeId]))) return;
+    foldRunSegment(seg);
+  });
+}
+
+// Fold one run's intermediate chatter into a single expandable work log.
+// Also used on freshly-built history fragments in loadOlder(), so older
+// runs never flash as loose messages while scrolling up.
+function foldRunSegment(seg) {
     // Belt and braces: skip if any row still carries a live marker.
     // Self-healing: unwrap any previously-folded (non-live) work log back
     // into plain rows first, so a re-fold never stacks a second tray on top
@@ -1220,7 +1239,6 @@ function collapseWorkLogs() {
     (staleTrays.length ? staleTrays[0] : group[0]).before(details);
     for (const el of group) body.appendChild(el);
     for (const t of staleTrays) t.remove(); // drop the emptied old trays
-  });
 }
 
 // An assistant row with real visible text: a candidate for "final answer"
