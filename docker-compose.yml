@@ -20,6 +20,15 @@ services:
       - caddy-data:/data
       - caddy-config:/config
 
+  # Bundled metasearch for the agent's web_search tool. Internal-only —
+  # not published to the host, reachable from the orion container as
+  # http://searxng:8888. No API keys, no external dependency.
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+
 volumes:
   orion-data:
   caddy-data:

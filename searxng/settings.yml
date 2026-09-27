@@ -1,0 +1,13 @@
+# Bundled SearXNG for Orion's web_search tool.
+# Internal-only: not exposed by Caddy, reachable only from the orion
+# container as http://searxng:8888. The secret_key is static because this
+# instance never faces the internet — it only signs internal sessions.
+use_default_settings: true
+server:
+  secret_key: 'orion-internal-searxng-not-public'
+  bind_address: '0.0.0.0'
+  port: 8888
+search:
+  formats:
+    - html
+    - json
