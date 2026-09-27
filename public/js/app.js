@@ -999,38 +999,91 @@ function renderMessages() {
   jumpToBottom();
 }
 
-// Fold a finished run's progress notes into a single expandable "Work log"
-// row, so the chat reads as one question → one answer with the mid-run
-// chatter tucked away but still inspectable. Consecutive .msg.update rows
-// become one <details>; the in-flight run's notes (data-live-run) are
-// never touched — they collapse when the run ends.
+// Fold a finished run's intermediate chatter into a single expandable
+// "Work log" row, so the chat reads as one question → one answer with the
+// mid-run chatter tucked away but still inspectable.
+//
+// A run is everything after a .msg.user up to the next one. Within a
+// finished run, the LAST assistant text message is the final answer —
+// everything before it is intermediate and gets folded, in order, into one
+// <details>. That covers both send_update notes AND plain mid-run text
+// (the model sometimes narrates in ordinary chat text instead of using
+// send_update). The in-flight (trailing) run is never touched — it folds
+// when the run ends.
 function collapseWorkLogs() {
   const box = document.getElementById('messages');
   if (!box) return;
   const kids = [...box.children];
-  let group = [];
-  const flush = () => {
+  // Split into runs at each user message.
+  const runs = [];
+  let cur = [];
+  for (const el of kids) {
+    const isUser =
+      el.classList && el.classList.contains('msg') &&
+      el.classList.contains('user') && !el.classList.contains('update');
+    if (isUser && cur.length) {
+      runs.push(cur);
+      cur = [];
+    }
+    cur.push(el);
+  }
+  if (cur.length) runs.push(cur);
+
+  runs.forEach((seg, ri) => {
+    const trailing = ri === runs.length - 1;
+    // Only the trailing segment can still be in flight — never fold it
+    // while a run might be active here.
+    if (trailing && (S.runActive || (S.activeId && S.runByConv[S.activeId]))) return;
+    // Belt and braces: skip if any row still carries a live marker.
+    if (
+      seg.some(
+        (el) =>
+          (el.classList && el.classList.contains('update') && el.dataset.liveRun) ||
+          (el.dataset && el.dataset.mid && S.liveIds.has(Number(el.dataset.mid)))
+      )
+    )
+      return;
+
+    // The final answer: the last assistant row with visible text.
+    let finalIdx = -1;
+    seg.forEach((el, i) => {
+      if (isIntermediateCandidate(el)) finalIdx = i;
+    });
+
+    const group = [];
+    seg.forEach((el, i) => {
+      if (el.classList && el.classList.contains('msg') && el.classList.contains('update')) {
+        group.push(el); // send_update note — always intermediate
+      } else if (i !== finalIdx && isIntermediateCandidate(el) && !el.querySelector('.imgs, .u-imgs')) {
+        group.push(el); // plain mid-run text — intermediate (keep ones with images visible)
+      }
+    });
     if (!group.length) return;
     const n = group.length;
     const details = document.createElement('details');
     details.className = 'worklog';
     details.innerHTML =
       `<summary><span class="wl-name">Work log</span>` +
-      `<span class="wl-count">${n} update${n === 1 ? '' : 's'}</span></summary>` +
+      `<span class="wl-count">${n} ${n === 1 ? 'entry' : 'entries'}</span></summary>` +
       `<div class="wl-body"></div>`;
     const body = details.querySelector('.wl-body');
     group[0].before(details);
     for (const el of group) body.appendChild(el);
-    group = [];
-  };
-  for (const el of kids) {
-    if (el.classList && el.classList.contains('msg') && el.classList.contains('update') && !el.dataset.liveRun) {
-      group.push(el);
-    } else {
-      flush();
-    }
-  }
-  flush();
+  });
+}
+
+// An assistant row with real visible text: a candidate for "final answer"
+// (the last one per run) or "intermediate" (any earlier one). Excludes
+// tool-only placeholders, update notes, and the vault widget.
+function isIntermediateCandidate(el) {
+  if (
+    !el.classList || !el.classList.contains('msg') ||
+    !el.classList.contains('assistant') || el.classList.contains('update') ||
+    el.classList.contains('vault-request') || el.classList.contains('msg-empty')
+  )
+    return false;
+  const content = el.querySelector('.a-body .content');
+  return !!content && content.textContent.trim().length > 0;
 }
 
 // Copy-button delegation for code blocks (works for streamed content too).

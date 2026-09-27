@@ -830,6 +830,11 @@ button.avatar.lg:hover { opacity: .85; }
 .wl-body .msg { animation: none; }
 .wl-body .msg.update { padding: 2px 0; }
 .wl-body .upd { font-size: 12.5px; }
+/* Plain mid-run text folded into the log reads as dimmed notes, not answers. */
+.wl-body .msg.assistant { margin: 2px 0; }
+.wl-body .msg.assistant .a-body { margin-bottom: 0; }
+.wl-body .msg.assistant .a-body .content { font-size: 14px; color: var(--ink-2); }
+.wl-body .msg.assistant .a-body p { margin-bottom: 8px; }
 /* Secure vault request widget: a locked card with an inline same-origin form. */
 .msg.vault-request { margin: 10px 0; }
 .vault-card {
