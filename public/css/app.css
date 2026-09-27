@@ -358,6 +358,7 @@ button.avatar.lg:hover { opacity: .85; }
    where the working light was. Dismissed when the chat is opened. */
 .conv-dot.done {
   width: 16px; height: 16px;
+  background: none; border-radius: 0;
   color: var(--success);
   display: flex; align-items: center; justify-content: center;
   animation: none;
