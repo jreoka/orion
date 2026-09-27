@@ -1389,7 +1389,6 @@ app.get('/api/share/:token', (req, res) => {
       `SELECT id, role, content, kind, created_at FROM messages
        WHERE conversation_id = ? AND role != 'tool'
          AND (kind IS NULL OR kind = 'message')
-         AND NOT (role = 'assistant' AND (content IS NULL OR content = '') AND tool_calls IS NOT NULL)
        ORDER BY id ASC`
     )
     .all(share.conversation_id)
