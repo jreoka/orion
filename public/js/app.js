@@ -310,6 +310,7 @@ async function boot() {
     closeUserEventStream();
     S.runActive = false;
     S.me = null; S.activeId = null; S.messages = [];
+    try { localStorage.removeItem('orion-active-chat'); } catch {}
     S.conversations = [];
     S.doneByConv = {}; saveDoneFlags();
     S.hasMoreOlder = false; S.loadingOlder = false;
@@ -1979,7 +1980,8 @@ function wireUserMenu() {
       try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
       closeEventStream();
       closeUserEventStream();
-      S.me = null; S.activeId = null; S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
+      S.me = null; S.activeId = null; S.messages = [];
+    try { localStorage.removeItem('orion-active-chat'); } catch {} S.hasMoreOlder = false; S.loadingOlder = false;
       S.doneByConv = {}; saveDoneFlags();
       const ub = $('#usage-box'); if (ub) ub.hidden = true;
       go('login');
@@ -2420,6 +2422,7 @@ function deleteChatModal(conv) {
           closeEventStream();
           setRunActive(false); // no stream left to deliver run_ended; clear Stop now
           S.activeId = null;
+          try { localStorage.removeItem('orion-active-chat'); } catch {}
           setMessages({ messages: [], hasMoreOlder: false });
           renderMessages();
           renderAttachTray();
@@ -2615,6 +2618,7 @@ async function switchConversation(id) {
     const data = await api(`/api/conversations/${id}`);
     closeEventStream();
     S.activeId = id;
+    try { localStorage.setItem('orion-active-chat', String(id)); } catch {}
     // Seed the Stop-button state synchronously from the just-fetched
     // conversation — fresher than the runByConv cache, which may predate a
     // run that started while this client was away. The SSE hello that
@@ -2740,8 +2744,13 @@ async function renderChat() {
     try {
       const list = await api('/api/conversations');
       if (list.length) {
-        const data = await api(`/api/conversations/${list[0].id}`);
-        S.activeId = list[0].id;
+        let openId = list[0].id;
+        try {
+          const saved = localStorage.getItem('orion-active-chat');
+          if (saved && list.some((c) => String(c.id) === saved)) openId = Number(saved);
+        } catch {}
+        const data = await api(`/api/conversations/${openId}`);
+        S.activeId = openId;
         setMessages(data);
         // Seed both flags from the fresh payload: update notes rendered
         // below need S.runActive for their live-run marker, and the fold
