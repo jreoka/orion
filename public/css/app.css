@@ -873,6 +873,7 @@ button.avatar.lg:hover { opacity: .85; }
 }
 .attach-x:hover { color: var(--danger); }
 .u-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.u-imgs.no-text { margin-top: 0; }
 .u-imgs .msg-img { max-width: 220px; }
 
 /* ---------- push nudge: one-tap enable banner ---------- */

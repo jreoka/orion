@@ -1565,9 +1565,10 @@ function messageEl(m) {
     return wrap;
   }
   if (m.role === 'user') {
+    const hasText = !!(m.content && String(m.content).trim());
     const imgs = (m.attachments || []).length
-      ? `<div class="u-imgs">${(m.attachments || []).map(attachmentHtml).join('')}</div>` : '';
-    wrap.innerHTML = `<div class="bubble">${md(m.content)}${imgs}<div class="rx-row" data-rxrow>${rxRowInner(m)}</div></div>`;
+      ? `<div class="u-imgs${hasText ? '' : ' no-text'}">${(m.attachments || []).map(attachmentHtml).join('')}</div>` : '';
+    wrap.innerHTML = `<div class="bubble">${hasText ? md(m.content) : ''}${imgs}<div class="rx-row" data-rxrow>${rxRowInner(m)}</div></div>`;
   } else {
     wrap.innerHTML = `
       <div class="a-avatar">
