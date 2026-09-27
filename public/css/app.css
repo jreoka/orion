@@ -826,6 +826,11 @@ button.avatar.lg:hover { opacity: .85; }
 .worklog[open] > summary::before { transform: rotate(90deg); }
 .wl-name { font-style: italic; font-family: var(--serif); }
 .wl-count { opacity: .75; font-size: 12.5px; }
+/* While the run is in flight the tray stays open with a pulsing dot. */
+.wl-live-dot { display: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); align-self: center; }
+.worklog[data-live] .wl-live-dot { display: inline-block; animation: wl-pulse 1.6s ease-in-out infinite; }
+@keyframes wl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
 .wl-body { padding: 4px 0 4px; border-top: 1px dashed var(--hairline); margin-top: 2px; }
 .wl-body .msg { animation: none; }
 .wl-body .msg.update { padding: 2px 0; }

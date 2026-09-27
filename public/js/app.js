@@ -1086,6 +1086,78 @@ function isIntermediateCandidate(el) {
   return !!content && content.textContent.trim().length > 0;
 }
 
+// ---- live work log ------------------------------------------------------
+// While a run is in flight, its intermediate chatter accumulates live in an
+// open "Work log" tray instead of as loose rows: update notes and any
+// assistant text row that a newer row supersedes move into the tray as they
+// arrive. The currently-streaming row always stays outside — it's the
+// potential final answer. When the run ends (or the user queues a new
+// message mid-run) the tray collapses, leaving one question → one answer.
+let liveBoxEl = null; // the in-flight run's open tray, if one exists
+
+function liveTray() {
+  return liveBoxEl && liveBoxEl.isConnected ? liveBoxEl : null;
+}
+
+function foldLiveWorkLog() {
+  if (!S.runActive || !S.activeId) return;
+  const box = document.getElementById('messages');
+  if (!box) return;
+  // The in-flight run is the trailing segment (after the last user message).
+  const kids = [...box.children];
+  let start = 0;
+  kids.forEach((el, i) => {
+    if (
+      el.classList && el.classList.contains('msg') &&
+      el.classList.contains('user') && !el.classList.contains('update')
+    )
+      start = i + 1;
+  });
+  // The latest assistant text row is the potential final answer — everything
+  // before it (plus live update notes) belongs in the tray.
+  let lastText = null;
+  const items = [];
+  for (const el of kids.slice(start)) {
+    if (
+      el.classList && el.classList.contains('msg') &&
+      el.classList.contains('update') && el.dataset.liveRun
+    ) {
+      items.push(el);
+    } else if (isIntermediateCandidate(el) && !el.querySelector('.imgs > *, .u-imgs > *')) {
+      if (lastText) items.push(lastText);
+      lastText = el;
+    }
+    // The tray itself (details.worklog) is not .msg — ignored here.
+  }
+  if (!items.length) return;
+  let tray = liveTray();
+  if (!tray) {
+    tray = document.createElement('details');
+    tray.className = 'worklog';
+    tray.dataset.live = '1';
+    tray.setAttribute('open', '');
+    tray.innerHTML =
+      `<summary><span class="wl-live-dot" aria-hidden="true"></span>` +
+      `<span class="wl-name">Work log</span><span class="wl-count"></span></summary>` +
+      `<div class="wl-body"></div>`;
+    items[0].before(tray);
+    liveBoxEl = tray;
+  }
+  const body = tray.querySelector('.wl-body');
+  for (const el of items) body.appendChild(el);
+  const n = body.children.length;
+  tray.querySelector('.wl-count').textContent = `${n} ${n === 1 ? 'entry' : 'entries'}`;
+}
+
+function finalizeLiveWorkLog() {
+  const tray = liveTray();
+  liveBoxEl = null;
+  if (!tray) return;
+  tray.removeAttribute('open');
+  tray.removeAttribute('data-live');
+  tray.querySelectorAll('[data-live-run]').forEach((el) => el.removeAttribute('data-live-run'));
+}
+
 // Copy-button delegation for code blocks (works for streamed content too).
 $('#messages').addEventListener('click', async (e) => {
   const cp = e.target.closest('.copybtn');
@@ -1411,6 +1483,9 @@ function appendUserMessage(content, attachments) {
   const m = { id: `local-${Date.now()}-${localMsgSeq++}`, role: 'user', content, attachments: attachments || [] };
   S.messages.push(m);
   $('#messages').appendChild(messageEl(m));
+  // A queued message mid-run closes the current visual chapter: collapse the
+  // live tray so the new message starts fresh below it.
+  finalizeLiveWorkLog();
   trimRenderedTop();
   $('#messages').hidden = false;
   $('#empty-state').hidden = true;
@@ -2294,6 +2369,7 @@ function setRunActive(on) {
     // work log so the final answer stands alone.
     document.querySelectorAll('#messages .msg.update[data-live-run]')
       .forEach((el) => el.removeAttribute('data-live-run'));
+    finalizeLiveWorkLog(); // collapse the live tray (its rows are already inside)
     collapseWorkLogs();
     // The streaming caret never survives a run either — it may sit on a
     // nested paragraph, not just .content, so clear it everywhere.
@@ -2464,6 +2540,9 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
   if (added) {
     noteNewMessage();
   } else keepPlace();
+  // A new row may demote the previous text row to intermediate — sweep the
+  // in-flight run's chatter into the live work log tray.
+  if (S.runActive) foldLiveWorkLog();
 }
 
 function onBusToken(d) {
@@ -2481,7 +2560,15 @@ function onBusToken(d) {
   msg.content = buf;
   S.liveIds.add(d.message_id);
   // The turn has real text now: unhide its placeholder row if it was hidden.
-  if (buf) msgElById(d.message_id)?.classList.remove('msg-empty');
+  // A row becoming visible mid-run demotes the previous text row to
+  // intermediate — sweep it into the live work log.
+  if (buf) {
+    const rowEl = msgElById(d.message_id);
+    if (rowEl && rowEl.classList.contains('msg-empty')) {
+      rowEl.classList.remove('msg-empty');
+      foldLiveWorkLog();
+    }
+  }
   const contentEl = msgElById(d.message_id)?.querySelector('.content');
   if (!contentEl) return;
   contentEl.innerHTML = md(buf);
