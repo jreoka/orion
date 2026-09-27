@@ -1161,7 +1161,20 @@ export async function loadHistory(conversationId, limit) {
           j++;
         }
         if (tools.length) {
-          repaired.push(r, ...tools, ...deferredCards, ...deferredUsers);
+          // Every tool_call id must have a matching tool result — a dangling
+          // id (run interrupted after the calls were made) makes some
+          // providers return empty completions. Synthesize a placeholder
+          // result for any id the stored history never answered.
+          const answered = new Set(tools.map(t => t.tool_call_id));
+          const synth = (r.tool_calls || [])
+            .filter(tc => !answered.has(tc.id))
+            .map(tc => ({
+              role: 'tool',
+              tool_call_id: tc.id,
+              name: tc.function?.name || tc.name || 'unknown',
+              content: '[Tool result unavailable — the run was interrupted before this tool returned.]',
+            }));
+          repaired.push(r, ...tools, ...synth, ...deferredCards, ...deferredUsers);
         } else {
           const { tool_calls: _dropped, ...rest } = r;
           repaired.push(rest, ...deferredCards, ...deferredUsers);
