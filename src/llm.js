@@ -153,6 +153,11 @@ export async function streamChatCompletion({
         }
       }
     }
+    // Reasoning/thinking chunks: the model is actively working, just not
+    // emitting visible text yet. Count them as activity so a long thinking
+    // phase doesn't trip the stall detector (reasoning models on busy
+    // free-tier endpoints can think for minutes before the first token).
+    if (delta.reasoning_content || delta.reasoning) lastDataAt = Date.now();
   };
 
   try {

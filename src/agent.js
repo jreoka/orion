@@ -1522,7 +1522,7 @@ async function runToolLoop({
     // If the configured model rejects vision input (HTTP 400), strip the
     // image parts and retry the turn text-only once — the placeholder
     // note keeps the model honest about not seeing the images.
-    let content, toolCalls, usage, visionStripped = false;
+    let content, toolCalls, usage, visionStripped = false, stallRetries = 0;
     for (;;) {
       try {
         ({ content, toolCalls, usage } = await streamChatCompletion({
@@ -1548,6 +1548,14 @@ async function runToolLoop({
           visionStripped = true;
           stripImageParts(convo);
           console.warn('[orion] model rejected image input; retrying text-only');
+          continue;
+        }
+        // A stalled stream is usually transient provider flakiness (or a
+        // thinking phase the provider didn't stream). The failed call left
+        // nothing in the conversation, so re-issuing the turn is clean.
+        if (e && e.name === 'LLMStallError' && stallRetries < 2) {
+          stallRetries++;
+          console.warn(`[orion] model stream stalled; retrying turn (attempt ${stallRetries + 1}/3)`);
           continue;
         }
         throw e;
