@@ -1107,7 +1107,7 @@ button.avatar.lg:hover { opacity: .85; }
 .rx-add, .rx-copy {
   display: inline-flex; align-items: center; justify-content: center;
   width: 32px; height: 32px; padding: 0;
-  border-radius: 50%; border: 1.5px solid var(--ink-2);
+  border-radius: 50%; border: 1px solid var(--ink);
   background: var(--paper-2); color: var(--ink);
   box-shadow: 0 2px 6px rgba(28, 24, 19, .25);
   cursor: pointer;
