@@ -117,15 +117,22 @@ function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = fals
 
 /* Native prompt dialog (replaces window.prompt). Resolves with the entered
    string, or null when cancelled. */
-function promptDialog({ title, message = '', placeholder = '', value = '', okLabel = 'Save', password = false }) {
+function promptDialog({ title, message = '', label = '', placeholder = '', value = '', okLabel = 'Save', password = false }) {
   return new Promise((resolve) => {
+    // With a label, the input renders as a Paper-style labeled field (like
+    // the change-password modal); without one it keeps the bare input.
+    const inputHtml = label
+      ? `<label class="field"><span>${esc(label)}</span>
+           <input id="pd-input" type="${password ? 'password' : 'text'}" ${password ? 'autocomplete="current-password"' : ''} value="${esc(value)}" placeholder="${esc(placeholder)}">
+         </label>`
+      : `<label class="fld">
+           <input id="pd-input" type="${password ? 'password' : 'text'}" ${password ? 'autocomplete="current-password"' : ''} value="${esc(value)}" placeholder="${esc(placeholder)}">
+         </label>`;
     const bd = openModal(`
       <h3>${esc(title)}</h3>
       ${message ? `<p class="muted">${esc(message)}</p>` : ''}
       <form id="pd-form" autocomplete="off">
-        <label class="fld">
-          <input id="pd-input" type="${password ? 'password' : 'text'}" ${password ? 'autocomplete="current-password"' : ''} value="${esc(value)}" placeholder="${esc(placeholder)}">
-        </label>
+        ${inputHtml}
         <div class="modal-actions">
           <button type="button" class="btn" data-x="cancel">Cancel</button>
           <button type="submit" class="btn primary">${esc(okLabel)}</button>
@@ -2851,6 +2858,7 @@ function render2faBox() {
     const pw = await promptDialog({
       title: 'Confirm it’s you',
       message: 'Enter your current password to set up two-factor authentication.',
+      label: 'Current password',
       placeholder: 'Current password',
       okLabel: 'Continue',
       password: true,
@@ -2994,6 +3002,7 @@ async function registerPasskey() {
   const v = await promptDialog({
     title: 'Name this passkey',
     message: 'Something you’ll recognize, like the device it’s on.',
+    label: 'Passkey name',
     placeholder: 'e.g. iPhone',
     okLabel: 'Continue',
   });
@@ -3003,6 +3012,7 @@ async function registerPasskey() {
   const pw = await promptDialog({
     title: 'Confirm it’s you',
     message: 'Enter your current password to register this passkey.',
+    label: 'Current password',
     placeholder: 'Current password',
     okLabel: 'Continue',
     password: true,
