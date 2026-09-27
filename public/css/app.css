@@ -742,6 +742,14 @@ button.avatar.lg:hover { opacity: .85; }
 .rx-row:not(:has(.rx-chip)) {
   position: absolute; top: 100%; right: 4px; margin: 6px 0 0;
 }
+/* Assistant hover buttons (+ / copy) live in the empty space below-left of
+   the message instead of right-aligned — there they'd hang 10px over the
+   next message's top edge (38px of buttons in a 28px gap). Left matches
+   where the reaction chips appear once you react. */
+.msg.assistant .rx-row:not(:has(.rx-chip)) {
+  right: auto;
+  left: 0;
+}
 .rx-chip {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 15px; line-height: 1;
