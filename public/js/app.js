@@ -651,7 +651,8 @@ function wireOlderObserver() {
     for (const e of entries) {
       if (e.isIntersecting) loadOlder();
     }
-  }, { root: box, rootMargin: '400px 0px 0px 0px', threshold: 0 });
+    // Viewport root: fires whether #messages or an ancestor scrolls.
+  }, { root: null, rootMargin: '400px 0px 0px 0px', threshold: 0 });
   olderObserver.observe(ensureOlderSentinel());
 }
 function showOlderSpinner(on) {
@@ -949,6 +950,9 @@ function wireJumpPill() {
     // Older-history paging is driven by the IntersectionObserver on
     // #older-sentinel (see wireOlderObserver), not a scrollTop threshold.
   }, { passive: true });
+  // If an ancestor (or the window) is the actual scroller, #messages never
+  // fires scroll — keep the rail highlight in sync anyway.
+  window.addEventListener('scroll', () => { schedulePaintRail(); }, { passive: true, capture: true });
   // Images finish loading after the scroll already happened (lazy
   // attachments, markdown embeds) and push the bottom further down. If
   // we're pinned, re-pin. (load doesn't bubble, hence capture.)
