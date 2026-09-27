@@ -35,12 +35,11 @@ import {
   redactSecrets,
 } from './vault.js';
 
-// Parent runs have no step or time cap: the loop runs until the model gives
-// a final answer, the user stops it, the stuck-loop guard fires, or the
-// per-run token fuse below trips. The fuse is the money backstop — admins
-// are exempt from the weekly token limit, so a runaway parent run would
-// otherwise have no spending ceiling at all.
-const RUN_TOKEN_FUSE = 500_000; // max tokens in a single parent run
+// Parent runs have no step, time, or token cap: the loop runs until the
+// model gives a final answer, the user stops it, the stuck-loop guard
+// fires, or the weekly token limit trips. (Free-model setup: no spend
+// backstop needed.)
+
 const STUCK_REPEATS = 3; // identical consecutive tool calls before we stop
 
 export const SYSTEM_PROMPT = `You are Orion, a helpful AI assistant with your own Linux computer — a Docker VM whose home directory is /home/agent/workspace. You also have a real headless Chromium browser inside that VM.
@@ -1210,8 +1209,7 @@ export async function dispatchTool({ isChild, userId, conversationId, getAssista
  *
  * Watchdog behavior:
  * - parent runs are uncapped: they loop until the model gives a final
- *   answer, and stop on abort / stuck-loop / weekly token limit / the
- *   per-run token fuse (RUN_TOKEN_FUSE)
+ *   answer, and stop on abort / stuck-loop / weekly token limit
  * - child runs stop after maxSteps (from the delegate tool) and when
  *   Date.now() > deadlineAt if a deadline was passed
  * - stops when the same tool call (name + args) repeats STUCK_REPEATS times
@@ -1242,7 +1240,6 @@ async function runToolLoop({
     '[System: your last reply came back empty with the task unfinished. ' +
     'Continue the task now — do not repeat completed steps, and end with ' +
     'a clear summary for the user.]';
-  let runTokens = 0; // per-run spend accumulator; the fuse is the backstop
   let emptyStalls = 0;
   const note = (text) => {
     try {
@@ -1353,23 +1350,6 @@ async function runToolLoop({
       /* ignore */
     }
     recordUsage(userId, usage, { promptChars: estimatePromptChars(convo), completionChars });
-
-    // Per-run spend fuse: the backstop now that runs are uncapped. Mirrors
-    // recordUsage's accounting (reported usage, else the chars/4 estimate).
-    if (!isChild) {
-      let callTokens = (Number(usage?.prompt_tokens) || 0) + (Number(usage?.completion_tokens) || 0);
-      if (!callTokens) callTokens = Math.ceil((estimatePromptChars(convo) + completionChars) / 4) || 0;
-      runTokens += callTokens;
-      if (runTokens > RUN_TOKEN_FUSE) {
-        const fuseMsg =
-          `I've used over ${Math.round(RUN_TOKEN_FUSE / 1000)}k tokens on this run, so I'm stopping ` +
-          `to avoid runaway cost. Say "continue" and I'll pick up where I left off.`;
-        finalText += (finalText ? '\n\n' : '') + fuseMsg;
-        note(fuseMsg);
-        stopReason = 'fuse';
-        break;
-      }
-    }
 
     const assistantMsg = { role: 'assistant', content: content || '' };
     if (toolCalls.length) assistantMsg.tool_calls = toolCalls;
