@@ -1533,7 +1533,7 @@ export async function runAgentLoop({
   onExecStart, onExecEnd, // optional: track the in-flight sandbox exec (Stop support)
   noAutoTitle, // system-injected prompts (heartbeat, tasks) must never title a chat
 }) {
-  const deadlineAt = null; // parent runs have no wall-clock cap; see RUN_TOKEN_FUSE
+  const deadlineAt = null; // parent runs have no wall-clock cap
   // Default replay cap: the whole conversation is unbounded and callers
   // (runs.js, tasks.js) never pass a limit, so cap at the last 100
   // messages. An explicit historyLimit (e.g. heartbeat's 20) still wins.
