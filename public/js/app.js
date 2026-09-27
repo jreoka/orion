@@ -747,7 +747,12 @@ function renderMessages() {
   const win = S.messages.slice(-RENDER_WINDOW);
   for (const m of win) box.appendChild(messageEl(m));
   if (status) box.appendChild(status); // keep it last, text intact
-  scrollBottom(true);
+  // Full re-render: jump straight to the bottom in the same task as the DOM
+  // build, so the first paint is already at the bottom — never a flash of
+  // the top followed by a scroll-down. A direct scrollTop assignment is
+  // instant (it bypasses the CSS smooth scroll-behavior on .messages).
+  box.scrollTop = box.scrollHeight;
+  hideJump();
 }
 
 // Copy-button delegation for code blocks (works for streamed content too).
