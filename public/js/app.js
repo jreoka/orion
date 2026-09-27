@@ -2271,7 +2271,15 @@ function wireSidebarOnce() {
     }
   } catch {}
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden || !S.me) return;
+    if (!S.me) return;
+    if (document.hidden) {
+      // Backgrounded: drop the event stream so the server stops counting
+      // this tab as "watching" the conversation. Run-end pushes are
+      // suppressed while any subscriber is attached — without this, swiping
+      // away leaves the stream open and the ping never fires.
+      closeEventStream();
+      return;
+    }
     loadConversationsQuiet();
     // A tab backgrounded long enough can have its SSE stream die silently
     // (no error event, no heartbeat): re-establish it and restore the
