@@ -2126,12 +2126,15 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
     $('#messages').hidden = false;
     $('#empty-state').hidden = true;
     added = true;
-  } else if (msg.role === 'assistant' && S.liveIds.has(msg.id) && typeof m.content === 'string') {
+  } else if (msg.role === 'assistant' && typeof m.content === 'string') {
     // Authoritative full-row republish (covers onNote appends the token
-    // stream never carried). Only accept it when it isn't older than what
-    // we've already streamed.
+    // stream never carried: stuck guard, time cap, empty-stall fallback).
     const buf = S.buffers.get(msg.id) || '';
-    if (m.content.length >= buf.length) {
+    const live = S.liveIds.has(msg.id);
+    // Accept when it isn't older than what we've already streamed — or when
+    // a hidden empty placeholder finally has content (e.g. the stall
+    // fallback, which streamed no tokens at all, so the row was never live).
+    if ((live && m.content.length >= buf.length) || (!live && !msg.content && m.content)) {
       S.buffers.set(msg.id, m.content);
       msg.content = m.content;
       if (m.content) msgElById(msg.id)?.classList.remove('msg-empty');

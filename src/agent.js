@@ -499,6 +499,16 @@ function validUrl(u) {
   }
 }
 
+// Hostname for tool error messages (module scope — summarizeTool has its
+// own local copy for activity lines).
+function safeHost(u) {
+  try {
+    return new URL(String(u)).hostname.replace(/^www\./, '') || 'that site';
+  } catch {
+    return 'that site';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // exec hardening
 // ---------------------------------------------------------------------------
@@ -779,6 +789,10 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
         'orion-browser text "$ORION_URL"',
         { env: [`ORION_URL=${args.url}`], timeout: 60 }
       );
+      if (exitCode === 3)
+        throw new Error(
+          `web_fetch: ${safeHost(args.url)} is blocking automated browsing (bot protection) — do not retry it, try a different source instead.`
+        );
       if (exitCode !== 0) throw new Error(`web_fetch failed: ${output.trim().slice(0, 500)}`);
       const text = output.trim().slice(0, 15000);
       return { text: text || '(no readable text found)' };
@@ -793,6 +807,10 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
         `mkdir -p /home/agent/workspace/.shots && orion-browser shot "$ORION_URL" "$ORION_OUT"${args.full_page ? ' --full' : ''}`,
         { env: [`ORION_URL=${args.url}`, `ORION_OUT=${shotPath}`], timeout: 90 }
       );
+      if (exitCode === 3)
+        throw new Error(
+          `browser_shot: ${safeHost(args.url)} is blocking automated browsing (bot protection) — do not retry it, try a different source instead.`
+        );
       if (exitCode !== 0) throw new Error(`browser_shot failed: ${output.trim().slice(0, 500)}`);
       const png = await sandboxPullFile(userId, shotPath);
       // The screenshot is for the agent's own eyes by default — it only
