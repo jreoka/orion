@@ -688,6 +688,18 @@ button.avatar.lg:hover { opacity: .85; }
   position: absolute; top: 100%; right: 4px; margin: 6px 0 0;
   flex-wrap: nowrap; /* one line, extending left — never a wrapped column */
 }
+/* In your own reaction row the copy/+ buttons are invisible until hover,
+   but they'd still occupy space and shove the chips left into a weird
+   spot. Take them out of flow — the chips right-align cleanly, and the
+   buttons fade in to the left of the chips on hover without moving them. */
+.msg.user .rx-row:has(.rx-chip) .rx-copy,
+.msg.user .rx-row:has(.rx-chip) .rx-add {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.msg.user .rx-row:has(.rx-chip) .rx-copy { right: calc(100% + 6px); }
+.msg.user .rx-row:has(.rx-chip) .rx-add { right: calc(100% + 44px); }
 .msg.user:has(.rx-chip) .bubble { margin-bottom: 40px; }
 /* Touch devices: the copy/+ buttons are always semi-visible (opacity .5),
    so the floating button row needs reserved space even with no reaction
