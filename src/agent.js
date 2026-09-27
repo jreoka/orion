@@ -1579,22 +1579,31 @@ async function runToolLoop({
     if (stopReason) break;
   }
 
-  if (
-    !finalText.trim() &&
-    Object.keys(toolCounts).length > 0 &&
-    !isChild &&
-    stopReason !== 'aborted'
-  ) {
-    // The model stalled on empty replies even after recovery nudges.
+  if (!finalText.trim() && !isChild && stopReason !== 'aborted') {
     // Never leave the user staring at silence — own the miss in one line.
-    const msg =
-      'I got stuck on that one and couldn\'t finish — say "try again" and I\'ll take another run at it.';
+    // Skipped when the turn already produced something visible (e.g. a
+    // sent image with no accompanying text): the row has attachments.
+    let visible = false;
     try {
-      onNote(msg);
+      const aid = getAssistantId?.();
+      if (aid) {
+        visible = !!db
+          .prepare('SELECT 1 FROM attachments WHERE message_id = ? LIMIT 1')
+          .get(aid);
+      }
     } catch {
-      /* persistence must not kill the loop */
+      /* a lookup failure must not kill the loop */
     }
-    finalText = msg;
+    if (!visible) {
+      const msg =
+        'I got stuck on that one and couldn\'t finish — say "try again" and I\'ll take another run at it.';
+      try {
+        onNote(msg);
+      } catch {
+        /* persistence must not kill the loop */
+      }
+      finalText = msg;
+    }
   }
 
   return { finalText, steps, toolCounts, stopReason };
