@@ -815,7 +815,7 @@ function createAgentTask(userId, args) {
 async function webSearch(query, count) {
   const q = encodeURIComponent(query);
   const ua = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' };
-  const searxBase = (process.env.SEARXNG_URL || 'http://searxng:8888').replace(/\/+$/, '');
+  const searxBase = (process.env.SEARXNG_URL || 'http://searxng:8080').replace(/\/+$/, '');
   try {
     const r = await fetch(`${searxBase}/search?q=${q}&format=json&language=en`, {
       headers: ua, signal: AbortSignal.timeout(20000),
