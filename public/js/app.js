@@ -951,10 +951,18 @@ function wireJumpPill() {
     // #older-sentinel (see wireOlderObserver), not a scrollTop threshold.
   }, { passive: true });
   // If an ancestor (or the window) is the actual scroller, #messages never
-  // fires scroll — keep the rail highlight in sync anyway. The wheel event
-  // fires on manual scrolling regardless of which element actually scrolls.
+  // fires scroll — keep the rail highlight in sync anyway. Scroll events
+  // fire after the scroll is applied, so these paint with correct data.
   window.addEventListener('scroll', () => { schedulePaintRail(); }, { passive: true, capture: true });
-  document.addEventListener('wheel', () => { schedulePaintRail(); }, { passive: true });
+  // Wheel fires BEFORE the browser applies the scroll, so debounce: paint
+  // after the scroll settles, not with the stale pre-scroll positions
+  // (which would also swallow the real scroll event's paint via the rAF
+  // throttle).
+  let wheelPaintT = 0;
+  document.addEventListener('wheel', () => {
+    clearTimeout(wheelPaintT);
+    wheelPaintT = setTimeout(() => schedulePaintRail(), 80);
+  }, { passive: true });
   document.addEventListener('touchmove', () => { schedulePaintRail(); }, { passive: true });
   // Images finish loading after the scroll already happened (lazy
   // attachments, markdown embeds) and push the bottom further down. If
