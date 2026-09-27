@@ -14,6 +14,7 @@ import path from 'node:path';
 import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, attachmentSummary, groupedReactions } from './db.js';
 import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
 import { imagePartsForMessage, imagePartFromFile, messageHasImages, stripImageParts } from './vision.js';
+import { notifyConversation } from './push.js';
 import { publish } from './events.js';
 import { recordUsage, isOverLimit, LIMIT_REACHED_MESSAGE } from './usage.js';
 import {
@@ -47,6 +48,7 @@ Your tools:
 - browser_shot: take a real screenshot of a URL with headless Chromium and attach it to your reply so the user can see it. You receive the screenshot as vision too — actually look at it and describe or verify what it genuinely shows. Use it when the user wants to SEE a page, or to verify how a page you built looks.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
 - send_update: post a progress note mid-run. It appears as a slim status line in the chat (not a full message card), so use it for meaningful milestones during long multi-step work — a sentence or two, not a narration of every tool call.
+- send_push: buzz the user's phone with a short push notification that deep-links to this chat. Use only when the user is likely away and the news is worth an interruption — a long task finished, you need them to act (approve something, unblock you), or they asked to be notified. The chat message itself is usually enough; never for routine progress (use send_update for that). Limited to 3 per chat per 10 minutes. Skipped automatically when the user is watching this chat, and when they have no push subscription — the result tells you which.
 - react_to_message: add or remove an emoji reaction on a chat message — acknowledge the user's message with ❤️, mark something done with ✅, laugh along with 😂, etc. Use sparingly: a reaction is a warm touch, not a substitute for a reply. React to the user's messages, never your own unless the user explicitly asks. Never react with an emoji that already appears in your reply text — that's redundant. When the user says "this message" or "that message", they mean their own latest message — pass message_id "latest_user", never guess a numeric id.
 - schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in the main chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
   - Waiting on the user to do something OUTSIDE chat (OAuth device approval, clicking a confirmation link, etc.): never tell them to reply "done" or send a message to resume you. Schedule a one-shot task that polls for completion — its prompt must say: if complete, finish the work and tell the user; if not, reschedule itself (schedule_task again) until it succeeds or the window expires, then report the outcome either way. The task's output lands in the chat and notifies them on its own.
@@ -345,6 +347,12 @@ const DELEGATE_TOOL = {
   },
 };
 
+// send_push rate limiting: max 3 buzzes per chat per 10 minutes, keyed
+// `${userId}:${conversationId}`. A runaway agent must never spam a phone.
+const PUSH_WINDOW_MS = 10 * 60 * 1000;
+const PUSH_MAX_PER_WINDOW = 3;
+const pushRate = new Map();
+
 const SEND_UPDATE_TOOL = {
   type: 'function',
   function: {
@@ -357,6 +365,23 @@ const SEND_UPDATE_TOOL = {
         text: { type: 'string', description: 'The update text (1–2000 characters)' },
       },
       required: ['text'],
+    },
+  },
+};
+
+const SEND_PUSH_TOOL = {
+  type: 'function',
+  function: {
+    name: 'send_push',
+    description:
+      'Buzz the user\u2019s phone with a push notification (title + short body) that deep-links to this chat. The chat message itself is usually enough — use this only when the user is likely away and the news is worth an interruption: a long task finished, you need them to act (approve something, unblock you), or they asked to be notified. Never for routine progress — use send_update for that. Limited to 3 pushes per chat per 10 minutes. Automatically skipped when the user is watching this chat live, and when they have no push subscription (Settings → Notifications) — the result tells you which.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short title, max 60 chars (default "Orion")' },
+        body: { type: 'string', description: 'The notification text (1–200 characters)' },
+      },
+      required: ['body'],
     },
   },
 };
@@ -375,6 +400,7 @@ function summarizeTool(name, args) {
     case 'browser_shot': return s(args.url);
     case 'delegate': return s(args.task, 80);
     case 'send_update': return s(args.text, 80);
+    case 'send_push': return s(args.body, 80);
     case 'schedule_task': return s(args.name, 80);
     case 'list_tasks': return 'list tasks';
     case 'update_task':
@@ -829,6 +855,27 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
         message: { id, role: 'assistant', content: text, kind: 'update', created_at: now },
       });
       return { text: 'Update sent.' };
+    }
+    case 'send_push': {
+      const body = String(args.body ?? '').trim();
+      if (!body) throw new Error('send_push: body is required (1–200 characters)');
+      if (body.length > 200) throw new Error('send_push: body too long (max 200 characters)');
+      const title = String(args.title ?? '').trim().slice(0, 60) || 'Orion';
+      // Phone-buzz guard: a runaway agent must never spam the user's phone.
+      const key = `${userId}:${conversationId}`;
+      const now = Date.now();
+      let e = pushRate.get(key);
+      if (!e || now - e.windowStart > PUSH_WINDOW_MS) e = { count: 0, windowStart: now };
+      e.count += 1;
+      pushRate.set(key, e);
+      if (e.count > PUSH_MAX_PER_WINDOW)
+        throw new Error('send_push: rate limit reached (max 3 pushes per chat per 10 minutes)');
+      const r = await notifyConversation(userId, conversationId, { title, body });
+      if (r.suppressed)
+        return { text: 'Skipped: the user is watching this chat right now, so your message is already visible — no push needed.' };
+      if (!r.sent)
+        return { text: 'Not sent: the user has no push subscription. Tell them to enable it in Settings → Notifications if they want buzzes.' };
+      return { text: `Push notification sent to ${r.sent} device(s).` };
     }
     case 'vault_request': {
       const label = String(args.label ?? '').trim();
@@ -1482,7 +1529,7 @@ export async function runAgentLoop({
     const { finalText, stopReason } = await runToolLoop({
       settings,
       convo,
-      tools: [...TOOLS, DELEGATE_TOOL, SEND_UPDATE_TOOL, ...MEMORY_TOOLS],
+      tools: [...TOOLS, DELEGATE_TOOL, SEND_UPDATE_TOOL, SEND_PUSH_TOOL, ...MEMORY_TOOLS],
       isChild: false,
       maxIterations: MAX_ITERATIONS,
       deadlineAt,
