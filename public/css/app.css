@@ -278,11 +278,11 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
     linear-gradient(var(--ink), var(--ink)) padding-box,
     linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5) border-box;
   background-size: auto, 300% 300%;
-  animation: avatar-border-swirl 24s ease-in-out infinite;
+  animation: avatar-border-swirl 42s linear infinite;
 }
 @keyframes avatar-border-swirl {
-  0%, 100% { --swirl-angle: 110deg; background-position: 0 0, 40% 50%; }
-  50% { --swirl-angle: 140deg; background-position: 0 0, 60% 50%; }
+  from { --swirl-angle: 0deg; }
+  to { --swirl-angle: 360deg; }
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .avatar.lg { width: 64px; height: 64px; font-size: 26px; cursor: pointer; }
@@ -361,7 +361,7 @@ button.avatar.lg:hover { opacity: .85; }
   border-radius: 999px;
   background: linear-gradient(var(--swirl-angle, 120deg), #4f6df5, #8b5cf6, #c026d3, #4f6df5);
   background-size: 220% 220%;
-  animation: usage-swirl 26s ease-in-out infinite;
+  animation: usage-swirl 38s linear infinite, swirl-drift 53s ease-in-out infinite;
   transition: width .6s ease;
 }
 /* Sweeping shine across the fill. */
@@ -372,14 +372,19 @@ button.avatar.lg:hover { opacity: .85; }
   animation: usage-shine 2.8s linear infinite;
 }
 @keyframes usage-swirl {
-  0%, 100% { --swirl-angle: 105deg; background-position: 35% 50%; }
-  25% { --swirl-angle: 135deg; background-position: 65% 40%; }
-  50% { --swirl-angle: 115deg; background-position: 55% 65%; }
-  75% { --swirl-angle: 145deg; background-position: 40% 45%; }
+  from { --swirl-angle: 0deg; }
+  to { --swirl-angle: 360deg; }
+}
+@keyframes swirl-drift {
+  0%, 100% { background-position: 30% 55%; }
+  33% { background-position: 70% 35%; }
+  66% { background-position: 45% 75%; }
 }
 @keyframes usage-shine {
-  0%, 100% { background-position: 62% 0; opacity: .35; }
-  50% { background-position: 38% 0; opacity: .75; }
+  0% { background-position: 170% 0; opacity: 0; }
+  12% { opacity: .8; }
+  88% { opacity: .8; }
+  100% { background-position: -70% 0; opacity: 0; }
 }
 /* Getting full: orange, then red. */
 .usage-fill.warn {
@@ -407,7 +412,7 @@ button.avatar.lg:hover { opacity: .85; }
 .shiny {
   background: linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5) !important;
   background-size: 220% 220% !important;
-  animation: usage-swirl 24s ease-in-out infinite !important;
+  animation: usage-swirl 38s linear infinite, swirl-drift 53s ease-in-out infinite !important;
 }
 /* Sidebar date groups: quiet small-caps-ish label above each bucket. */
 .conv-group {
@@ -433,7 +438,7 @@ button.avatar.lg:hover { opacity: .85; }
 .conv-item.active .conv-title { color: var(--ink); font-weight: 600; }
 .conv-sub { font-size: 12px; color: var(--ink-3); margin-top: 1px; }
 .conv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-.conv-dot.working { background: linear-gradient(var(--swirl-angle, 120deg), #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 22s ease-in-out infinite; }
+.conv-dot.working { background: linear-gradient(var(--swirl-angle, 120deg), #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 38s linear infinite, swirl-drift 53s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 /* A run finished while the user was looking at another chat: a green check
    where the working light was. Dismissed when the chat is opened. */
@@ -669,7 +674,7 @@ button.avatar.lg:hover { opacity: .85; }
   background: linear-gradient(120deg, #4f6df5, #c026d3, #4f6df5);
   background-size: 220% 220%;
   -webkit-background-clip: text; background-clip: text; color: transparent;
-  animation: usage-swirl 20s ease-in-out infinite;
+  animation: usage-swirl 38s linear infinite, swirl-drift 53s ease-in-out infinite;
   margin-left: 1px;
 }
 @keyframes blink { 50% { opacity: 0; } }
@@ -690,7 +695,7 @@ button.avatar.lg:hover { opacity: .85; }
 }
 .tool-head:hover { color: var(--ink); }
 .tool-head .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-.tool-head .dot.running { background: linear-gradient(var(--swirl-angle, 120deg), #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 22s ease-in-out infinite; }
+.tool-head .dot.running { background: linear-gradient(var(--swirl-angle, 120deg), #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 38s linear infinite, swirl-drift 53s ease-in-out infinite; }
 .tool-head .dot.done { background: var(--success); animation: none; }
 .tool-head .tname { font-family: var(--mono); font-size: 12.5px; }
 .tool-head .tsummary { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-3); }
@@ -721,7 +726,7 @@ button.avatar.lg:hover { opacity: .85; }
   width: 7px; height: 7px; border-radius: 50%;
   flex-shrink: 0;
   background: linear-gradient(var(--swirl-angle, 120deg), #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%;
-  animation: usage-swirl 22s ease-in-out infinite;
+  animation: usage-swirl 38s linear infinite, swirl-drift 53s ease-in-out infinite;
   margin-left: -16px; /* dot (7px) + gap (9px): text starts flush with message text */
 }
 #run-status .ttext {
@@ -1008,7 +1013,7 @@ button.avatar.lg:hover { opacity: .85; }
 /* While the run is in flight the tray stays open with a pulsing dot. */
 .wl-live-dot { display: none; width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); align-self: center; }
-.worklog[data-live] .wl-live-dot { display: inline-block; background: linear-gradient(var(--swirl-angle, 120deg), #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 22s ease-in-out infinite; }
+.worklog[data-live] .wl-live-dot { display: inline-block; background: linear-gradient(var(--swirl-angle, 120deg), #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 38s linear infinite, swirl-drift 53s ease-in-out infinite; }
 @keyframes wl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
 .wl-body { padding: 4px 0 4px; border-top: 1px dashed var(--hairline); margin-top: 2px; }
 .wl-body .msg { animation: none; }
