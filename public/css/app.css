@@ -463,6 +463,17 @@ button.avatar.lg:hover { opacity: .85; }
 .a-body { flex: 1; min-width: 0; }
 .a-body .content { font-size: 16.5px; line-height: 1.72; overflow-wrap: anywhere; }
 .a-body .content > *:first-child { margin-top: 0; }
+.content h1, .content h2, .content h3, .content h4, .content h5, .content h6 {
+  font-family: var(--serif); font-weight: 700; letter-spacing: -.01em;
+  line-height: 1.3; color: var(--ink); margin: 22px 0 8px;
+  overflow-wrap: anywhere;
+}
+.content > h1:first-child, .content > h2:first-child, .content > h3:first-child,
+.content > h4:first-child, .content > h5:first-child, .content > h6:first-child { margin-top: 0; }
+.content h1 { font-size: 25px; }
+.content h2 { font-size: 21px; }
+.content h3 { font-size: 18px; }
+.content h4, .content h5, .content h6 { font-size: 16.5px; }
 .a-body p { margin: 0 0 14px; }
 .a-body p:last-child { margin-bottom: 0; }
 .a-body a { color: var(--accent); }

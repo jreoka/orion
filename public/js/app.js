@@ -463,10 +463,30 @@ function md(src) {
         `<button class="copybtn" type="button">Copy</button></div>` +
         `<pre><code data-code="${esc(code)}">${esc(code)}</code></pre></div>`;
     } else {
-      html += inlineMd(p);
+      html += mdBlocks(p);
     }
   });
   return html || '<br>';
+}
+
+/* Block-level pass: ATX headings (# … / ## …) become <h1>–<h6>.
+   Everything else goes through inlineMd per line. A <br> is only added
+   between two non-heading lines so headings don't get stray blank lines. */
+function mdBlocks(p) {
+  const lines = String(p ?? '').split('\n');
+  let html = '', prevWasHeading = false;
+  lines.forEach((line) => {
+    const m = line.match(/^(#{1,6})\s+(.*)$/);
+    if (m) {
+      html += `<h${m[1].length}>${inlineMd(m[2])}</h${m[1].length}>`;
+      prevWasHeading = true;
+    } else {
+      if (html && !prevWasHeading) html += '<br>';
+      html += inlineMd(line);
+      prevWasHeading = false;
+    }
+  });
+  return html;
 }
 
 function isImageFile(name) {
