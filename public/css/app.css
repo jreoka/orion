@@ -3,6 +3,8 @@
    Warm light editorial. Serif prose, ink on paper, hairlines
    instead of boxes. One blue accent, used sparingly.
    ============================================================ */
+/* The `hidden` attribute must win over display rules like `.field`. */
+[hidden] { display: none !important; }
 :root {
   --paper: #faf7f0;
   --paper-2: #f1ece0;
