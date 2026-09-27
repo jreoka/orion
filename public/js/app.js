@@ -1097,6 +1097,11 @@ function renderMessages() {
   for (const m of win) box.appendChild(messageEl(m));
   if (status) box.appendChild(status); // keep it last, text intact
   collapseWorkLogs(); // completed runs read as one question → one answer
+  // A run is in flight: sweep its rows into the live tray now instead of
+  // waiting for the next stream event — the rows may have arrived via a
+  // re-fetch while the stream was down, and without this they sit loose
+  // until (and unless) another event arrives.
+  if (S.runActive) foldLiveWorkLog();
   // Full re-render: jump straight to the bottom in the same task as the DOM
   // build, so the first paint is already at the bottom — never a flash of
   // the top followed by a scroll-down. jumpToBottom() overrides the CSS
@@ -1245,10 +1250,11 @@ function foldLiveWorkLog() {
   let lastText = null;
   const items = [];
   for (const el of kids.slice(start)) {
-    if (
-      el.classList && el.classList.contains('msg') &&
-      el.classList.contains('update') && el.dataset.liveRun
-    ) {
+    // Any update note in the in-flight run's segment is live — no marker
+    // needed. (The data-live-run marker used to gate this on render-time
+    // run state, so notes rendered while S.runActive was briefly false —
+    // e.g. the initial render after a reload — never entered the tray.)
+    if (el.classList && el.classList.contains('msg') && el.classList.contains('update')) {
       items.push(el);
     } else if (isIntermediateCandidate(el) && !el.querySelector('.imgs > *, .u-imgs > *')) {
       if (lastText) items.push(lastText);
@@ -2443,10 +2449,11 @@ async function renderChat() {
         const data = await api(`/api/conversations/${list[0].id}`);
         S.activeId = list[0].id;
         setMessages(data);
-        // Seed run state from the fresh conversation payload (belt and
-        // braces alongside loadConversationsQuiet below): a run may be in
-        // flight and the fold pass must not tuck its steps into a work log.
-        if (data.running) S.runByConv[S.activeId] = true;
+        // Seed both flags from the fresh payload: update notes rendered
+        // below need S.runActive for their live-run marker, and the fold
+        // pass must skip the in-flight run. The SSE hello corrects it
+        // moments later if the server disagrees.
+        if (data.running) { S.runActive = true; S.runByConv[S.activeId] = true; }
       } else {
         S.activeId = null;
         setMessages({ messages: [], hasMoreOlder: false });
