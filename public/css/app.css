@@ -354,6 +354,14 @@ button.avatar.lg:hover { opacity: .85; }
 .conv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 .conv-dot.working { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
+/* A run finished while the user was looking at another chat: a green check
+   where the working light was. Dismissed when the chat is opened. */
+.conv-dot.done {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--success);
+  display: flex; align-items: center; justify-content: center;
+  animation: none;
+}
 .conv-menu-btn {
   border: none; background: none; color: var(--ink-3); cursor: pointer;
   font-size: 16px; line-height: 1; padding: 4px 6px; border-radius: 6px; flex-shrink: 0;

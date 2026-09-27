@@ -60,6 +60,7 @@ const S = {
   activeId: null,     // the open conversation's id
   conversations: [],  // [{id, title, running, updated_at}] for the sidebar
   runByConv: {},      // conversation id -> true while a run is known-active there
+  doneByConv: {},      // conversation id -> true when a run finished while the user was looking at another chat
   lastSeenAt: {},     // conversation id -> timestamp the user last opened it
   switching: false,   // a conversation switch is in flight
   messages: [],        // [{id, role, content, attachments}]
@@ -308,6 +309,7 @@ async function boot() {
     S.runActive = false;
     S.me = null; S.activeId = null; S.messages = [];
     S.conversations = [];
+    S.doneByConv = {}; saveDoneFlags();
     S.hasMoreOlder = false; S.loadingOlder = false;
     S.buffers.clear(); S.toolRows.clear(); S.liveIds.clear();
     renderSidebar(); updateComposer();
@@ -323,6 +325,7 @@ async function boot() {
   }
   if (S.me) adoptTheme(); // server theme wins; else push up this device's choice
   wireGlobal();
+  loadDoneFlags();
   await render();
   maybeShowPushNudge();
 }
@@ -1873,6 +1876,7 @@ function wireUserMenu() {
       try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
       closeEventStream();
       S.me = null; S.activeId = null; S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
+      S.doneByConv = {}; saveDoneFlags();
       go('login');
     } else if (act === 'settings') go('settings');
     else if (act === 'password') changePasswordModal();
@@ -1942,6 +1946,21 @@ function markSeen() {
   if (S.activeId != null) S.lastSeenAt[S.activeId] = Date.now();
 }
 
+// "Run finished while you were away" checks: conversation id -> true.
+// Persisted so the check survives a tab reload — it clears only when the
+// chat is opened (or deleted).
+const DONE_KEY = 'orion-done-chats';
+function loadDoneFlags() {
+  try {
+    const o = JSON.parse(localStorage.getItem(DONE_KEY) || '{}') || {};
+    S.doneByConv = {};
+    for (const k of Object.keys(o)) if (o[k]) S.doneByConv[k] = true;
+  } catch { S.doneByConv = {}; }
+}
+function saveDoneFlags() {
+  try { localStorage.setItem(DONE_KEY, JSON.stringify(S.doneByConv)); } catch {}
+}
+
 // Refresh the conversation list (titles, activity, running flags) without
 // disturbing the open chat. Called on every run end, on window focus, and
 // after create/rename/delete. (This is the function setRunActive always
@@ -2006,10 +2025,27 @@ async function loadConversationsQuiet(retried = false) {
     const rows = await api('/api/conversations');
     if (!Array.isArray(rows)) return;
     S.conversations = rows;
+    let dirty = false;
     for (const c of rows) {
-      if (c.running) S.runByConv[c.id] = true;
-      else if (c.id !== S.activeId) delete S.runByConv[c.id];
+      if (c.running) {
+        S.runByConv[c.id] = true;
+        // A new run supersedes the finished check.
+        if (S.doneByConv[c.id]) { delete S.doneByConv[c.id]; dirty = true; }
+      } else if (c.id !== S.activeId) {
+        if (S.runByConv[c.id]) {
+          // The run finished while we were looking at another chat —
+          // show the green check where the working light was.
+          S.doneByConv[c.id] = true;
+          dirty = true;
+        }
+        delete S.runByConv[c.id];
+      }
     }
+    // Drop checks for chats that no longer exist.
+    for (const id of Object.keys(S.doneByConv)) {
+      if (!rows.some((c) => String(c.id) === String(id))) { delete S.doneByConv[id]; dirty = true; }
+    }
+    if (dirty) saveDoneFlags();
     renderSidebar();
   } catch {
     // Sidebar refresh is best-effort, but a single transient failure (flaky
@@ -2046,12 +2082,14 @@ function convItemEl(c) {
   const seen = S.lastSeenAt[c.id] || 0;
   const hasNew = c.id !== S.activeId && seen > 0 && c.updated_at > seen;
   const working = !!(c.running || S.runByConv[c.id]);
+  const done = !working && c.id !== S.activeId && !!S.doneByConv[c.id];
   el.innerHTML = `
     <div class="conv-meta">
       <div class="conv-title">${esc(c.title || 'New chat')}</div>
       <div class="conv-sub">${working ? 'working…' : esc(timeAgo(c.updated_at))}</div>
     </div>
     ${working ? '<span class="conv-dot working" aria-label="Agent working"></span>'
+              : done ? '<span class="conv-dot done" aria-label="Run finished"><svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true"><path d="M5 13l4 4L19 7" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'
               : hasNew ? '<span class="conv-dot" aria-label="New activity"></span>' : ''}
     <button class="conv-menu-btn" aria-label="Chat options" title="Chat options">⋯</button>`;
   el.addEventListener('click', (e) => {
@@ -2196,6 +2234,7 @@ function deleteChatModal(conv) {
       await api(`/api/conversations/${conv.id}`, { method: 'DELETE' });
       closeModal();
       delete S.runByConv[conv.id];
+      delete S.doneByConv[conv.id]; saveDoneFlags();
       delete S.lastSeenAt[conv.id];
       delete S.pendingByConv[conv.id];
       toast('Chat deleted');
@@ -2413,6 +2452,8 @@ async function switchConversation(id) {
     else delete S.runByConv[id];
     setMessages(data);
     S.lastSeenAt[id] = Date.now();
+    // Opening the chat dismisses its "run finished" check.
+    if (S.doneByConv[id]) { delete S.doneByConv[id]; saveDoneFlags(); }
     renderSidebar();
     renderMessages();
     loadTurns();
