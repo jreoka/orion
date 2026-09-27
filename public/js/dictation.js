@@ -20,6 +20,8 @@
 
   const BARS = 32;   // wave bars across the strip
   const LEVELS = 6;  // quantized height steps — the steppy digital look
+  const WAVE_FPS = 15;      // chunky sample-and-hold cadence, not 60fps shimmer
+  const FALL_PER_SEC = 1.4; // bars fall from full to empty in ~0.7s (VU style)
 
   let dictating = false;
   let rec = null;
@@ -28,6 +30,8 @@
   let analyser = null;
   let freq = null;
   let rafId = 0;
+  let lastWaveDraw = 0;
+  let shown = new Float32Array(BARS); // eased 0..1 bar levels
   let timerId = 0;
   let startTs = 0;
   let baseText = '';
@@ -56,25 +60,39 @@
     wave.height = Math.max(1, Math.round(r.height * dpr));
   }
 
-  function drawWave() {
+  function drawWave(now) {
     if (!dictating) return;
     rafId = requestAnimationFrame(drawWave);
+    // Sample-and-hold: update the bars at WAVE_FPS, not every frame.
+    if (now - lastWaveDraw < 1000 / WAVE_FPS) return;
+    const dt = Math.min(0.25, (now - lastWaveDraw) / 1000);
+    lastWaveDraw = now;
     analyser.getByteFrequencyData(freq);
-    const ctx = wave.getContext('2d');
-    const W = wave.width, H = wave.height;
-    ctx.clearRect(0, 0, W, H);
+    const targets = new Float32Array(BARS);
     const n = freq.length;
-    const slot = W / BARS;
-    const gap = Math.max(1, Math.round(slot * 0.28));
-    const bw = slot - gap;
-    ctx.fillStyle = ink;
     for (let i = 0; i < BARS; i++) {
       const b0 = Math.floor((i * n) / BARS);
       const b1 = Math.max(b0 + 1, Math.floor(((i + 1) * n) / BARS));
       let v = 0;
       for (let b = b0; b < b1 && b < n; b++) if (freq[b] > v) v = freq[b];
       // Quantize: snap the level to LEVELS discrete steps.
-      const q = Math.round((v / 255) * LEVELS) / LEVELS;
+      targets[i] = Math.round((v / 255) * LEVELS) / LEVELS;
+    }
+    // VU-meter easing: instant attack, slow release — no flicker.
+    for (let i = 0; i < BARS; i++) {
+      shown[i] = targets[i] > shown[i]
+        ? targets[i]
+        : Math.max(targets[i], shown[i] - FALL_PER_SEC * dt);
+    }
+    const ctx = wave.getContext('2d');
+    const W = wave.width, H = wave.height;
+    ctx.clearRect(0, 0, W, H);
+    const slot = W / BARS;
+    const gap = Math.max(1, Math.round(slot * 0.28));
+    const bw = slot - gap;
+    ctx.fillStyle = ink;
+    for (let i = 0; i < BARS; i++) {
+      const q = shown[i];
       const h = q * H;
       if (h < 1) continue;
       const x = i * slot + gap / 2;
@@ -110,7 +128,7 @@
     const src = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 64;
-    analyser.smoothingTimeConstant = 0.45;
+    analyser.smoothingTimeConstant = 0.7;
     freq = new Uint8Array(analyser.frequencyBinCount);
     src.connect(analyser);
     if (audioCtx.state === 'suspended') { try { await audioCtx.resume(); } catch (e) {} }
@@ -164,7 +182,9 @@
     startTs = Date.now();
     tick();
     timerId = setInterval(tick, 250);
-    drawWave();
+    shown = new Float32Array(BARS);
+    lastWaveDraw = 0;
+    rafId = requestAnimationFrame(drawWave);
     try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) {}
   }
 
