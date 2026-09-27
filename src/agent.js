@@ -1365,7 +1365,9 @@ async function runToolLoop({
     if (!toolCalls.length) {
       // Empty stall: the model ended the turn with no text and no tools,
       // but this run did real tool work and produced no visible answer.
-      // Nudge it to continue (bounded — see emptyStalls).
+      // Nudge it to continue (bounded — see emptyStalls). The nudge stays
+      // silent: the run-status indicator already shows activity, and
+      // recovery chatter in the chat itself is just noise.
       if (
         !(content || '').trim() &&
         !finalText.trim() &&
@@ -1374,7 +1376,6 @@ async function runToolLoop({
         emptyStalls < 3
       ) {
         emptyStalls++;
-        note('(empty reply mid-task — continuing)');
         convo.push({ role: 'user', content: RESUME_NUDGE_EMPTY });
         continue;
       }
@@ -1480,6 +1481,24 @@ async function runToolLoop({
       }
     }
     if (stopReason) break;
+  }
+
+  if (
+    !finalText.trim() &&
+    Object.keys(toolCounts).length > 0 &&
+    !isChild &&
+    stopReason !== 'aborted'
+  ) {
+    // The model stalled on empty replies even after recovery nudges.
+    // Never leave the user staring at silence — own the miss in one line.
+    const msg =
+      'I got stuck on that one and couldn\'t finish — say "try again" and I\'ll take another run at it.';
+    try {
+      onNote(msg);
+    } catch {
+      /* persistence must not kill the loop */
+    }
+    finalText = msg;
   }
 
   return { finalText, steps, toolCounts, stopReason };
