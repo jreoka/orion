@@ -762,13 +762,15 @@ button.avatar.lg:hover { opacity: .85; }
 .jump-latest:active { transform: scale(.96); }
 /* ---------- turn rail: slim side minimap, one line per turn ---------- */
 #turn-rail {
-  position: absolute; top: 0; bottom: 0; right: 3px; width: 18px;
+  position: absolute;
+  top: 64px; bottom: calc(128px + env(safe-area-inset-bottom));
+  right: 14px; width: 18px;
   z-index: 20; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
 }
 #turn-rail[hidden] { display: none; }
 #turn-rail .rail-track {
-  position: absolute; top: 16px; bottom: 16px; left: 50%; width: 2px;
-  transform: translateX(-50%);
+  position: relative; width: 2px; height: min(100%, 320px);
   background: var(--hairline); border-radius: 2px;
 }
 .turn-tick {
