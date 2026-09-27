@@ -35,9 +35,12 @@ import {
   redactSecrets,
 } from './vault.js';
 
-const MAX_ITERATIONS = 12;
-const RESUME_ITERATIONS = 8; // one automatic continuation when a run stalls mid-task
-const RUN_CAP_MS = 12 * 60 * 1000; // overall run budget, shared with subagents
+// Parent runs have no step or time cap: the loop runs until the model gives
+// a final answer, the user stops it, the stuck-loop guard fires, or the
+// per-run token fuse below trips. The fuse is the money backstop — admins
+// are exempt from the weekly token limit, so a runaway parent run would
+// otherwise have no spending ceiling at all.
+const RUN_TOKEN_FUSE = 500_000; // max tokens in a single parent run
 const STUCK_REPEATS = 3; // identical consecutive tool calls before we stop
 
 export const SYSTEM_PROMPT = `You are Orion, a helpful AI assistant with your own Linux computer — a Docker VM whose home directory is /home/agent/workspace. You also have a real headless Chromium browser inside that VM.
@@ -1138,7 +1141,7 @@ export async function runChildAgent({
     convo,
     tools: [...TOOLS, SEND_UPDATE_TOOL], // children can speak up, but no delegate: one level only
     isChild: true,
-    maxIterations: maxSteps,
+    maxSteps,
     deadlineAt,
     userId,
     conversationId,
@@ -1206,13 +1209,16 @@ export async function dispatchTool({ isChild, userId, conversationId, getAssista
  * Used by runAgent (parent) and runChildAgent (subagent).
  *
  * Watchdog behavior:
- * - stops after maxIterations
- * - stops when Date.now() > deadlineAt (overall run budget, shared with children)
+ * - parent runs are uncapped: they loop until the model gives a final
+ *   answer, and stop on abort / stuck-loop / weekly token limit / the
+ *   per-run token fuse (RUN_TOKEN_FUSE)
+ * - child runs stop after maxSteps (from the delegate tool) and when
+ *   Date.now() > deadlineAt if a deadline was passed
  * - stops when the same tool call (name + args) repeats STUCK_REPEATS times
  *   in a row, appending a note instead of looping forever
  */
 async function runToolLoop({
-  settings, convo, tools, isChild, maxIterations, deadlineAt,
+  settings, convo, tools, isChild, maxSteps, deadlineAt,
   userId, conversationId, getAssistantId,
   onTurnStart, onTurnEnd, onTool, onNote,
   emit, shouldAbort, signal,
@@ -1228,24 +1234,16 @@ async function runToolLoop({
   let stopReason = null;
   let steps = 0;
 
-  // Recovery: a parent run that stalls mid-task gets ONE automatic
-  // continuation instead of ending silently —
-  //   (a) the step budget runs out while tool calls are still in flight, or
-  //   (b) the model returns an empty reply after real tool work.
-  // A nudge is pushed into the conversation and the loop gets
-  // RESUME_ITERATIONS more turns. If it still can't finish, the user gets
-  // a visible "say continue" note instead of a dead stop.
-  const RESUME_NUDGE_STEPS =
-    '[System: you hit the step budget before finishing the task. ' +
-    'Continue exactly where you left off — do not repeat completed steps, ' +
-    'be efficient, and end with a clear summary for the user.]';
+  // Recovery: if the model returns an empty reply after real tool work with
+  // no visible answer produced, nudge it to continue instead of ending
+  // silently mid-task. Bounded — a persistently empty model must not spin
+  // forever. (The old step-budget resume is gone: parent runs are uncapped.)
   const RESUME_NUDGE_EMPTY =
     '[System: your last reply came back empty with the task unfinished. ' +
     'Continue the task now — do not repeat completed steps, and end with ' +
     'a clear summary for the user.]';
-  let iterCap = maxIterations;
-  let resumeAvailable = !isChild;
-  let lastTurnTools = false;
+  let runTokens = 0; // per-run spend accumulator; the fuse is the backstop
+  let emptyStalls = 0;
   const note = (text) => {
     try {
       onNote(text);
@@ -1253,17 +1251,11 @@ async function runToolLoop({
       /* ignore */
     }
   };
-  const tryResume = (nudge, visibleNote) => {
-    if (!resumeAvailable) return false;
-    resumeAvailable = false;
-    iterCap += RESUME_ITERATIONS;
-    note(visibleNote);
-    convo.push({ role: 'user', content: nudge });
-    return true;
-  };
 
   const timeUp = () => {
-    if (Date.now() > deadlineAt) {
+    // Parent runs are uncapped (deadlineAt null); children may still carry
+    // one via the delegate tool.
+    if (deadlineAt && Date.now() > deadlineAt) {
       const note = '(stopped: run time limit reached)';
       finalText += '\n\n' + note;
       try {
@@ -1277,15 +1269,22 @@ async function runToolLoop({
     return false;
   };
 
-  let i = 0;
-  let running = true;
-  while (running) {
-    while (i < iterCap) {
+  // No step cap: run until the model gives a final answer (no tool calls),
+  // or until abort / stuck / token-limit / token-fuse stops the loop.
+  while (true) {
     if (shouldAbort?.()) {
       stopReason = 'aborted';
       break;
     }
     if (timeUp()) break;
+    // Children honor the delegate tool's maxSteps; parent runs are uncapped.
+    if (isChild && maxSteps && steps >= maxSteps) {
+      stopReason = 'iterations';
+      const msg = 'I hit my step limit mid-task — say "continue" and I\'ll pick up where I left off.';
+      finalText += (finalText ? '\n\n' : '') + msg;
+      note(msg);
+      break;
+    }
     steps++;
 
     // Create the assistant row BEFORE streaming so that tool attachments and
@@ -1355,6 +1354,23 @@ async function runToolLoop({
     }
     recordUsage(userId, usage, { promptChars: estimatePromptChars(convo), completionChars });
 
+    // Per-run spend fuse: the backstop now that runs are uncapped. Mirrors
+    // recordUsage's accounting (reported usage, else the chars/4 estimate).
+    if (!isChild) {
+      let callTokens = (Number(usage?.prompt_tokens) || 0) + (Number(usage?.completion_tokens) || 0);
+      if (!callTokens) callTokens = Math.ceil((estimatePromptChars(convo) + completionChars) / 4) || 0;
+      runTokens += callTokens;
+      if (runTokens > RUN_TOKEN_FUSE) {
+        const fuseMsg =
+          `I've used over ${Math.round(RUN_TOKEN_FUSE / 1000)}k tokens on this run, so I'm stopping ` +
+          `to avoid runaway cost. Say "continue" and I'll pick up where I left off.`;
+        finalText += (finalText ? '\n\n' : '') + fuseMsg;
+        note(fuseMsg);
+        stopReason = 'fuse';
+        break;
+      }
+    }
+
     const assistantMsg = { role: 'assistant', content: content || '' };
     if (toolCalls.length) assistantMsg.tool_calls = toolCalls;
     convo.push(assistantMsg);
@@ -1366,18 +1382,20 @@ async function runToolLoop({
       /* persistence must not kill the loop */
     }
 
-    lastTurnTools = toolCalls.length > 0;
     if (!toolCalls.length) {
       // Empty stall: the model ended the turn with no text and no tools,
       // but this run did real tool work and produced no visible answer.
-      // Nudge once instead of ending silently mid-task.
+      // Nudge it to continue (bounded — see emptyStalls).
       if (
         !(content || '').trim() &&
         !finalText.trim() &&
         Object.keys(toolCounts).length > 0 &&
-        tryResume(RESUME_NUDGE_EMPTY, '(empty reply mid-task — continuing automatically)')
+        !isChild &&
+        emptyStalls < 3
       ) {
-        i++;
+        emptyStalls++;
+        note('(empty reply mid-task — continuing)');
+        convo.push({ role: 'user', content: RESUME_NUDGE_EMPTY });
         continue;
       }
       break; // final answer
@@ -1482,22 +1500,6 @@ async function runToolLoop({
       }
     }
     if (stopReason) break;
-    i++;
-  }
-    // Step budget spent. If the run was still doing tool work (not a clean
-    // final answer, abort, timeout, or limit), recover: one automatic
-    // continuation, else a visible "say continue" note — never a dead stop.
-    if (!stopReason && lastTurnTools) {
-      if (tryResume(RESUME_NUDGE_STEPS, '(reached the step limit mid-task — continuing automatically)')) {
-        lastTurnTools = false; // re-arm: only a fresh tool turn counts
-        continue;
-      }
-      stopReason = 'iterations';
-      const msg = 'I hit my step limit mid-task — say "continue" and I\'ll pick up where I left off.';
-      finalText += (finalText ? '\n\n' : '') + msg;
-      note(msg);
-    }
-    running = false;
   }
 
   return { finalText, steps, toolCounts, stopReason };
@@ -1551,7 +1553,7 @@ export async function runAgentLoop({
   onExecStart, onExecEnd, // optional: track the in-flight sandbox exec (Stop support)
   noAutoTitle, // system-injected prompts (heartbeat, tasks) must never title a chat
 }) {
-  const deadlineAt = Date.now() + RUN_CAP_MS;
+  const deadlineAt = null; // parent runs have no wall-clock cap; see RUN_TOKEN_FUSE
   // Default replay cap: the whole conversation is unbounded and callers
   // (runs.js, tasks.js) never pass a limit, so cap at the last 100
   // messages. An explicit historyLimit (e.g. heartbeat's 20) still wins.
@@ -1678,7 +1680,6 @@ export async function runAgentLoop({
       convo,
       tools: [...TOOLS, DELEGATE_TOOL, SEND_UPDATE_TOOL, SEND_PUSH_TOOL, ...MEMORY_TOOLS],
       isChild: false,
-      maxIterations: MAX_ITERATIONS,
       deadlineAt,
       userId,
       conversationId,
