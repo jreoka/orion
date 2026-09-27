@@ -1916,7 +1916,9 @@ function hideRunStatus() {
 function onBusTool(d) {
   if (!d || d.status !== 'start') return;
   if (d.name === 'send_update') return; // the agent's own update line; no redundant status
-  showRunStatus(TOOL_STATUS_PHRASES[d.name] || 'Working…');
+  // The server sends a natural-language activity line ("Searching files…");
+  // fall back to the generic per-tool phrase for older servers.
+  showRunStatus(d.summary || TOOL_STATUS_PHRASES[d.name] || 'Working…');
 }
 
 function onBusImage(d) {

@@ -386,33 +386,101 @@ const SEND_PUSH_TOOL = {
   },
 };
 
+// Human-readable activity line for the live run-status indicator, e.g.
+// "Searching files…" instead of "Running a command…". Describes what the
+// tool is doing without echoing raw commands or URLs — filenames and
+// domains are fine, full command lines are not.
 function summarizeTool(name, args) {
-  const s = (v, n = 60) => {
-    v = String(v ?? '');
-    return v.length > n ? v.slice(0, n) + '…' : v;
+  const str = (v) => String(v ?? '');
+  const base = (p) => str(p).split('/').filter(Boolean).pop() || '';
+  const trunc = (v, n = 48) => {
+    v = str(v).trim();
+    return v.length > n ? v.slice(0, n).trimEnd() + '…' : v;
+  };
+  const domain = (u) => {
+    try { return new URL(str(u)).hostname.replace(/^www\./, '') || 'the web'; }
+    catch { return 'the web'; }
   };
   switch (name) {
-    case 'exec': return s(args.command);
-    case 'read_file':
-    case 'write_file':
-    case 'list_files': return s(args.path);
-    case 'web_fetch':
-    case 'browser_shot': return s(args.url);
-    case 'delegate': return s(args.task, 80);
-    case 'send_update': return s(args.text, 80);
-    case 'send_push': return s(args.body, 80);
-    case 'schedule_task': return s(args.name, 80);
-    case 'list_tasks': return 'list tasks';
-    case 'update_task':
-    case 'delete_task': return 'task ' + s(args.id, 20);
-    case 'react_to_message': return (args.action === 'remove' ? 'unreact ' : 'react ') + s(args.emoji, 10);
-    case 'vault_request': return 'vault request ' + s(args.label, 40);
-    case 'vault_list': return 'list vault';
-    case 'vault_delete': return 'delete vault ' + s(args.id, 20);
-    case 'remember': return 'remember ' + s(args.text, 60);
-    case 'soul_note': return 'soul note';
-    default: return name;
+    case 'exec': return describeCommand(str(args.command));
+    case 'read_file': { const f = base(args.path); return f ? `Reading ${f}…` : 'Reading a file…'; }
+    case 'write_file': { const f = base(args.path); return f ? `Writing ${f}…` : 'Writing a file…'; }
+    case 'list_files': { const f = base(args.path); return f ? `Looking through ${f}…` : 'Looking through files…'; }
+    case 'web_fetch': return `Reading ${domain(args.url)}…`;
+    case 'browser_shot': return `Looking at ${domain(args.url)}…`;
+    case 'delegate': {
+      let t = trunc(args.task, 56);
+      if (t) t = t.charAt(0).toLowerCase() + t.slice(1);
+      return t ? `Working on ${t}…` : 'Working on a subtask…';
+    }
+    case 'send_update': return null; // the update line speaks for itself
+    case 'send_push': return 'Sending a notification…';
+    case 'schedule_task': {
+      const n = trunc(args.name, 40);
+      return n ? `Scheduling ${n}…` : 'Scheduling…';
+    }
+    case 'list_tasks': return 'Checking scheduled tasks…';
+    case 'update_task': return 'Updating a scheduled task…';
+    case 'delete_task': return 'Removing a scheduled task…';
+    case 'react_to_message': return 'Reacting…';
+    case 'vault_request': return 'Preparing a secure form…';
+    case 'vault_list': return 'Checking the vault…';
+    case 'vault_delete': return 'Updating the vault…';
+    case 'remember': return 'Saving a memory…';
+    case 'soul_note': return 'Updating notes…';
+    default: return 'Working…';
   }
+}
+
+// Turn a shell command into a natural-language activity line without
+// echoing the command itself. Skips env assignments, sudo, and leading
+// `cd … &&` chains, then maps the real program to a gerund phrase.
+function describeCommand(cmd) {
+  const bin = firstProgram(cmd);
+  if (bin === 'git') {
+    const sub = (cmd.match(/\bgit\s+([a-z-]+)/) || [])[1] || '';
+    const GIT = {
+      commit: 'Committing…', push: 'Pushing code…', pull: 'Pulling the latest code…',
+      fetch: 'Fetching updates…', status: 'Checking git status…', diff: 'Reviewing changes…',
+      log: 'Reading commit history…', clone: 'Cloning a repo…', add: 'Staging changes…',
+      checkout: 'Switching branches…', switch: 'Switching branches…', merge: 'Merging…',
+      rebase: 'Rebasing…', stash: 'Stashing changes…', reset: 'Resetting…', show: 'Inspecting a commit…',
+    };
+    return GIT[sub] || 'Running git…';
+  }
+  const ACTIVITY = {
+    grep: 'Searching files…', rg: 'Searching files…', ag: 'Searching files…',
+    find: 'Searching for files…', fd: 'Searching for files…', locate: 'Searching for files…',
+    curl: 'Fetching from the web…', wget: 'Fetching from the web…',
+    ssh: 'Connecting to a server…', scp: 'Copying files to a server…', rsync: 'Syncing files…',
+    docker: 'Working with containers…',
+    npm: 'Installing packages…', npx: 'Running a package…', yarn: 'Installing packages…',
+    pip: 'Installing packages…', apt: 'Installing packages…', 'apt-get': 'Installing packages…',
+    node: 'Running a script…', python: 'Running a script…', python3: 'Running a script…',
+    bun: 'Running a script…', deno: 'Running a script…', ruby: 'Running a script…', php: 'Running a script…',
+    ls: 'Listing files…', cat: 'Reading a file…', head: 'Reading a file…', tail: 'Reading a file…', less: 'Reading a file…',
+    mkdir: 'Creating folders…', rm: 'Cleaning up files…', mv: 'Moving files…', cp: 'Copying files…',
+    touch: 'Creating a file…', chmod: 'Updating permissions…', chown: 'Updating permissions…',
+    tar: 'Unpacking an archive…', unzip: 'Unpacking an archive…', zip: 'Packing an archive…',
+    sqlite3: 'Querying the database…', psql: 'Querying the database…', mysql: 'Querying the database…',
+    ffmpeg: 'Processing media…', convert: 'Processing an image…',
+    make: 'Building…', gcc: 'Compiling…', cargo: 'Building…', go: 'Building…',
+    sleep: 'Waiting…', ping: 'Checking connectivity…',
+  };
+  if (ACTIVITY[bin]) return ACTIVITY[bin];
+  if (bin) return `Running ${bin}…`;
+  return 'Running a command…';
+}
+
+// The program a shell command is really running: last && / || / ;
+// segment, minus env assignments and sudo.
+function firstProgram(cmd) {
+  const segs = String(cmd).split(/&&|\|\||;/).map((s) => s.trim()).filter(Boolean);
+  const last = segs[segs.length - 1] || '';
+  const toks = last.split(/\s+/);
+  let i = 0;
+  while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || ['sudo', 'env', 'time'].includes(toks[i]))) i++;
+  return (toks[i] || '').split('/').pop();
 }
 
 function validUrl(u) {
