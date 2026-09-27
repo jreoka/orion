@@ -54,7 +54,7 @@ Your tools:
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
 - send_update: post a progress note mid-run. It appears as a slim status line in the chat (not a full message card), so use it for meaningful milestones during long multi-step work — a sentence or two, not a narration of every tool call.
 - send_push: buzz the user's phone with a short push notification that deep-links to this chat. Use only when the user is likely away and the news is worth an interruption — a long task finished, you need them to act (approve something, unblock you), or they asked to be notified. The chat message itself is usually enough; never for routine progress (use send_update for that). Limited to 3 per chat per 10 minutes. Skipped automatically when the user is watching this chat, and when they have no push subscription — the result tells you which.
-- react_to_message: add or remove an emoji reaction on a chat message. Be generous with reactions — they're a warm, human touch. When the user gives you something to do, tap 👍 on their message as you start. When you genuinely like or appreciate what they shared, ❤️ it, or pick an emoji that fits the moment (🎉 for good news, 😂 for something funny). Mark something done with ✅. React to the user's messages, never your own unless the user explicitly asks. Never react with an emoji that already appears in your reply text — that's redundant. When the user says "this message" or "that message", they mean their own latest message — pass message_id "latest_user", never guess a numeric id.
+- react_to_message: add or remove an emoji reaction on a chat message. Be generous with reactions — they're a warm, human touch. When the user gives you something to do, tap 👍 on their message as you start. When you genuinely like or appreciate what they shared, ❤️ it, or pick an emoji that fits the moment (🎉 for good news, 😂 for something funny). Mark something done with ✅. React to the user's messages, never your own unless the user explicitly asks. Never react with an emoji that already appears in your reply text — that's redundant. message_id defaults to their latest message, so you usually only need to pass emoji — never guess a numeric id.
 - schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in the main chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
   - Waiting on the user to do something OUTSIDE chat (OAuth device approval, clicking a confirmation link, etc.): never tell them to reply "done" or send a message to resume you. Schedule a one-shot task that polls for completion — its prompt must say: if complete, finish the work and tell the user; if not, reschedule itself (schedule_task again) until it succeeds or the window expires, then report the outcome either way. The task's output lands in the chat and notifies them on its own.
 
@@ -277,11 +277,11 @@ export const TOOLS = [
     function: {
       name: 'react_to_message',
       description:
-        'Add or remove an emoji reaction on a chat message. Be generous: tap \uD83D\uDC4D on the user\u2019s message when they give you something to do, \u2764\uFE0F something you genuinely like, \u2705 when you finish what they asked. Reactions are visible to the user in the chat and show up in conversation history. You never see numeric message ids, so for message_id use "latest_user" (the user\u2019s most recent message) or "latest_assistant" (your most recent message).',
+        'Add or remove an emoji reaction on a chat message. Be generous: tap \uD83D\uDC4D on the user\u2019s message when they give you something to do, \u2764\uFE0F something you genuinely like, \u2705 when you finish what they asked. message_id defaults to "latest_user" (their most recent message); pass "latest_assistant" for your own most recent message. Reactions are visible to the user in the chat and show up in conversation history.',
       parameters: {
         type: 'object',
         properties: {
-          message_id: { type: 'string', description: 'Which message: "latest_user", "latest_assistant", or a numeric id' },
+          message_id: { type: 'string', description: 'Which message: "latest_user", "latest_assistant", or a numeric id (default: "latest_user")' },
           emoji: { type: 'string', description: 'Single emoji, e.g. ❤️' },
           action: {
             type: 'string',
@@ -289,7 +289,7 @@ export const TOOLS = [
             description: 'Add or remove the reaction (default: add)',
           },
         },
-        required: ['message_id', 'emoji'],
+        required: ['emoji'],
       },
     },
   },
@@ -1044,7 +1044,8 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
     case 'react_to_message': {
       // The model never sees numeric message ids in history, so it can't
       // guess them — accept aliases for the messages it can actually mean.
-      let mid = args.message_id;
+      // message_id is optional and defaults to the user's latest message.
+      let mid = args.message_id ?? 'latest_user';
       if (typeof mid === 'string') {
         const alias = mid.trim().toLowerCase();
         let role = null;
