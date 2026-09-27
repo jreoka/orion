@@ -582,6 +582,11 @@ function wireGlobal() {
   // Chat extras
   wireJumpPill();
   wireUploads();
+  // We manage the chat scroll ourselves (jumpToBottom on every render).
+  // Without this the browser reapplies its saved scroll position after a
+  // reload — sometimes reopening the page scrolled up even though we
+  // jumped to the bottom during boot.
+  try { history.scrollRestoration = 'manual'; } catch {}
 }
 
 function openLightbox(url) {
@@ -2483,6 +2488,13 @@ async function renderChat() {
   restoreDraft();
   await loadConversationsQuiet();
   renderMessages();
+  // Late layout (webfonts, images without known dimensions) can grow the
+  // scrollable area after the initial jump — re-pin once it settles, as
+  // long as the user hasn't scrolled up on their own in the meantime.
+  // (Image loads are covered separately by the capture-phase listener in
+  // wireJumpPill.)
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (S.stick) jumpToBottom(); }));
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (S.stick) jumpToBottom(); }, () => {});
   if (S.activeId) openEventStream(S.activeId);
   updateComposer();
 }
