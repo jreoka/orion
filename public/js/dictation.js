@@ -29,6 +29,7 @@
   let audioCtx = null;
   let analyser = null;
   let freq = null;
+  let barBins = null; // per-bar [firstBin, lastBin], log-spaced over voice range
   let rafId = 0;
   let lastWaveDraw = 0;
   let shown = new Float32Array(BARS); // eased 0..1 bar levels
@@ -66,13 +67,11 @@
     if (now - lastWaveDraw < 1000 / WAVE_FPS) return;
     lastWaveDraw = now;
     analyser.getByteFrequencyData(freq);
-    const n = freq.length;
     for (let i = 0; i < BARS; i++) {
-      const b0 = Math.floor((i * n) / BARS);
-      const b1 = Math.max(b0 + 1, Math.floor(((i + 1) * n) / BARS));
+      const bb = barBins[i];
       let v = 0;
-      for (let b = b0; b < b1 && b < n; b++) if (freq[b] > v) v = freq[b];
-      const target = v / 255;
+      for (let b = bb[0]; b <= bb[1]; b++) if (freq[b] > v) v = freq[b];
+      const target = Math.min(1, (v / 255) * 1.35); // slight gain for quiet mics
       // Ease toward the target: quick to rise, gentle to fall. Heights stay
       // fluid — the chunkiness comes from the discrete bars, not stepped
       // snapping between levels (that snapping was the glitchy look).
@@ -123,10 +122,24 @@
     audioCtx = new AC();
     const src = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 64;
+    analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.55;
     freq = new Uint8Array(analyser.frequencyBinCount);
     src.connect(analyser);
+    // Spread the voice range (~80Hz–12kHz) logarithmically across the bars.
+    // Linear bins waste nearly every bar on high frequencies where voice
+    // has no energy — that's why only the first couple bars moved before.
+    {
+      const binHz = audioCtx.sampleRate / analyser.fftSize;
+      const F_MIN = 80, F_MAX = 12000, RATIO = F_MAX / F_MIN;
+      const top = freq.length - 1;
+      barBins = [];
+      for (let i = 0; i < BARS; i++) {
+        const b0 = Math.max(0, Math.floor((F_MIN * Math.pow(RATIO, i / BARS)) / binHz));
+        const b1 = Math.min(top, Math.ceil((F_MIN * Math.pow(RATIO, (i + 1) / BARS)) / binHz));
+        barBins.push([b0, Math.max(b0, b1)]);
+      }
+    }
     if (audioCtx.state === 'suspended') { try { await audioCtx.resume(); } catch (e) {} }
 
     // Dictation appends to whatever draft is already there.
@@ -201,6 +214,7 @@
     }
     analyser = null;
     freq = null;
+    barBins = null;
     bar.hidden = true;
     micBtn.classList.remove('recording');
     micBtn.setAttribute('aria-label', 'Dictate');
