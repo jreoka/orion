@@ -138,7 +138,7 @@ export function getUserBySession(token) {
     return null;
   }
   if (row.disabled) return null;
-  return { id: row.id, username: row.username, role: row.role };
+  return { id: row.id, username: row.username, role: row.role, theme: row.theme };
 }
 
 export function destroySession(token) {

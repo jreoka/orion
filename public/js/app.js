@@ -1862,19 +1862,6 @@ function applyTheme(dark, save = true) {
 async function afterLogin() {
   try { S.me = await api('/api/auth/me'); } catch { /* keep S.me as-is */ }
   if (S.me) adoptTheme();
-  // TEMPORARY diagnostic beacon: report what this tab saw so the
-  // post-login theme issue can be diagnosed server-side. Remove with
-  // the /api/debug/theme-trace endpoint once resolved.
-  try {
-    let ls = null;
-    try { ls = localStorage.getItem('orion-theme'); } catch (e) { ls = 'ERR'; }
-    api('/api/debug/theme-trace', { method: 'POST', body: {
-      v: (typeof myAssetVersion === 'function' ? myAssetVersion() : null),
-      meTheme: S.me ? S.me.theme : null,
-      appliedDark: document.documentElement.dataset.theme === 'dark',
-      localStorage: ls,
-    } }).catch(() => {});
-  } catch { /* never break login for a diagnostic */ }
   S.activeId = null;
   S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
   go('chat');
