@@ -512,6 +512,7 @@ function setAuthMode(mode) {
 
 function wireGlobal() {
   wirePushNudge();
+  wireLongPress();
   // Profile (incl. avatar) is fetched once at boot; re-fetch when the tab
   // becomes visible again so changes made on another device appear
   // without a manual reload.
@@ -1256,6 +1257,9 @@ $('#messages').addEventListener('click', async (e) => {
 // Right-click (or long-press) a message: Copy / React. Native menu is kept
 // for links, images, and active text selections.
 $('#messages').addEventListener('contextmenu', (e) => {
+  // Android/iOS fire contextmenu after a long-press — the sheet is already
+  // open, so just swallow it instead of also opening the desktop menu.
+  if (lpFired) { lpFired = false; e.preventDefault(); return; }
   if (e.target.closest('a, img')) return;
   const msgEl = e.target.closest('.msg');
   if (!msgEl) return;
@@ -1546,6 +1550,95 @@ function openMsgMenu(msgEl, x, y) {
     document.addEventListener('click', closeMsgMenuOutside, true);
     document.addEventListener('keydown', closeMsgMenuEsc, true);
   }, 0);
+}
+
+/* ---------- long-press bottom sheet (mobile message actions) ---------- */
+function closeSheet() {
+  document.getElementById('msg-sheet')?.remove();
+  document.getElementById('sheet-scrim')?.remove();
+  document.removeEventListener('keydown', closeSheetEsc, true);
+}
+function closeSheetEsc(e) { if (e.key === 'Escape') closeSheet(); }
+
+function openMsgSheet(mid) {
+  closeMsgMenu();
+  closeSheet();
+  haptic(14); // long-press acknowledge
+  const isLocal = String(mid).startsWith('local-');
+  const preview = messageText(mid).replace(/\s+/g, ' ').trim().slice(0, 90);
+  const scrim = document.createElement('div');
+  scrim.className = 'sheet-scrim';
+  scrim.id = 'sheet-scrim';
+  const sheet = document.createElement('div');
+  sheet.className = 'msg-sheet';
+  sheet.id = 'msg-sheet';
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-label', 'Message actions');
+  sheet.innerHTML = `
+    <div class="sheet-grab" aria-hidden="true"></div>
+    ${preview ? `<div class="sheet-preview">${esc(preview)}</div>` : ''}
+    ${isLocal ? '' : `<div class="sheet-rx" role="group" aria-label="Quick reactions">${
+      RX_EMOJI.map((e) => `<button data-pick="${e}" aria-label="React ${e}">${e}</button>`).join('')
+    }</div>`}
+    <button class="sheet-act" data-act="copy">
+      <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5v5A1.5 1.5 0 0 0 4 10h1.5"/></svg>
+      <span>Copy text</span>
+    </button>`;
+  document.body.append(scrim, sheet);
+  const showSheet = () => { scrim.classList.add('on'); sheet.classList.add('on'); };
+  requestAnimationFrame(() => requestAnimationFrame(showSheet));
+  setTimeout(showSheet, 60); // fallback: rAF can be throttled in a backgrounded tab
+  scrim.addEventListener('click', closeSheet);
+  sheet.addEventListener('click', (e) => {
+    const pk = e.target.closest('[data-pick]');
+    if (pk) { closeSheet(); addReaction(mid, pk.dataset.pick); return; }
+    if (e.target.closest('[data-act="copy"]')) { closeSheet(); copyMessage(mid); }
+  });
+  // Swipe down to dismiss.
+  let startY = 0, dy = 0;
+  sheet.addEventListener('touchstart', (e) => { startY = e.touches[0].clientY; dy = 0; }, { passive: true });
+  sheet.addEventListener('touchmove', (e) => {
+    dy = e.touches[0].clientY - startY;
+    if (dy > 0) sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  sheet.addEventListener('touchend', () => {
+    sheet.style.transform = '';
+    if (dy > 90) closeSheet();
+    dy = 0;
+  });
+  document.addEventListener('keydown', closeSheetEsc, true);
+}
+
+// Long-press on a message opens the sheet. All listeners are passive — the
+// 480ms timer is cancelled on any real movement or release, so scrolling
+// and text selection are never blocked.
+let lpTimer = null, lpFired = false, lpX = 0, lpY = 0;
+function wireLongPress() {
+  const msgs = $('#messages');
+  msgs.addEventListener('touchstart', (e) => {
+    clearTimeout(lpTimer); lpTimer = null;
+    if (e.touches.length > 1) return;
+    const msgEl = e.target.closest('.msg');
+    if (!msgEl?.dataset.mid) return;
+    const t = e.touches[0];
+    lpX = t.clientX; lpY = t.clientY; lpFired = false;
+    lpTimer = setTimeout(() => {
+      lpTimer = null;
+      // Don't hijack the native text-selection handles.
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && msgEl.contains(sel.anchorNode)) return;
+      lpFired = true;
+      openMsgSheet(msgEl.dataset.mid);
+    }, 480);
+  }, { passive: true });
+  msgs.addEventListener('touchmove', (e) => {
+    if (!lpTimer || !e.touches.length) return;
+    const t = e.touches[0];
+    if (Math.hypot(t.clientX - lpX, t.clientY - lpY) > 12) { clearTimeout(lpTimer); lpTimer = null; }
+  }, { passive: true });
+  const cancel = () => { clearTimeout(lpTimer); lpTimer = null; };
+  msgs.addEventListener('touchend', cancel, { passive: true });
+  msgs.addEventListener('touchcancel', cancel, { passive: true });
 }
 
 let localMsgSeq = 0; // disambiguates optimistic ids minted within the same millisecond

@@ -969,6 +969,59 @@ button.avatar.lg:hover { opacity: .85; }
 .rx-picker button:active { background: var(--paper-3); transform: scale(1.15); }
 @keyframes rxpop { from { transform: scale(.92); opacity: 0; } }
 
+/* ---------- long-press bottom sheet (mobile message actions) ---------- */
+.sheet-scrim {
+  position: fixed; inset: 0; z-index: 190;
+  background: rgba(24, 20, 15, .38);
+  opacity: 0; transition: opacity .22s ease;
+}
+.sheet-scrim.on { opacity: 1; }
+.msg-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 191;
+  background: var(--lift);
+  border-top: 1px solid var(--hairline);
+  border-radius: 20px 20px 0 0;
+  padding: 8px 16px calc(14px + env(safe-area-inset-bottom));
+  transform: translateY(103%);
+  transition: transform .3s var(--ease);
+  box-shadow: 0 -14px 44px rgba(24, 20, 15, .2);
+  touch-action: pan-x; /* vertical swipes are handled manually (drag to dismiss) */
+  user-select: none; -webkit-user-select: none;
+}
+.msg-sheet.on { transform: translateY(0); }
+.sheet-grab {
+  width: 42px; height: 4px; border-radius: 2px;
+  background: var(--paper-3); margin: 4px auto 10px;
+}
+.sheet-preview {
+  font: 13.5px var(--serif); color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 0 4px 10px;
+}
+.sheet-rx {
+  display: flex; gap: 2px; overflow-x: auto;
+  padding: 2px 0 10px; margin-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; /* clean mobile-sheet look — still swipeable */
+}
+.sheet-rx::-webkit-scrollbar { display: none; }
+.sheet-rx button {
+  flex: 0 0 auto; width: 48px; height: 48px; font-size: 26px;
+  background: transparent; border: none; border-radius: 14px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .12s, transform .12s;
+}
+.sheet-rx button:active { background: var(--paper-2); transform: scale(1.18); }
+.sheet-act {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 13px 6px; background: transparent; border: none; cursor: pointer;
+  font: 500 15px var(--sans); color: var(--ink); text-align: left;
+  border-radius: var(--radius-sm);
+}
+.sheet-act svg { color: var(--ink-2); flex: none; display: block; }
+.sheet-act:active { background: var(--paper-2); }
+
 /* ============================================================
    Admin + Settings views
    ============================================================ */
