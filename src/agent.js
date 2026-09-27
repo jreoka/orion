@@ -1147,8 +1147,14 @@ export async function loadHistory(conversationId, limit) {
         const deferredCards = [];
         const deferredUsers = [];
         let j = i + 1;
+        // A bare assistant row is only a "card" (e.g. a vault widget) when it
+        // is still inside the tool turn — i.e. before any user message has
+        // intervened. Once a user has spoken, the tool turn is over and a
+        // following assistant row is a genuine reply; absorbing it into the
+        // group would reorder it ahead of the user's messages, and providers
+        // return empty completions for the scrambled history.
         while (j < rows.length && (rows[j].role === 'tool' || rows[j].role === 'user' ||
-               (rows[j].role === 'assistant' && !rows[j].tool_calls))) {
+               (rows[j].role === 'assistant' && !rows[j].tool_calls && deferredUsers.length === 0))) {
           if (rows[j].role === 'user') deferredUsers.push(rows[j]);
           else if (rows[j].role === 'tool') tools.push(rows[j]);
           else deferredCards.push(rows[j]);
