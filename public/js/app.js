@@ -778,13 +778,16 @@ function schedulePaintRail() {
 }
 
 // Highlight the tick for the turn the user is currently reading: the last
-// user message at or above the viewport's reading line.
+// user message at or above the viewport's reading line. The line sits at
+// the vertical midpoint (not near the top), so when turns are close
+// together the one the user is actually looking at wins — not just the
+// topmost one above an arbitrary near-top threshold.
 function paintTurnRail() {
   const track = document.querySelector('#turn-rail .rail-track');
   if (!track || !track.children.length) return;
   const box = document.getElementById('messages');
   const boxRect = box.getBoundingClientRect();
-  const line = boxRect.top + 120;
+  const line = boxRect.top + boxRect.height * 0.5;
   let activeMid = null;
   for (const n of box.querySelectorAll(':scope > [data-mid]')) {
     if (!n.classList.contains('user')) continue;
