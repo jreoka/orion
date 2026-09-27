@@ -2005,6 +2005,13 @@ function openEventStream(convId) {
   });
   es.addEventListener('run_started', () => setRunActive(true));
   es.addEventListener('run_ended', () => setRunActive(false));
+  es.addEventListener('title', (e) => {
+    const d = parseBusEvent(e);
+    if (!d || !d.title) return;
+    const c = (S.conversations || []).find((x) => x.id === S.activeId);
+    if (c) { c.title = d.title; renderSidebar(); }
+    else loadConversationsQuiet();
+  });
   es.addEventListener('chat_cleared', () => clearChatState()); // another client reset the chat
   es.addEventListener('reaction', (e) => {
     const d = parseBusEvent(e);

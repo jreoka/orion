@@ -1527,6 +1527,51 @@ export async function runAgentContinuation({
   return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle });
 }
 
+/**
+ * Ask the model for a short title for a new conversation, based on the first
+ * exchange. Fire-and-forget: publishes a 'title' bus event when it lands.
+ * Falls back to the first words of the user message if the model call fails
+ * or returns nothing usable. Never overwrites a title the user (or another
+ * path) set while the call was in flight.
+ */
+export async function generateChatTitle({ userId, conversationId, settings, userText, finalText }) {
+  const fallback = () => {
+    const t = String(userText || '').slice(0, 40);
+    return (String(userText || '').length > 40 ? t + '…' : t) || 'New chat';
+  };
+  let title = '';
+  try {
+    const { base_url: baseUrl, api_key: apiKey, model } = settings || {};
+    if (!apiKey) throw new Error('no llm configured');
+    const u = String(userText || '').replace(/\s+/g, ' ').slice(0, 400);
+    const a = String(finalText || '').replace(/\s+/g, ' ').slice(0, 400);
+    const { content, usage } = await streamChatCompletion({
+      baseUrl,
+      apiKey,
+      model,
+      messages: [
+        { role: 'system', content: 'You write short titles for chat conversations. Reply with ONLY the title: at most 6 words, no quotation marks, no trailing period.' },
+        { role: 'user', content: `Write a title for this conversation.\n\nUser: ${u}\nAssistant: ${a}` },
+      ],
+    });
+    try {
+      recordUsage(userId, usage, { promptChars: u.length + a.length + 200, completionChars: (content || '').length });
+    } catch { /* usage accounting is best-effort */ }
+    title = String(content || '')
+      .split('\n')[0]
+      .replace(/^[#*\-–—"'“”‘’\s]+/, '')
+      .replace(/["'“”‘’\s.。!！?？]+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 60);
+  } catch { /* fall through to the slice fallback */ }
+  if (!title) title = fallback();
+  const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId);
+  if (!conv || (conv.title !== 'New chat' && conv.title !== 'New side chat')) return;
+  db.prepare('UPDATE conversations SET title = ? WHERE id = ?').run(title, conversationId);
+  try { publish(conversationId, { type: 'title', title }); } catch { /* best-effort */ }
+}
+
 export async function runAgentLoop({
   userId, conversationId, userText, settings,
   shouldAbort, signal, systemExtra, historyLimit,
@@ -1711,10 +1756,11 @@ export async function runAgentLoop({
     // system-injected prompt — a heartbeat check or task run must not leave
     // chats titled "Check in…" / "Task: …".
     const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId);
-    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && userText && !noAutoTitle) {
-      const t = userText.slice(0, 40);
-      db.prepare('UPDATE conversations SET title = ? WHERE id = ?')
-        .run(userText.length > 40 ? t + '…' : t, conversationId);
+    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && userText && !noAutoTitle && !isOverLimit(userId)) {
+      // Fire-and-forget: the title is published on the bus when it lands,
+      // so the response isn't held up by a second model call. Failures fall
+      // back to the old first-words slice inside generateChatTitle.
+      generateChatTitle({ userId, conversationId, settings, userText, finalText }).catch(() => {});
     }
 
     return { finalText, status };

@@ -842,6 +842,15 @@ button.avatar.lg:hover { opacity: .85; }
   right: auto;
   left: 0;
 }
+/* Hover-capable: the user message's floating copy/+ row straddles the
+   bubble's bottom edge instead of hanging fully below it — 38px of buttons
+   in a 28px message gap would otherwise nearly touch the next message's
+   text. Touch keeps the below-bubble row with its reserved 40px. */
+@media (hover: hover) {
+  .msg.user .rx-row:not(:has(.rx-chip)) {
+    top: 100%; margin: -18px 0 0; right: 10px;
+  }
+}
 .rx-chip {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 15px; line-height: 1;
