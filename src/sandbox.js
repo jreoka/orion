@@ -147,6 +147,11 @@ export async function ensureSandbox(userId) {
       PidsLimit: 256,
       CapDrop: ['ALL'],
       SecurityOpt: ['no-new-privileges:true'],
+      // --init (tini) as PID 1: the image's CMD is `sleep infinity`, which
+      // never reaps children. Without an init, every unreaped child becomes
+      // a zombie held by PID 1 and eats the 256-PID budget until fork
+      // fails with EAGAIN — exactly what wedged sandboxes in the wild.
+      Init: true,
       // No privileged, no extra caps, no host networking: this is the sandbox.
     };
     const mk = (HostConfig) =>
@@ -185,10 +190,14 @@ export async function ensureSandbox(userId) {
   try {
     const info = await container.inspect();
     const binds = info?.HostConfig?.Binds || [];
-    if (!binds.some((b) => String(b).split(':')[0] === SOCK)) {
-      // Container predates Docker-socket access: recreate it with the mount.
-      // The workspace volume is separate, so no agent data is lost.
-      console.warn(`[orion] sandbox ${cname} lacks the Docker socket mount; recreating`);
+    const needsRecreate =
+      !binds.some((b) => String(b).split(':')[0] === SOCK) ||
+      info?.HostConfig?.Init !== true;
+    if (needsRecreate) {
+      // Container predates Docker-socket access or the init reaper:
+      // recreate it with the current config. The workspace volume is
+      // separate, so no agent data is lost.
+      console.warn(`[orion] sandbox ${cname} has stale config; recreating`);
       try {
         await container.remove({ force: true });
       } catch {
