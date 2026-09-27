@@ -2153,7 +2153,11 @@ async function refreshUsage() {
         `${formatCompactTokens(u.total_tokens)} / ${formatCompactTokens(u.limit)} · ${usageResetIn()}`;
       box.querySelector('.usage-track').setAttribute('aria-valuenow', pct);
     }
-  } catch { box.hidden = true; }
+  } catch {
+    // Transient failure (server restarting, network blip): keep the last
+    // known values on screen. The box only hides when the session is dead
+    // (the !u path above, after onUnauthorized).
+  }
 }
 function startUsageTimer() {
   if (usageTimer) return;
