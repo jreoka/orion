@@ -26,6 +26,7 @@ import {
   revokeOtherSessions,
   httpError,
   COOKIE_NAME,
+  avatarUrlFor,
 } from './auth.js';
 import {
   beginTotpSetup,
@@ -272,16 +273,7 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT avatar_path FROM users WHERE id = ?').get(req.user.id);
-  let avatarUrl = null;
-  if (row?.avatar_path) {
-    // mtime cache-buster so a fresh upload never shows the stale image.
-    try {
-      const v = fs.statSync(path.resolve(DATA_DIR, row.avatar_path)).mtimeMs.toString(36);
-      avatarUrl = '/api/avatar?v=' + v;
-    } catch { avatarUrl = '/api/avatar'; }
-  }
-  res.json({ ...req.user, avatar_url: avatarUrl });
+  res.json({ ...req.user, avatar_url: avatarUrlFor(req.user.id) });
 });
 
 app.patch('/api/auth/me', requireAuth, asyncRoute(async (req, res) => {
@@ -346,7 +338,7 @@ app.post('/api/auth/2fa/verify', asyncRoute(async (req, res) => {
   recordSuccess(`2fa:user:id:${userId}`);
   const row = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
   setSessionCookie(res, createSession(userId));
-  res.json({ id: row.id, username: row.username, role: row.role });
+  res.json({ id: row.id, username: row.username, role: row.role, avatar_url: avatarUrlFor(userId) });
 }));
 
 // ---- passkeys ---------------------------------------------------------------

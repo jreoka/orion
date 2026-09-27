@@ -2,7 +2,9 @@
 // The very first user ever created becomes the admin.
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
-import { db, getSetting } from './db.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { db, getSetting, DATA_DIR } from './db.js';
 import { totpEnabled, createLoginChallenge } from './totp.js';
 
 export const COOKIE_NAME = 'orion_session';
@@ -37,7 +39,19 @@ export function checkPasswordRules(password) {
 }
 
 function publicUser(row) {
-  return { id: row.id, username: row.username, role: row.role };
+  return { id: row.id, username: row.username, role: row.role, avatar_url: avatarUrlFor(row.id) };
+}
+
+/** Cache-busted avatar URL for a user, or null when they have no picture. */
+export function avatarUrlFor(userId) {
+  const row = db.prepare('SELECT avatar_path FROM users WHERE id = ?').get(userId);
+  if (!row?.avatar_path) return null;
+  try {
+    const v = fs.statSync(path.resolve(DATA_DIR, row.avatar_path)).mtimeMs.toString(36);
+    return '/api/avatar?v=' + v;
+  } catch {
+    return '/api/avatar';
+  }
 }
 
 export function signup(username, password) {

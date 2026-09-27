@@ -9,7 +9,7 @@ import {
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
 import { db } from './db.js';
-import { httpError } from './auth.js';
+import { httpError, avatarUrlFor } from './auth.js';
 
 const RP_NAME = 'Orion';
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -198,5 +198,5 @@ export async function verifyAuthentication(req, token, response) {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
   if (!user || user.disabled) throw httpError(401, 'Account unavailable');
   if (user.abuse_locked) throw httpError(403, 'Account locked — contact your administrator.');
-  return { id: user.id, username: user.username, role: user.role };
+  return { id: user.id, username: user.username, role: user.role, avatar_url: avatarUrlFor(user.id) };
 }
