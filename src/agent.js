@@ -1166,7 +1166,9 @@ export async function loadHistory(conversationId, limit) {
           // providers return empty completions. Synthesize a placeholder
           // result for any id the stored history never answered.
           const answered = new Set(tools.map(t => t.tool_call_id));
-          const synth = (r.tool_calls || [])
+          let calls = [];
+          try { calls = JSON.parse(r.tool_calls || '[]'); } catch { calls = []; }
+          const synth = calls
             .filter(tc => !answered.has(tc.id))
             .map(tc => ({
               role: 'tool',
