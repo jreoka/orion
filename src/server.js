@@ -1505,9 +1505,50 @@ app.get('/api/share/:token/files/:attId', (req, res) => {
 
 // Public: the read-only shared-chat page. Never cached — a revoked link
 // must stop working immediately, not linger in the browser cache.
+//
+// The page is client-rendered, so link unfurlers (Discord, iMessage, …)
+// that don't run JS get Open Graph tags injected server-side from the
+// frozen snapshot: title, first user message, and the app icon.
+const escAttr = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[c]));
+let shareHtmlCache = null;
+const shareHtml = () => {
+  if (!shareHtmlCache)
+    shareHtmlCache = fs.readFileSync(path.join(__dirname, '..', 'public', 'share.html'), 'utf8');
+  return shareHtmlCache;
+};
 app.get('/s/:token', (req, res) => {
   res.set('Cache-Control', 'no-cache');
-  res.sendFile(path.join(__dirname, '..', 'public', 'share.html'));
+  let html = shareHtml();
+  const share = getShare(req.params.token);
+  if (share) {
+    let title = share.title || 'Shared chat';
+    let desc = '';
+    try {
+      const snap = JSON.parse(share.snapshot || '{}');
+      if (snap.title) title = snap.title;
+      const firstUser = (snap.messages || []).find(
+        (m) => m.role === 'user' && m.content && String(m.content).trim());
+      if (firstUser)
+        desc = String(firstUser.content).replace(/\s+/g, ' ').trim().slice(0, 200);
+    } catch { /* fall through to defaults */ }
+    if (!desc) desc = 'A chat shared from Orion.';
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const tags = [
+      `<meta property="og:type" content="article">`,
+      `<meta property="og:site_name" content="Orion">`,
+      `<meta property="og:title" content="${escAttr(title)}">`,
+      `<meta property="og:description" content="${escAttr(desc)}">`,
+      `<meta property="og:url" content="${escAttr(`${origin}/s/${share.token}`)}">`,
+      `<meta property="og:image" content="${escAttr(`${origin}/icons/icon-512.png?v=ce85513`)}">`,
+      `<meta name="twitter:card" content="summary">`,
+      `<meta name="twitter:title" content="${escAttr(title)}">`,
+      `<meta name="twitter:description" content="${escAttr(desc)}">`,
+    ].join('\n  ');
+    html = html.replace('</head>', `  ${tags}\n</head>`);
+  }
+  res.type('html').send(html);
 });
 
 // ---- admin ----------------------------------------------------------------
