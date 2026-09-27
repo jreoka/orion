@@ -384,7 +384,11 @@ export function groupedReactions(messageId, userId) {
       groups.set(r.emoji, g);
     }
     g.count++;
-    if (r.user_id === userId) g.mine = true;
+    // "mine" means the user themself reacted — the agent's rows carry the
+    // same user_id (it acts on the user's behalf), so the actor column is
+    // the real discriminator. Without this, the agent's reaction looks
+    // like the user's own and tapping it tries to DELETE instead of POST.
+    if (r.user_id === userId && r.actor === 'user') g.mine = true;
     if (r.actor === 'agent') g.agent = true;
   }
   return [...groups.values()];
