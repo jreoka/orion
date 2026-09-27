@@ -787,8 +787,12 @@ function paintTurnRail() {
   if (!track || !track.children.length) return;
   const box = document.getElementById('messages');
   const boxRect = box.getBoundingClientRect();
-  const viewTop = boxRect.top;
-  const viewBottom = boxRect.bottom;
+  // The actually-visible slice of the message list: intersect the
+  // container's rect with the viewport. (If an ancestor is the real
+  // scroller, the container rect can be taller than the screen — using it
+  // raw would mark everything "visible" and pin the highlight to one end.)
+  const viewTop = Math.max(boxRect.top, 0);
+  const viewBottom = Math.min(boxRect.bottom, window.innerHeight);
   const midY = viewTop + (viewBottom - viewTop) / 2;
   let bestMid = null;
   let bestDist = Infinity;
