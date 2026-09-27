@@ -8,7 +8,6 @@ import { db, getSetting, getOrCreateHeartbeatConversation } from './db.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
 import { registerController, unregisterController, chainPendingUserMessages, trackExecStart, trackExecEnd, clearExecTracking } from './runs.js';
-import { notifyConversation } from './push.js';
 
 const CHECK_MS = 5 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 30 * 60 * 1000; // fixed: no user option
@@ -164,17 +163,10 @@ export async function runHeartbeatFor(userId) {
       return { ok: true, quiet: true };
     }
     // The heartbeat had something to say: drop the injected prompt (the
-    // user never typed it) but keep the report.
+    // user never typed it) but keep the report. No push notification —
+    // the user asked for heartbeat to run silently.
     deleteHeartbeatPrompt(convId, userMsgId);
     touchHeartbeatAt(userId, now);
-    // The heartbeat had something to say: ping the user if they aren't
-    // watching the chat live.
-    try {
-      const snippet = String(finalText || '').replace(/\s+/g, ' ').trim().slice(0, 140);
-      await notifyConversation(userId, convId, { title: 'Orion', body: `Heartbeat: ${snippet}` });
-    } catch (e) {
-      console.warn('[orion] heartbeat push failed:', e?.message || e);
-    }
     return { ok: true, quiet: false };
   } catch (e) {
     console.error(`[orion] heartbeat for user ${userId} threw:`, e?.message || e);
