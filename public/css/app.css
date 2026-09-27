@@ -65,12 +65,12 @@ a { color: var(--accent); }
 .orion-mark { display: flex; align-items: center; gap: 11px; }
 .orion-mark svg { display: block; overflow: visible; }
 .orion-mark svg circle {
-  fill: var(--ink);
+  fill: url(#orion-grad);
   transform-box: fill-box;
   transform-origin: center;
   animation: dot-drift 6s ease-in-out infinite alternate;
 }
-.orion-mark svg circle:nth-child(2) { fill: var(--accent); animation-delay: -2s; }
+.orion-mark svg circle:nth-child(2) { animation-delay: -2s; }
 .orion-mark svg circle:nth-child(3) { animation-delay: -4s; }
 @keyframes dot-drift {
   from { transform: translate(0, 0) scale(1); opacity: 1; }
@@ -270,10 +270,19 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
 
 .avatar {
   width: 34px; height: 34px; border-radius: 50%;
-  background: var(--ink);
   display: inline-flex; align-items: center; justify-content: center;
   font-family: var(--serif); font-weight: 700; font-size: 14px; color: var(--paper); flex-shrink: 0;
-  overflow: hidden; padding: 0; border: none;
+  overflow: hidden; padding: 0;
+  border: 2px solid transparent;
+  background:
+    linear-gradient(var(--ink), var(--ink)) padding-box,
+    linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5) border-box;
+  background-size: auto, 300% 300%;
+  animation: avatar-border-swirl 4s ease-in-out infinite;
+}
+@keyframes avatar-border-swirl {
+  0%, 100% { background-position: 0 0, 0% 50%; }
+  50% { background-position: 0 0, 100% 50%; }
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .avatar.lg { width: 64px; height: 64px; font-size: 26px; cursor: pointer; }
