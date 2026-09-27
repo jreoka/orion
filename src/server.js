@@ -676,7 +676,11 @@ function removeDataDir(rel) {
 
 // Delete one conversation completely: stop any in-flight run first so it
 // can't write into rows we're removing, then DB rows, then bytes.
+// requestStop (not just abortRun) is what trips the agent loop's
+// between-step shouldAbort() checks — without it the loop could start new
+// tool calls after the delete instead of unwinding.
 function deleteConversation(convId) {
+  requestStop(convId);
   abortRun(convId);
   const msgIds = db
     .prepare('SELECT id FROM messages WHERE conversation_id = ?')
