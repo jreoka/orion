@@ -48,6 +48,7 @@ Your tools:
 - exec: run any shell command in the VM (install packages with apt-get, run python/node scripts, curl APIs, process files, …). Prefer non-interactive commands; long jobs should finish within the timeout you set.
 - read_file / write_file / list_files: work with files in /home/agent/workspace (paths are confined there).
 - web_fetch: fetch a URL and get its readable text back. Use it for docs, articles, API responses — anything on the web.
+- web_search: search the web — clean titles, URLs, and snippets. For factual questions, search ONCE and answer. Never curl search engines, APIs, or HTML pages with exec to research something — that is what this tool is for.
 - browser_shot: take a real screenshot of a URL with headless Chromium and attach it to your reply so the user can see it. You receive the screenshot as vision too — actually look at it and describe or verify what it genuinely shows. Use it when the user wants to SEE a page, or to verify how a page you built looks.
 - send_image: attach an image file from your workspace to your reply so the user sees it inline in chat. When the user asks for an image ("send me a picture of ..."), download or generate it with exec, then send_image it — don't just describe it or drop links. You receive it as vision too: actually look at it and verify it shows what you claim before sending.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
@@ -61,6 +62,7 @@ Your tools:
 
 Guidelines:
 - Work quietly: never narrate your plan, progress, or tool steps in chat text. No "I'll look that up…", no "Let me try a different approach…", no "That didn't work, trying…". The user already sees live activity indicators while you work, and everything you write becomes a chat message they have to read. Just do the work silently with your tools.
+- Answer simple questions fast. "What show is this song from?" needs at most one web_search, then the answer — not a fifteen-tool research expedition through search engines and APIs. Once you have the answer, STOP and give it. More digging does not make a trivia answer better.
 - Write chat text only for: your final answer once the work is done, a question you need the user to answer, or something they must know because it changes what they'll do next. For a genuinely useful milestone during long multi-step work, use send_update (a sentence or two, sparingly) instead of chat text.
 - Bright line: while you are still working (more tool calls to come), do not write chat text at all — milestones go through send_update. Anything you say in chat text is your answer, so the user can tell working notes apart from the final response at a glance.
 - Be concise and direct in your answers.
@@ -148,6 +150,22 @@ export const TOOLS = [
         type: 'object',
         properties: { url: { type: 'string', description: 'http(s) URL to fetch' } },
         required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description:
+        'Search the web and get back clean titles, URLs, and snippets — no scraping, no HTML dumps. Use this for factual questions, current events, docs, anything you don\u2019t already know. One search is usually enough: read the snippets, then answer. Do NOT chain exec curls to search engines or APIs — this tool replaces all of that.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+          count: { type: 'number', description: 'Max results (default 5, max 10)' },
+        },
+        required: ['query'],
       },
     },
   },
@@ -429,6 +447,7 @@ function summarizeTool(name, args) {
     case 'write_file': { const f = base(args.path); return f ? `Writing ${f}…` : 'Writing a file…'; }
     case 'list_files': { const f = base(args.path); return f ? `Looking through ${f}…` : 'Looking through files…'; }
     case 'web_fetch': return `Reading ${domain(args.url)}…`;
+    case 'web_search': return 'Searching the web…';
     case 'browser_shot': return `Looking at ${domain(args.url)}…`;
     case 'send_image': return 'Sending an image…';
     case 'delegate': {
@@ -788,6 +807,56 @@ function createAgentTask(userId, args) {
 // model as the tool result, image (if any) is emitted to the client.
 // execCtx (optional): { onExecStart(execId), onExecEnd(execId) } — lets the
 // run driver track the in-flight sandbox exec so Stop can kill it.
+
+// Web search for the agent: SearXNG JSON first, Wikipedia API as fallback.
+// Both are keyless and server-side — the model must never curl search
+// engines itself. Returns clean numbered "title / url / snippet" text.
+async function webSearch(query, count) {
+  const q = encodeURIComponent(query);
+  const ua = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' };
+  try {
+    const r = await fetch(`https://searx.be/search?q=${q}&format=json&language=en`, {
+      headers: ua, signal: AbortSignal.timeout(15000),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const items = (j.results || [])
+        .filter((x) => x && x.title && x.url)
+        .slice(0, count)
+        .map((x) => ({ title: x.title, url: x.url, snippet: x.content || '' }));
+      if (items.length) return formatSearchResults(items);
+    }
+  } catch { /* fall through to Wikipedia */ }
+  const r = await fetch(
+    `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${q}&srlimit=${count}&format=json`,
+    { headers: { 'User-Agent': 'OrionAgent/1.0' }, signal: AbortSignal.timeout(15000) }
+  );
+  if (!r.ok) throw new Error(`web_search: search backends failed (HTTP ${r.status})`);
+  const j = await r.json();
+  const items = ((j.query && j.query.search) || []).map((x) => ({
+    title: x.title,
+    url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(String(x.title).replace(/ /g, '_')),
+    snippet: String(x.snippet || '').replace(/<[^>]+>/g, ''),
+  }));
+  if (!items.length) return '(no results found)';
+  return formatSearchResults(items);
+}
+
+function formatSearchResults(items) {
+  return items
+    .map((x, i) =>
+      `${i + 1}. ${cleanSearchText(x.title)}\n   ${x.url}\n   ${cleanSearchText(x.snippet).slice(0, 300)}`
+    )
+    .join('\n');
+}
+
+function cleanSearchText(s) {
+  return String(s || '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&#x27;/g, "'")
+    .replace(/\s+/g, ' ').trim();
+}
+
 async function executeTool(userId, conversationId, assistantMessageId, name, args, execCtx) {
   switch (name) {
     case 'exec': {
@@ -857,6 +926,12 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       if (exitCode !== 0) throw new Error(`web_fetch failed: ${output.trim().slice(0, 500)}`);
       const text = output.trim().slice(0, 15000);
       return { text: text || '(no readable text found)' };
+    }
+    case 'web_search': {
+      const query = String(args.query ?? '').trim();
+      if (!query) throw new Error('web_search: query is required');
+      const count = Math.min(Math.max(Math.floor(Number(args.count) || 5), 1), 10);
+      return { text: await webSearch(query, count) };
     }
     case 'browser_shot': {
       if (!validUrl(args.url)) throw new Error(`browser_shot: refusing non-http(s) URL: ${args.url}`);
