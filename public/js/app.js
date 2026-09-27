@@ -785,6 +785,12 @@ function messageEl(m) {
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + (m.role === 'user' ? 'user' : 'assistant');
   wrap.dataset.mid = m.id || '';
+  // Tool-only turns arrive as empty assistant rows. Hide them here — in the
+  // single place every render path funnels through — so they never take
+  // layout space (not even the flex gap). Unhidden by JS when text streams
+  // in. (This used to live only in onBusMessage, so any full re-render
+  // resurrected every empty row as ~28px of dead space each.)
+  if (isEmptyPlaceholder(m)) wrap.classList.add('msg-empty');
   if (m.kind === 'update') {
     // Mid-run progress note: a slim status line, not a full message card,
     // so a working run reads as one answer with a work log — not a stack
@@ -1820,9 +1826,6 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
     msg = { id: m.id, role: m.role, content: m.content || '', kind: m.kind || 'message', attachments: m.attachments || [], reactions: m.reactions || [] };
     S.messages.push(msg);
     const el = messageEl(msg);
-    // Tool-only turns arrive as empty assistant rows. Hide them so they take
-    // no space (flex gap included); unhidden when text streams in.
-    if (isEmptyPlaceholder(msg)) el.classList.add('msg-empty');
     $('#messages').appendChild(el);
     trimRenderedTop();
     $('#messages').hidden = false;
