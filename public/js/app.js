@@ -2095,6 +2095,16 @@ async function afterLogin() {
   refreshUsage();
 }
 
+// Always-compact token count: 1234567 → "1.2M", 10500 → "10.5K", 999 → "999".
+function formatCompactTokens(n) {
+  n = Number(n) || 0;
+  const trim = (v) => v.toFixed(1).replace(/\.0$/, '');
+  if (n >= 1e9) return trim(n / 1e9) + 'B';
+  if (n >= 1e6) return trim(n / 1e6) + 'M';
+  if (n >= 1e3) return trim(n / 1e3) + 'K';
+  return String(Math.round(n));
+}
+
 // Weekly token usage bar in the sidebar. Blue-purple swirl normally,
 // orange past 75%, red past 90%.
 let usageTimer = null;
@@ -2113,7 +2123,7 @@ async function refreshUsage() {
       fill.classList.remove('warn', 'danger');
       $('#usage-pct').textContent = '∞';
       $('#usage-tokens').textContent =
-        `${formatTokenLimit(u.total_tokens)} tokens this week · no limit`;
+        `${formatCompactTokens(u.total_tokens)} tokens this week · no limit`;
       box.querySelector('.usage-track').removeAttribute('aria-valuenow');
     } else {
       const pct = Math.min(100, Math.round((u.total_tokens / u.limit) * 100));
@@ -2122,7 +2132,7 @@ async function refreshUsage() {
       fill.classList.toggle('danger', pct >= 90);
       $('#usage-pct').textContent = pct + '%';
       $('#usage-tokens').textContent =
-        `${formatTokenLimit(u.total_tokens)} / ${formatTokenLimit(u.limit)} tokens · resets Monday`;
+        `${formatCompactTokens(u.total_tokens)} / ${formatCompactTokens(u.limit)} tokens · resets Monday`;
       box.querySelector('.usage-track').setAttribute('aria-valuenow', pct);
     }
   } catch { box.hidden = true; }
