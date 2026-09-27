@@ -122,16 +122,17 @@ function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = fals
 
 /* Native prompt dialog (replaces window.prompt). Resolves with the entered
    string, or null when cancelled. */
-function promptDialog({ title, message = '', label = '', placeholder = '', value = '', okLabel = 'Save', password = false }) {
+function promptDialog({ title, message = '', label = '', placeholder = '', value = '', okLabel = 'Save', password = false, maxlength = null }) {
   return new Promise((resolve) => {
     // With a label, the input renders as a Paper-style labeled field (like
     // the change-password modal); without one it keeps the bare input.
+    const maxAttr = Number.isInteger(maxlength) && maxlength > 0 ? ` maxlength="${maxlength}"` : '';
     const inputHtml = label
       ? `<label class="field"><span>${esc(label)}</span>
-           <input id="pd-input" type="${password ? 'password' : 'text'}" ${password ? 'autocomplete="current-password"' : ''} value="${esc(value)}" placeholder="${esc(placeholder)}">
+           <input id="pd-input" type="${password ? 'password' : 'text'}"${maxAttr} ${password ? 'autocomplete="current-password"' : ''} value="${esc(value)}" placeholder="${esc(placeholder)}">
          </label>`
       : `<label class="fld">
-           <input id="pd-input" type="${password ? 'password' : 'text'}" ${password ? 'autocomplete="current-password"' : ''} value="${esc(value)}" placeholder="${esc(placeholder)}">
+           <input id="pd-input" type="${password ? 'password' : 'text'}"${maxAttr} ${password ? 'autocomplete="current-password"' : ''} value="${esc(value)}" placeholder="${esc(placeholder)}">
          </label>`;
     const bd = openModal(`
       <h3>${esc(title)}</h3>
@@ -3701,6 +3702,7 @@ async function registerPasskey() {
     label: 'Passkey name',
     placeholder: 'e.g. iPhone',
     okLabel: 'Continue',
+    maxlength: 32,
   });
   if (v === null) return;
   const name = v;
@@ -3739,9 +3741,29 @@ function fmtDateTime(iso) {
   if (!iso) return '';
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
-function truncUA(ua, n = 60) {
-  if (!ua) return '';
-  return ua.length > n ? ua.slice(0, n) + '…' : ua;
+// Parse a raw User-Agent into a friendly "Chrome on Android" device name
+// for the sessions list. Falls back gracefully when parts are unknown.
+function friendlyUA(ua) {
+  if (!ua) return 'Unknown device';
+  const b = /EdgA?iOS\/|Edg\//.test(ua) ? 'Edge'
+    : /OPR\/|Opera Mini|Opera Mobi/.test(ua) ? 'Opera'
+    : /SamsungBrowser\//.test(ua) ? 'Samsung Internet'
+    : /CriOS\//.test(ua) ? 'Chrome'
+    : /FxiOS\//.test(ua) ? 'Firefox'
+    : /Chrome\//.test(ua) ? 'Chrome'
+    : /Firefox\//.test(ua) ? 'Firefox'
+    : /Version\/[\d.]+.*Safari\//.test(ua) ? 'Safari'
+    : null;
+  const o = /Android/.test(ua) ? 'Android'
+    : /iPhone/.test(ua) ? 'iPhone'
+    : /iPad/.test(ua) ? 'iPad'
+    : /Windows NT/.test(ua) ? 'Windows'
+    : /CrOS/.test(ua) ? 'ChromeOS'
+    : /Mac OS X/.test(ua) ? 'macOS'
+    : /Linux/.test(ua) ? 'Linux'
+    : null;
+  if (b && o) return `${b} on ${o}`;
+  return b || o || 'Unknown device';
 }
 function wireSessionsTab() {
   $('#sessions-revoke-others').onclick = async () => {
@@ -3766,11 +3788,31 @@ async function renderSessionsTab() {
       row.className = 'row-item';
       row.innerHTML = `
         <div class="row-main">
-          <span class="row-title">${s.current ? '<span class="badge ok">This device</span> ' : ''}${esc(truncUA(s.user_agent, 40) || 'Unknown device')}</span>
+          <span class="row-title" title="${esc(s.user_agent || '')}">${s.current ? '<span class="badge ok">This device</span> ' : ''}${esc(s.name || friendlyUA(s.user_agent))}</span>
           <span class="row-sub">${esc(s.ip || '')} · last active ${esc(fmtDateTime(s.last_seen_at || s.created_at))}</span>
         </div>
-        ${s.current ? '' : '<button class="btn small danger">Revoke</button>'}`;
-      const btn = row.querySelector('button');
+        <button class="btn small" data-act="rename">Rename</button>
+        ${s.current ? '' : '<button class="btn small danger" data-act="revoke">Revoke</button>'}`;
+      const renameBtn = row.querySelector('[data-act="rename"]');
+      if (renameBtn) {
+        renameBtn.onclick = async () => {
+          const v = await promptDialog({
+            title: 'Rename session',
+            message: 'A name you’ll recognize, like the device it’s on. Leave empty to go back to the automatic name.',
+            label: 'Session name',
+            value: s.name || '',
+            placeholder: friendlyUA(s.user_agent),
+            maxlength: 32,
+          });
+          if (v === null) return;
+          try {
+            await api(`/api/auth/sessions/${s.id}`, { method: 'PATCH', body: { name: v.trim() } });
+            toast(v.trim() ? 'Session renamed' : 'Name cleared');
+            renderSessionsTab();
+          } catch (err) { toast('Rename failed: ' + err.message); }
+        };
+      }
+      const btn = row.querySelector('[data-act="revoke"]');
       if (btn) {
         btn.onclick = async () => {
           try {

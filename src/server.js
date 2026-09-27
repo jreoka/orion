@@ -418,6 +418,20 @@ app.delete('/api/auth/sessions/:id', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+app.patch('/api/auth/sessions/:id', requireAuth, (req, res) => {
+  // Custom device name (32 chars max). Empty clears it back to the
+  // friendly "Browser on OS" name.
+  const sid = req.params.id;
+  const raw = req.body?.name;
+  if (raw === undefined) throw httpError(400, 'Name is required.');
+  const name = String(raw).trim();
+  if (name.length > 32) throw httpError(400, 'Session name must be 32 characters or less.');
+  const info = db.prepare('UPDATE sessions SET name = ? WHERE public_id = ? AND user_id = ?')
+    .run(name || null, sid, req.user.id);
+  if (!info.changes) throw httpError(404, 'Session not found');
+  res.json({ ok: true });
+});
+
 // ---- conversations --------------------------------------------------------
 
 function getConv(id, userId) {

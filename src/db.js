@@ -94,6 +94,7 @@ addColumn('sessions', 'last_seen_at', 'INTEGER');
 // must never hand it out (session list / revoke). public_id is a random,
 // non-secret handle safe to expose.
 addColumn('sessions', 'public_id', 'TEXT');
+addColumn('sessions', 'name', 'TEXT'); // user-set custom device name (32 chars max)
 {
   const missing = db.prepare('SELECT id FROM sessions WHERE public_id IS NULL').all();
   if (missing.length) {

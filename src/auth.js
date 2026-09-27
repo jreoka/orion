@@ -220,7 +220,7 @@ export function requireAdmin(req, res, next) {
 export function listSessions(userId, currentId) {
   return db
     .prepare(
-      'SELECT id AS token, public_id, created_at, last_seen_at, ip, user_agent FROM sessions WHERE user_id = ? ORDER BY created_at DESC'
+      'SELECT id AS token, public_id, created_at, last_seen_at, ip, user_agent, name FROM sessions WHERE user_id = ? ORDER BY created_at DESC'
     )
     .all(userId)
     .map((s) => ({
@@ -229,6 +229,7 @@ export function listSessions(userId, currentId) {
       last_seen_at: s.last_seen_at,
       ip: s.ip,
       user_agent: s.user_agent,
+      name: s.name,
       current: s.token === currentId,
     }));
 }

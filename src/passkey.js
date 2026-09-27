@@ -103,10 +103,12 @@ export async function verifyRegistration(req, user, token, response, name) {
   const credentialId = cred.id; // base64url
   const publicKey = Buffer.from(cred.publicKey).toString('base64');
   const transports = response.transports || cred.transports || [];
+  const cleanName = String(name || 'Passkey').trim() || 'Passkey';
+  if (cleanName.length > 32) throw httpError(400, 'Passkey name must be 32 characters or less.');
   try {
     db.prepare(
       'INSERT INTO passkey_credentials (user_id, credential_id, public_key, counter, transports, name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(user.id, credentialId, publicKey, cred.counter ?? 0, JSON.stringify(transports), String(name || 'Passkey').slice(0, 40), Date.now());
+    ).run(user.id, credentialId, publicKey, cred.counter ?? 0, JSON.stringify(transports), cleanName, Date.now());
   } catch (e) {
     if (String(e.message).includes('UNIQUE constraint failed')) {
       throw httpError(409, 'This passkey is already registered');
