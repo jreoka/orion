@@ -536,6 +536,12 @@ button.avatar.lg:hover { opacity: .85; }
 .content h2 { font-size: 21px; }
 .content h3 { font-size: 18px; }
 .content h4, .content h5, .content h6 { font-size: 16.5px; }
+.tbl-wrap { margin: 14px 0; overflow-x: auto; border: 1px solid var(--hairline); border-radius: var(--radius-sm); }
+.content table { width: 100%; border-collapse: collapse; font-size: 14.5px; line-height: 1.5; }
+.content th, .content td { border-bottom: 1px solid var(--hairline); padding: 8px 12px; vertical-align: top; overflow-wrap: anywhere; }
+.content tbody tr:last-child th, .content tbody tr:last-child td { border-bottom: 0; }
+.content thead th { font-family: var(--serif); font-weight: 700; background: var(--paper-2); white-space: nowrap; border-bottom: 1px solid var(--hairline); }
+.content tbody tr:nth-child(even) td { background: var(--accent-soft); }
 .a-body p { margin: 0 0 14px; }
 .a-body p:last-child { margin-bottom: 0; }
 .a-body a { color: var(--accent); }

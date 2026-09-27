@@ -641,24 +641,94 @@ function md(src) {
   return html || '<br>';
 }
 
-/* Block-level pass: ATX headings (# … / ## …) become <h1>–<h6>.
-   Everything else goes through inlineMd per line. A <br> is only added
-   between two non-heading lines so headings don't get stray blank lines. */
+/* Block-level pass: ATX headings (# … / ## …) become <h1>–<h6>,
+   GitHub-style pipe tables become <table>. Everything else goes through
+   inlineMd per line. A <br> is only added between two non-block lines so
+   headings/tables don't get stray blank lines. */
 function mdBlocks(p) {
   const lines = String(p ?? '').split('\n');
-  let html = '', prevWasHeading = false;
-  lines.forEach((line) => {
+  let html = '', prevWasBlock = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const m = line.match(/^(#{1,6})\s+(.*)$/);
     if (m) {
       html += `<h${m[1].length}>${inlineMd(m[2])}</h${m[1].length}>`;
-      prevWasHeading = true;
-    } else {
-      if (html && !prevWasHeading) html += '<br>';
-      html += inlineMd(line);
-      prevWasHeading = false;
+      prevWasBlock = true;
+      continue;
     }
-  });
+    const tbl = tryParseTable(lines, i);
+    if (tbl) {
+      html += tbl.html;
+      i = tbl.nextIndex - 1;
+      prevWasBlock = true;
+      continue;
+    }
+    if (html && !prevWasBlock) html += '<br>';
+    html += inlineMd(line);
+    prevWasBlock = false;
+  }
   return html;
+}
+
+// Split a table row on unescaped pipes; a leading/trailing pipe just marks
+// the row edges ("| a | b |" -> ["a", "b"]).
+function splitTableRow(line) {
+  const cells = [];
+  let cur = '';
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '\\' && line[i + 1] === '|') { cur += '|'; i++; }
+    else if (ch === '|') { cells.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  cells.push(cur);
+  let out = cells.length && cells[0].trim() === '' ? cells.slice(1) : cells;
+  if (out.length && out[out.length - 1].trim() === '') out = out.slice(0, -1);
+  return out.map((c) => c.trim());
+}
+
+// Delimiter row: every cell is at least one hyphen, optionally colon-aligned.
+function isDelimRow(line) {
+  if (!line.includes('|')) return false;
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+}
+
+function delimAlign(cell) {
+  const left = cell.startsWith(':'), right = cell.endsWith(':');
+  if (left && right) return 'center';
+  if (right) return 'right';
+  return 'left';
+}
+
+// If lines[i] starts a GFM pipe table (header + delimiter row), render it
+// and return { html, nextIndex }. Otherwise return null.
+function tryParseTable(lines, i) {
+  const header = lines[i];
+  if (!header.includes('|')) return null;
+  const delim = lines[i + 1];
+  if (delim == null || !isDelimRow(delim)) return null;
+  const aligns = splitTableRow(delim).map(delimAlign);
+  const headCells = splitTableRow(header);
+  const n = Math.max(headCells.length, aligns.length);
+  while (headCells.length < n) headCells.push('');
+  while (aligns.length < n) aligns.push('left');
+  let html = '<div class="tbl-wrap"><table><thead><tr>';
+  for (let c = 0; c < n; c++)
+    html += `<th style="text-align:${aligns[c]}">${inlineMd(headCells[c])}</th>`;
+  html += '</tr></thead><tbody>';
+  let j = i + 2;
+  for (; j < lines.length; j++) {
+    if (!lines[j].includes('|')) break;
+    const rowCells = splitTableRow(lines[j]);
+    if (!rowCells.length) break;
+    html += '<tr>';
+    for (let c = 0; c < n; c++)
+      html += `<td style="text-align:${aligns[c]}">${inlineMd(rowCells[c] || '')}</td>`;
+    html += '</tr>';
+  }
+  html += '</tbody></table></div>';
+  return { html, nextIndex: j };
 }
 
 function isImageFile(name) {
