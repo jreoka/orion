@@ -695,7 +695,10 @@ button.avatar.lg:hover { opacity: .85; }
    hover-only float with no reserved space. */
 @media (hover: none) {
   .msg.user .bubble { margin-bottom: 40px; }
-  .msg.assistant:not(:has(+ .msg.assistant)) .a-body { padding-bottom: 40px; }
+  /* margin, not padding: the hover-button row is absolutely positioned at
+     top:100%, so padding would push it 40px below the text instead of
+     leaving it a 6px gap in reserved space. */
+  .msg.assistant:not(:has(+ .msg.assistant)) .a-body { margin-bottom: 40px; }
 }
 /* Consecutive assistant messages belong to one run: tuck them into a single
    visual group and keep one + for the group instead of one per message. */
@@ -741,6 +744,7 @@ button.avatar.lg:hover { opacity: .85; }
 .msg .bubble, .a-body { position: relative; }
 .rx-row:not(:has(.rx-chip)) {
   position: absolute; top: 100%; right: 4px; margin: 6px 0 0;
+  flex-wrap: nowrap; /* one line — never a wrapped column in a narrow bubble */
 }
 /* Assistant hover buttons (+ / copy) live in the empty space below-left of
    the message instead of right-aligned — there they'd hang 10px over the
