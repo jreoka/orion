@@ -1508,11 +1508,4 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
 [data-theme="dark"] .rx-add:hover, [data-theme="dark"] .rx-copy:hover {
   background: var(--paper-3); color: var(--ink); border-color: var(--ink-2);
 }
-/* Under the light user bubble they should match the bubble, not the page. */
-[data-theme="dark"] .msg.user .rx-add, [data-theme="dark"] .msg.user .rx-copy {
-  background: var(--ink); border-color: transparent; color: var(--paper);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
-}
-[data-theme="dark"] .msg.user .rx-add:hover, [data-theme="dark"] .msg.user .rx-copy:hover {
-  background: #f6f1e3; color: var(--paper);
-}
+
