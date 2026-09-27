@@ -18,10 +18,10 @@
     return;
   }
 
-  const BARS = 32;   // wave bars across the strip
-  const LEVELS = 6;  // quantized height steps — the steppy digital look
-  const WAVE_FPS = 15;      // chunky sample-and-hold cadence, not 60fps shimmer
-  const FALL_PER_SEC = 1.4; // bars fall from full to empty in ~0.7s (VU style)
+  const BARS = 32;   // chunky discrete bars — the digital look
+  const WAVE_FPS = 30; // fluid motion; the bars are quantized, not the animation
+  const ATTACK = 0.6;  // per-tick ease when rising — snappy but smooth
+  const RELEASE = 0.2; // per-tick ease when falling — gentle tail
 
   let dictating = false;
   let rec = null;
@@ -63,26 +63,22 @@
   function drawWave(now) {
     if (!dictating) return;
     rafId = requestAnimationFrame(drawWave);
-    // Sample-and-hold: update the bars at WAVE_FPS, not every frame.
     if (now - lastWaveDraw < 1000 / WAVE_FPS) return;
-    const dt = Math.min(0.25, (now - lastWaveDraw) / 1000);
     lastWaveDraw = now;
     analyser.getByteFrequencyData(freq);
-    const targets = new Float32Array(BARS);
     const n = freq.length;
     for (let i = 0; i < BARS; i++) {
       const b0 = Math.floor((i * n) / BARS);
       const b1 = Math.max(b0 + 1, Math.floor(((i + 1) * n) / BARS));
       let v = 0;
       for (let b = b0; b < b1 && b < n; b++) if (freq[b] > v) v = freq[b];
-      // Quantize: snap the level to LEVELS discrete steps.
-      targets[i] = Math.round((v / 255) * LEVELS) / LEVELS;
-    }
-    // VU-meter easing: instant attack, slow release — no flicker.
-    for (let i = 0; i < BARS; i++) {
-      shown[i] = targets[i] > shown[i]
-        ? targets[i]
-        : Math.max(targets[i], shown[i] - FALL_PER_SEC * dt);
+      const target = v / 255;
+      // Ease toward the target: quick to rise, gentle to fall. Heights stay
+      // fluid — the chunkiness comes from the discrete bars, not stepped
+      // snapping between levels (that snapping was the glitchy look).
+      const k = target > shown[i] ? ATTACK : RELEASE;
+      shown[i] += (target - shown[i]) * k;
+      if (shown[i] < 0.004 && target < 0.004) shown[i] = 0; // settle to rest
     }
     const ctx = wave.getContext('2d');
     const W = wave.width, H = wave.height;
@@ -128,7 +124,7 @@
     const src = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 64;
-    analyser.smoothingTimeConstant = 0.7;
+    analyser.smoothingTimeConstant = 0.55;
     freq = new Uint8Array(analyser.frequencyBinCount);
     src.connect(analyser);
     if (audioCtx.state === 'suspended') { try { await audioCtx.resume(); } catch (e) {} }
