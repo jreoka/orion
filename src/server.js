@@ -93,6 +93,16 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
+// The asset hash baked into public/index.html's ?v= URLs. The client
+// compares it against the bundle it loaded so a long-lived tab can reload
+// itself after a deploy instead of testing stale code.
+let ASSET_VERSION = null;
+try {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const m = /\/js\/app\.js\?v=([0-9a-f]+)/.exec(html);
+  if (m) ASSET_VERSION = m[1];
+} catch { /* health simply omits it */ }
+
 // Behind Caddy (the only ingress — the app container publishes no ports),
 // so X-Forwarded-For is trustworthy and req.ip is the real client IP.
 app.set('trust proxy', true);
@@ -1620,7 +1630,7 @@ app.delete('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => 
 
 // ---- misc -----------------------------------------------------------------
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, asset: ASSET_VERSION }));
 
 // Errors from httpError carry .status; everything else is a 500.
 // Never leak stack traces, SQL, or filesystem paths to clients —

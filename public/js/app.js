@@ -224,8 +224,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     });
     // A push-notification tap while a tab is open: the service worker
     // focuses it and asks it to navigate to the conversation.
-    navigator.serviceWorker.addEventListener('message', (event) => {
-      const data = event.data || {};
+    navigator.serviceWorker.addEventListener('message', (event) => {      const data = event.data || {};
       if (data.type === 'orion-navigate') {
         // The service worker posts the push deep-link (e.g. '#/chat/123').
         // Honor it instead of always landing on the most recent chat.
@@ -240,6 +239,41 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     });
   });
 }
+
+// ---- deploy awareness -----------------------------------------------------
+// A long-lived tab can otherwise keep testing a stale build after a deploy
+// and report fixed bugs as still broken. /api/health carries the asset hash
+// the server baked into index.html; when it differs from the bundle this
+// tab loaded, reload once — deferred to run end so a reload never eats
+// live state mid-run.
+function myAssetVersion() {
+  const s = document.querySelector('script[src*="/js/app.js"]');
+  const m = s && /[?&]v=([0-9a-f]+)/.exec(s.src || '');
+  return m ? m[1] : null;
+}
+let deployReloadQueued = false;
+async function checkForDeploy() {
+  try {
+    const h = await api('/api/health');
+    const mine = myAssetVersion();
+    if (!h || !h.asset || !mine || h.asset === mine || deployReloadQueued) return;
+    deployReloadQueued = true;
+    const go = () => {
+      toast('Orion updated — reloading…');
+      setTimeout(() => location.reload(), 1200);
+    };
+    if (S.runActive) {
+      // A run is in flight: wait for it to finish, then reload. The run
+      // itself is server-side and unaffected by the client reloading.
+      const iv = setInterval(() => {
+        if (!S.runActive) { clearInterval(iv); go(); }
+      }, 2000);
+      // Safety valve: never wait more than 10 minutes.
+      setTimeout(() => { clearInterval(iv); go(); }, 600000);
+    } else go();
+  } catch { /* the next tick retries */ }
+}
+setInterval(checkForDeploy, 60000);
 
 /* ---------- boot ---------- */
 async function boot() {
