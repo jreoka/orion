@@ -1031,6 +1031,12 @@ export async function loadHistory(conversationId, limit) {
   // stays intact and the user's question is still asked, in order.
   // A tool_calls with no results at all (run died mid-turn) is stripped —
   // providers reject calls without results.
+  // A vault_request also splits the sequence: the widget card is stored as
+  // a separate assistant row (no tool_calls) between the tool_calls and
+  // their result — assistant(tc) → assistant(card) → tool. Without repair
+  // the tool_calls are stripped as result-less and the tool row becomes an
+  // orphan, which makes some providers return empty completions. Absorb
+  // such card rows into the group, after the tool results.
   {
     const repaired = [];
     let i = 0;
@@ -1038,18 +1044,21 @@ export async function loadHistory(conversationId, limit) {
       const r = rows[i];
       if (r.role === 'assistant' && r.tool_calls) {
         const tools = [];
+        const deferredCards = [];
         const deferredUsers = [];
         let j = i + 1;
-        while (j < rows.length && (rows[j].role === 'tool' || rows[j].role === 'user')) {
+        while (j < rows.length && (rows[j].role === 'tool' || rows[j].role === 'user' ||
+               (rows[j].role === 'assistant' && !rows[j].tool_calls))) {
           if (rows[j].role === 'user') deferredUsers.push(rows[j]);
-          else tools.push(rows[j]);
+          else if (rows[j].role === 'tool') tools.push(rows[j]);
+          else deferredCards.push(rows[j]);
           j++;
         }
         if (tools.length) {
-          repaired.push(r, ...tools, ...deferredUsers);
+          repaired.push(r, ...tools, ...deferredCards, ...deferredUsers);
         } else {
           const { tool_calls: _dropped, ...rest } = r;
-          repaired.push(rest, ...deferredUsers);
+          repaired.push(rest, ...deferredCards, ...deferredUsers);
         }
         i = j;
       } else {
