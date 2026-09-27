@@ -432,11 +432,17 @@ function openLightbox(url) {
    [links](url), and line breaks. */
 function inlineMd(s) {
   s = esc(s);
+  // Autolink FIRST — before backticks/bold/italic wrap URLs in
+  // <code>/<strong>/<em> (which would hide them from the linkifier).
+  // Catches bare URLs and ones wrapped in `backticks`, **bold**, or
+  // *italic*, so links are always clickable no matter how they're written.
+  // [text](url) links are handled below; their URLs are preceded by '('
+  // so this pass leaves them alone.
+  s = s.replace(/(^|[\s`*])(https?:\/\/[^\s<`*]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
   s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>');
   s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-  s = s.replace(/(^|\s)(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
   s = s.replace(/\n/g, '<br>');
   return s;
 }
