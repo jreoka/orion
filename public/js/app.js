@@ -1661,7 +1661,7 @@ function shareUrlFor(token) { return `${location.origin}/s/${token}`; }
 async function shareChatModal(conv) {
   const bd = openModal(`
     <h3>Share “${esc(conv.title || 'New chat')}”</h3>
-    <p class="muted">Anyone with the link can read this chat. They can't write to it or see your other chats. Revoking the link (here or in Shared chats) disables it immediately.</p>
+    <p class="muted">Anyone with the link can read this chat as it looks right now. They can't write to it or see your other chats. New messages won't appear on the link unless you share again. Revoking the link (here or in Shared chats) disables it immediately.</p>
     <p id="share-error" class="form-error" hidden></p>
     <div id="share-body"><p class="muted">Creating link…</p></div>
     <div class="modal-actions">
@@ -1671,8 +1671,11 @@ async function shareChatModal(conv) {
   const body = bd.querySelector('#share-body');
   const err = bd.querySelector('#share-error');
   let token;
+  let freshShare = true;
   try {
-    token = (await api(`/api/conversations/${conv.id}/share`, { method: 'POST' })).token;
+    const r = await api(`/api/conversations/${conv.id}/share`, { method: 'POST' });
+    token = r.token;
+    freshShare = r.fresh !== false;
   } catch (ex) {
     err.textContent = ex.message || 'Could not create the share link.';
     err.hidden = false;
@@ -1681,6 +1684,7 @@ async function shareChatModal(conv) {
   }
   const url = shareUrlFor(token);
   body.innerHTML = `
+    ${freshShare ? '' : '<p class="muted" style="margin-top:0">This chat was already shared — the link now includes the latest messages.</p>'}
     <label class="field"><span>Share link</span>
       <input id="share-link" type="text" readonly value="${esc(url)}">
     </label>

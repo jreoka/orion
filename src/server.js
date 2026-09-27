@@ -1323,23 +1323,63 @@ function serveAttachmentFile(att, res) {
 // A share link is a public, unguessable token per conversation. The DB row
 // IS the link: revoking (or deleting the chat) removes the row and the link
 // stops resolving.
+//
+// A share is a FROZEN snapshot of the transcript at share time — messages
+// written after sharing never appear on the link. Re-sharing refreshes the
+// snapshot on the same link.
 
-// One share link per chat — re-sharing returns the existing link.
+// Build the public transcript for a conversation — the same filtering the
+// share page uses. Attachment URLs are scoped to the share token.
+function buildShareTranscript(conversationId, token) {
+  return db
+    .prepare(
+      `SELECT id, role, content, kind, created_at FROM messages
+       WHERE conversation_id = ? AND role != 'tool'
+         AND (kind IS NULL OR kind = 'message')
+       ORDER BY id ASC`
+    )
+    .all(conversationId)
+    .map((m) => ({
+      ...m,
+      attachments: db
+        .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
+        .all(m.id)
+        .map((a) => ({
+          id: a.id,
+          filename: a.filename,
+          url: `/api/share/${token}/files/${a.id}`,
+        })),
+    }));
+}
+
+function shareSnapshot(token, title, conversationId) {
+  return JSON.stringify({ title, messages: buildShareTranscript(conversationId, token) });
+}
+
+// One share link per chat. Sharing a chat that is already shared refreshes
+// the frozen transcript on the existing link.
 app.post('/api/conversations/:id/share', requireAuth, (req, res) => {
   const conv = getConv(req.params.id, req.user.id);
   if (!conv) return res.status(404).json({ error: 'Not found' });
   let row = db.prepare('SELECT token FROM shared_chats WHERE conversation_id = ?').get(conv.id);
+  let fresh = false;
   if (!row) {
     const token = crypto.randomBytes(24).toString('base64url');
     try {
-      db.prepare('INSERT INTO shared_chats (conversation_id, user_id, token) VALUES (?, ?, ?)')
-        .run(conv.id, req.user.id, token);
+      db.prepare(
+        'INSERT INTO shared_chats (conversation_id, user_id, token, snapshot) VALUES (?, ?, ?, ?)'
+      ).run(conv.id, req.user.id, token, shareSnapshot(token, conv.title, conv.id));
+      fresh = true;
     } catch {
       // Lost a race with a parallel share — fall through to the existing row.
     }
     row = db.prepare('SELECT token FROM shared_chats WHERE conversation_id = ?').get(conv.id);
   }
-  res.json({ token: row.token });
+  if (!fresh && row) {
+    db.prepare('UPDATE shared_chats SET snapshot = ? WHERE conversation_id = ?')
+      .run(shareSnapshot(row.token, conv.title, conv.id), conv.id);
+  }
+  res.json({ token: row.token, fresh });
 });
 
 // Revoke a chat's share link. The row is gone, so the link stops working.
@@ -1378,32 +1418,27 @@ function getShare(token) {
   );
 }
 
-// Public: the shared chat's transcript — plain user/assistant turns only.
-// Progress notes, vault cards, tool rows, and empty tool-only turns are
-// internal and stay out of the shared page.
+// Public: the shared chat's transcript — the frozen snapshot captured at
+// share time. Plain user/assistant turns only: progress notes, vault cards,
+// tool rows, and empty tool-only turns are internal and stay out.
 app.get('/api/share/:token', (req, res) => {
   const share = getShare(req.params.token);
   if (!share) return res.status(404).json({ error: 'This link is invalid or has been revoked.' });
-  const messages = db
-    .prepare(
-      `SELECT id, role, content, kind, created_at FROM messages
-       WHERE conversation_id = ? AND role != 'tool'
-         AND (kind IS NULL OR kind = 'message')
-       ORDER BY id ASC`
-    )
-    .all(share.conversation_id)
-    .map((m) => ({
-      ...m,
-      attachments: db
-        .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
-        .all(m.id)
-        .map((a) => ({
-          id: a.id,
-          filename: a.filename,
-          url: `/api/share/${share.token}/files/${a.id}`,
-        })),
-    }));
-  res.json({ title: share.title, created_at: share.created_at, messages });
+  let snap = null;
+  if (share.snapshot) {
+    try {
+      snap = JSON.parse(share.snapshot);
+    } catch {
+      snap = null;
+    }
+  }
+  if (!snap || !Array.isArray(snap.messages)) {
+    // Legacy share from before snapshots — freeze it at its current state.
+    snap = { title: share.title, messages: buildShareTranscript(share.conversation_id, share.token) };
+    db.prepare('UPDATE shared_chats SET snapshot = ? WHERE token = ?')
+      .run(JSON.stringify(snap), share.token);
+  }
+  res.json({ title: snap.title || share.title, created_at: share.created_at, messages: snap.messages });
 });
 
 // Public: an attachment scoped to its share token — only files that belong
