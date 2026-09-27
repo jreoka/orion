@@ -2221,7 +2221,8 @@ function onBusTool(d) {
 
 function onBusImage(d) {
   if (!d || !d.url || d.message_id == null) return;
-  const imgsEl = msgElById(d.message_id)?.querySelector('.imgs');
+  const el = msgElById(d.message_id);
+  const imgsEl = el?.querySelector('.imgs');
   if (!imgsEl) return;
   const img = document.createElement('img');
   img.className = 'msg-img';
@@ -2230,6 +2231,9 @@ function onBusImage(d) {
   img.loading = 'lazy';
   img.addEventListener('click', () => openLightbox(d.url));
   imgsEl.appendChild(img);
+  // The image may arrive on a tool-only turn whose row was hidden as an
+  // empty placeholder — unhide it, like the token handler does for text.
+  el.classList.remove('msg-empty');
   const msg = S.messages.find((x) => x.id === d.message_id);
   if (msg) (msg.attachments = msg.attachments || []).push({ url: d.url, filename: d.filename });
   keepPlace();

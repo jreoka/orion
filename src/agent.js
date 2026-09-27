@@ -49,6 +49,7 @@ Your tools:
 - read_file / write_file / list_files: work with files in /home/agent/workspace (paths are confined there).
 - web_fetch: fetch a URL and get its readable text back. Use it for docs, articles, API responses — anything on the web.
 - browser_shot: take a real screenshot of a URL with headless Chromium and attach it to your reply so the user can see it. You receive the screenshot as vision too — actually look at it and describe or verify what it genuinely shows. Use it when the user wants to SEE a page, or to verify how a page you built looks.
+- send_image: attach an image file from your workspace to your reply so the user sees it inline in chat. When the user asks for an image ("send me a picture of ..."), download or generate it with exec, then send_image it — don't just describe it or drop links. You receive it as vision too: actually look at it and verify it shows what you claim before sending.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
 - send_update: post a progress note mid-run. It appears as a slim status line in the chat (not a full message card), so use it for meaningful milestones during long multi-step work — a sentence or two, not a narration of every tool call.
 - send_push: buzz the user's phone with a short push notification that deep-links to this chat. Use only when the user is likely away and the news is worth an interruption — a long task finished, you need them to act (approve something, unblock you), or they asked to be notified. The chat message itself is usually enough; never for routine progress (use send_update for that). Limited to 3 per chat per 10 minutes. Skipped automatically when the user is watching this chat, and when they have no push subscription — the result tells you which.
@@ -63,7 +64,7 @@ Guidelines:
 - Write chat text only for: your final answer once the work is done, a question you need the user to answer, or something they must know because it changes what they'll do next. For a genuinely useful milestone during long multi-step work, use send_update (a sentence or two, sparingly) instead of chat text.
 - Be concise and direct in your answers.
 - Make links clickable: write [label](https://…) or a bare https://… URL. Never put a URL inside backticks — it renders as unclickable code, which is infuriating when the user needs to tap it.
-- Images attached to messages (user uploads, your browser_shot captures) are passed to you as vision — you can genuinely see them. Never claim you can't see an attached image, and never describe image contents you haven't actually been shown: if no image came through, say so plainly instead of guessing.
+- Images attached to messages (user uploads, your browser_shot captures, your send_image sends) are passed to you as vision — you can genuinely see them. Never claim you can't see an attached image, and never describe image contents you haven't actually been shown: if no image came through, say so plainly instead of guessing.
 - When a task needs several steps, just do them — don't ask permission for routine, reversible actions.
 - CONFIRM FIRST before anything destructive or hard to undo: deleting files (rm -rf), overwriting important data, sending emails/messages, making purchases, or running commands that affect systems outside the VM.
 - If a command fails, read the error and try a different approach before giving up.
@@ -153,7 +154,7 @@ export const TOOLS = [
     function: {
       name: 'browser_shot',
       description:
-        'Take a screenshot of a URL with headless Chromium so YOU can see the rendered page. The screenshot is for your own eyes only and is never shown to the user — unless the user explicitly asked to see the page (e.g. "show me", "screenshot this"), in which case set show_user to true to attach it to your reply.',
+        'Take a screenshot of a URL with headless Chromium so YOU can see the rendered page. The screenshot is for your own eyes only and is never shown to the user — unless the user explicitly asked to see the page (e.g. "show me", "screenshot this"), in which case set show_user to true to attach it to your reply. Some sites block automated browsing; when that happens try a different source instead of retrying.',
       parameters: {
         type: 'object',
         properties: {
@@ -161,6 +162,21 @@ export const TOOLS = [
           full_page: { type: 'boolean', description: 'Capture the full scrollable page (default false)' },
           show_user: { type: 'boolean', description: 'Attach the screenshot to your reply so the user sees it. Only when the user asked to see it (default false).' },
         },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'send_image',
+      description:
+        'Attach an image file from your workspace to your reply so the user sees it inline in chat. Use when the user asked for an image (e.g. "send me a picture of ...") and you have downloaded or generated one. The image is also passed to you as vision — look at it and describe or verify what it genuinely shows.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Workspace path to the image file (png, jpg, gif, webp).' },
+        },
+        required: ['path'],
       },
     },
   },
@@ -412,6 +428,7 @@ function summarizeTool(name, args) {
     case 'list_files': { const f = base(args.path); return f ? `Looking through ${f}…` : 'Looking through files…'; }
     case 'web_fetch': return `Reading ${domain(args.url)}…`;
     case 'browser_shot': return `Looking at ${domain(args.url)}…`;
+    case 'send_image': return 'Sending an image…';
     case 'delegate': {
       let t = trunc(args.task, 56);
       if (t) t = t.charAt(0).toLowerCase() + t.slice(1);
@@ -507,6 +524,48 @@ function safeHost(u) {
   } catch {
     return 'that site';
   }
+}
+
+// Store an image buffer as a user-visible attachment on the in-flight
+// assistant message. Returns { url, filename, fullPath } for the client's
+// image event and the agent's vision feedback.
+function storeUserImage({ conversationId, assistantMessageId, filename, buffer }) {
+  const dir = path.join(DATA_DIR, 'files', String(conversationId));
+  fs.mkdirSync(dir, { recursive: true });
+  const safeName = `${crypto.randomUUID()}${path.extname(filename || '').toLowerCase() || '.png'}`;
+  const fullPath = path.join(dir, safeName);
+  fs.writeFileSync(fullPath, buffer);
+  const info = db
+    .prepare('INSERT INTO attachments (message_id, kind, filename, mime, path) VALUES (?, ?, ?, ?, ?)')
+    .run(assistantMessageId, 'image', filename || safeName, mimeForImage(safeName), `files/${conversationId}/${safeName}`);
+  return { url: `/api/files/${info.lastInsertRowid}`, filename: filename || safeName, fullPath };
+}
+
+function mimeForImage(name) {
+  const ext = path.extname(name || '').toLowerCase();
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.bmp') return 'image/bmp';
+  if (ext === '.svg') return 'image/svg+xml';
+  return 'image/png';
+}
+
+// Magic-byte sniff: is this buffer actually an image?
+function looksLikeImage(buf) {
+  if (!buf || buf.length < 4) return false;
+  const b = buf;
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return true; // PNG
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return true; // JPEG
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return true; // GIF
+  if (b[0] === 0x42 && b[1] === 0x4d) return true; // BMP
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) return true; // WEBP (RIFF)
+  if (b[0] === 0x3c) {
+    // SVG or HTML error page — only accept if it parses as svg, cheaply.
+    const head = b.subarray(0, 200).toString('latin1').toLowerCase();
+    return head.includes('<svg');
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -818,29 +877,47 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       // Agent-only shots go to a tmp dir and are deleted after the model
       // has seen them, so they never accumulate on disk.
       const showUser = args.show_user === true;
-      const dir = showUser
-        ? path.join(DATA_DIR, 'files', String(conversationId))
-        : path.join(DATA_DIR, 'tmp');
-      fs.mkdirSync(dir, { recursive: true });
-      const filename = `${uuid}.png`;
-      const fullPath = path.join(dir, filename);
-      fs.writeFileSync(fullPath, png);
-      let url = null;
+      let image;
+      let fullPath;
       if (showUser) {
-        const info = db
-          .prepare(
-            'INSERT INTO attachments (message_id, kind, filename, mime, path) VALUES (?, ?, ?, ?, ?)'
-          )
-          .run(assistantMessageId, 'image', filename, 'image/png', `files/${conversationId}/${filename}`);
-        url = `/api/files/${info.lastInsertRowid}`;
+        const stored = storeUserImage({ conversationId, assistantMessageId, filename: `${uuid}.png`, buffer: png });
+        image = { url: stored.url, filename: stored.filename };
+        fullPath = stored.fullPath;
+      } else {
+        const dir = path.join(DATA_DIR, 'tmp');
+        fs.mkdirSync(dir, { recursive: true });
+        fullPath = path.join(dir, `${uuid}.png`);
+        fs.writeFileSync(fullPath, png);
       }
       return {
         text: showUser
           ? 'Screenshot captured and shown to the user.'
           : 'Screenshot captured for your own viewing (not shown to the user).',
-        image: showUser ? { url, filename } : undefined,
+        image,
         imagePath: fullPath,
         tmpImage: !showUser,
+      };
+    }
+    case 'send_image': {
+      const rel = String(args.path || '').trim();
+      if (!rel) throw new Error('send_image: path is required');
+      if (!/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(rel))
+        throw new Error('send_image: not an image file — expected png, jpg, gif, webp, bmp, or svg');
+      const buf = await sandboxPullFile(userId, rel);
+      if (!buf || !buf.length) throw new Error(`send_image: could not read ${rel} from the workspace`);
+      if (!looksLikeImage(buf))
+        throw new Error(`send_image: ${rel} does not look like an image file`);
+      const filename = path.posix.basename(rel);
+      const stored = storeUserImage({ conversationId, assistantMessageId, filename, buffer: buf });
+      // Also feed it back as vision so the agent genuinely sees what it sent.
+      const tmpPath = path.join(DATA_DIR, 'tmp', `${crypto.randomUUID()}.img`);
+      fs.mkdirSync(path.dirname(tmpPath), { recursive: true });
+      fs.writeFileSync(tmpPath, buf);
+      return {
+        text: 'Image attached and shown to the user.',
+        image: { url: stored.url, filename: stored.filename },
+        imagePath: tmpPath,
+        tmpImage: true,
       };
     }
     case 'schedule_task': {
