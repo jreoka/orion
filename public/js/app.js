@@ -810,9 +810,9 @@ function paintTurnRail() {
   const midY = viewTop + (viewBottom - viewTop) / 2;
   let bestMid = null;
   let bestDist = Infinity;
-  // Direct children only: rows nested inside collapsed work logs also carry
-  // data-mid, and their rects are garbage — they'd poison the pick.
-  for (const n of box.querySelectorAll(':scope > [data-mid].user')) {
+  // Skip rows hidden inside collapsed work logs (zero-size rect) — their
+  // positions are meaningless. Visible nested rows (expanded logs) count.
+  for (const n of box.querySelectorAll('[data-mid].user')) {
     const r = n.getBoundingClientRect();
     if (!r.width && !r.height) continue; // hidden
     if (r.bottom < viewTop || r.top > viewBottom) continue; // not visible
@@ -821,8 +821,10 @@ function paintTurnRail() {
   }
   // Fallback: scrolled past everything — highlight the last turn above.
   if (!bestMid) {
-    for (const n of box.querySelectorAll(':scope > [data-mid].user')) {
-      if (n.getBoundingClientRect().bottom <= viewTop) bestMid = n.dataset.mid;
+    for (const n of box.querySelectorAll('[data-mid].user')) {
+      const r = n.getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      if (r.bottom <= viewTop) bestMid = n.dataset.mid;
       else break;
     }
   }
@@ -2852,7 +2854,11 @@ async function stopStream() {
 /* ---------- live event bus ---------- */
 
 function msgElById(id) {
-  return $('#messages').querySelector(`[data-mid="${CSS.escape(String(id))}"]`);
+  const box = $('#messages');
+  const sel = `[data-mid="${CSS.escape(String(id))}"]`;
+  // Prefer the visible direct child — a nested copy inside a collapsed work
+  // log is hidden, and scrollIntoView on it goes nowhere.
+  return box.querySelector(':scope > ' + sel) || box.querySelector(sel);
 }
 
 function removeMessage(m) {
