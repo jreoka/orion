@@ -20,6 +20,7 @@ import { runAgentContinuation } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
 import { sandboxKillExec } from './sandbox.js';
 import { notifyConversation } from './push.js';
+import { publish } from './events.js';
 
 export const MAX_CHAINED_RUNS = 10;
 
@@ -144,6 +145,34 @@ export async function runConversation(
   const controller = new AbortController();
   controllers.set(id, controller);
   let runStatus = 'done';
+
+  // If the run is still going after 12s with nothing said yet, drop a brief
+  // acknowledgment so the user isn't staring at a bare "Working...". Only
+  // fires when the agent hasn't already spoken in this run.
+  const ackTimer = setTimeout(() => {
+    try {
+      if (!controllers.has(id)) return; // run already ended
+      const said = db
+        .prepare("SELECT 1 FROM messages WHERE conversation_id = ? AND id > ? AND role = 'assistant' LIMIT 1")
+        .get(id, startMaxId);
+      if (said) return;
+      const now = Date.now();
+      const info = db
+        .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
+        .run(id, 'assistant', 'On it — this one\u2019ll take a moment.', now);
+      publish(id, {
+        type: 'message',
+        message: {
+          id: Number(info.lastInsertRowid),
+          role: 'assistant',
+          content: 'On it — this one\u2019ll take a moment.',
+          created_at: now,
+        },
+      });
+    } catch {
+      /* acknowledgment is best-effort */
+    }
+  }, 12000);
   try {
     const r = await runAgentContinuation({
       userId,
@@ -165,6 +194,7 @@ export async function runConversation(
     // already published run_ended for handled outcomes (done/error/stopped).
     console.error(`[orion] run for conversation ${id} threw:`, e?.message || e);
   } finally {
+    clearTimeout(ackTimer);
     controllers.delete(id);
     activeExecs.delete(id); // belt-and-braces: no stale exec after a run
   }
