@@ -42,6 +42,11 @@ async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
+    // Never serve API responses from the browser's HTTP cache: without an
+    // explicit Cache-Control the browser may heuristically cache list
+    // responses and show stale (e.g. already-deleted) chats until a manual
+    // refresh. The service worker already bypasses /api/ entirely.
+    cache: 'no-store',
     // Proves to the server this came from our own pages (CSRF check).
     headers: { 'X-Requested-With': 'XMLHttpRequest', ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined
@@ -1845,7 +1850,7 @@ function markSeen() {
 // disturbing the open chat. Called on every run end, on window focus, and
 // after create/rename/delete. (This is the function setRunActive always
 // expected — its absence used to crash run cleanup.)
-async function loadConversationsQuiet() {
+async function loadConversationsQuiet(retried = false) {
   try {
     const rows = await api('/api/conversations');
     if (!Array.isArray(rows)) return;
@@ -1855,7 +1860,12 @@ async function loadConversationsQuiet() {
       else if (c.id !== S.activeId) delete S.runByConv[c.id];
     }
     renderSidebar();
-  } catch { /* sidebar refresh is best-effort */ }
+  } catch {
+    // Sidebar refresh is best-effort, but a single transient failure (flaky
+    // mobile network) shouldn't leave a stale list until the next manual
+    // refresh — retry once after a short delay.
+    if (!retried) setTimeout(() => loadConversationsQuiet(true), 2500);
+  }
 }
 
 // Date bucket for the sidebar: Today / Yesterday / Previous 7 days /
@@ -2321,6 +2331,7 @@ function wireSidebarOnce() {
       closeEventStream();
       return;
     }
+    S.lastSyncAt = Date.now();
     loadConversationsQuiet();
     // A tab backgrounded long enough can have its SSE stream die silently
     // (no error event, no heartbeat): re-establish it and restore the
@@ -2328,6 +2339,15 @@ function wireSidebarOnce() {
     if (S.activeId && (!S.evt || S.evt.readyState === EventSource.CLOSED)) {
       refreshAfterReconnect(S.activeId);
     }
+  });
+  // Desktop: alt-tabbing between apps doesn't hide the tab, so
+  // visibilitychange never fires — re-sync the list when the window
+  // regains focus, unless the visibility handler just did it.
+  window.addEventListener('focus', () => {
+    if (!S.me || document.hidden) return;
+    if (Date.now() - (S.lastSyncAt || 0) < 5000) return;
+    S.lastSyncAt = Date.now();
+    loadConversationsQuiet();
   });
 }
 
