@@ -854,7 +854,7 @@ button.avatar.lg:hover { opacity: .85; }
 .attach-thumb {
   width: 34px; height: 34px; border-radius: 8px; object-fit: cover; flex-shrink: 0;
 }
-.attach-file-ico { font-size: 20px; flex-shrink: 0; width: 34px; text-align: center; }
+.attach-file-ico { flex-shrink: 0; width: 34px; display: flex; align-items: center; justify-content: center; color: var(--ink-2); }
 .attach-spin {
   width: 22px; height: 22px; margin: 6px; flex-shrink: 0;
   border: 2px solid var(--hairline); border-top-color: var(--ink-2);
@@ -1354,6 +1354,16 @@ button.avatar.lg:hover { opacity: .85; }
   transition: border-color .15s, background .15s;
 }
 .chip:hover { border-color: var(--ink-3); background: var(--paper-2); }
+/* File attachment inside a message bubble: compact, inherits the bubble's
+   text color so it's readable in both themes. */
+.file-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 0; padding: 8px 14px;
+  text-decoration: none;
+}
+.file-chip svg { display: block; }
+.msg.user .file-chip { color: inherit; border-color: rgba(128, 128, 128, .4); }
+.msg.user .file-chip:hover { background: rgba(128, 128, 128, .12); border-color: rgba(128, 128, 128, .6); }
 .chip.sm { padding: 8px 15px; font-size: 12.5px; min-height: 40px; }
 .chip.sm.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
 .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }

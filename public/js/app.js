@@ -614,11 +614,12 @@ function isImageFile(name) {
   return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name || '');
 }
 
+const SVG_CLIP = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0"><path d="M11.5 7.5 6.8 12.2a2.1 2.1 0 0 1-3-3l5.7-5.7a3.5 3.5 0 0 1 5 5l-5.7 5.7a4.9 4.9 0 0 1-7-7l5.2-5.2"/></svg>';
 function attachmentHtml(a) {
   if (isImageFile(a.filename)) {
     return `<img class="msg-img" src="${esc(a.url)}" alt="${esc(a.filename || 'image')}" loading="lazy">`;
   }
-  return `<a class="chip" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" download="${esc(a.filename || '')}">📎 ${esc(a.filename || 'file')}</a>`;
+  return `<a class="chip file-chip" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" download="${esc(a.filename || '')}">${SVG_CLIP}<span>${esc(a.filename || 'file')}</span></a>`;
 }
 
 /* ---------- messages ---------- */
@@ -1161,7 +1162,7 @@ function renderAttachTray() {
       ? '<span class="attach-spin"></span>'
       : isImageFile(p.filename)
         ? `<img class="attach-thumb" src="${esc(p.url)}" alt="">`
-        : '<span class="attach-file-ico">📎</span>';
+        : '<span class="attach-file-ico">' + SVG_CLIP + '</span>';
     chip.innerHTML = `${thumb}<span class="attach-name">${esc(p.filename)}</span><span class="attach-size">${fmtBytes(p.size)}</span><button type="button" class="attach-x" aria-label="Remove attachment">×</button>`;
     chip.querySelector('.attach-x').addEventListener('click', () => {
       setPendingUploads(pendingUploads().filter((x) => x !== p));
