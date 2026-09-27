@@ -2089,7 +2089,7 @@ function convItemEl(c) {
       <div class="conv-sub">${working ? 'working…' : esc(timeAgo(c.updated_at))}</div>
     </div>
     ${working ? '<span class="conv-dot working" aria-label="Agent working"></span>'
-              : done ? '<span class="conv-dot done" aria-label="Run finished"><svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true"><path d="M5 13l4 4L19 7" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'
+              : done ? '<span class="conv-dot done" aria-label="Run finished"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M5 13l4 4L19 7" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'
               : hasNew ? '<span class="conv-dot" aria-label="New activity"></span>' : ''}
     <button class="conv-menu-btn" aria-label="Chat options" title="Chat options">⋯</button>`;
   el.addEventListener('click', (e) => {
