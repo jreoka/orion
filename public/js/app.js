@@ -716,7 +716,7 @@ function prependHistoryBatch(msgs) {
   // logs when something later re-folds the whole list.
   for (const seg of splitRuns([...frag.children])) foldRunSegment(seg);
   box.insertBefore(frag, ensureOlderSpinner().nextSibling);
-  box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
+  setScrollTopInstant(box, prevTop + (box.scrollHeight - prevHeight));
 }
 
 // Re-attach messages that are loaded in S.messages but missing from the DOM
@@ -866,7 +866,7 @@ function trimRenderedTop() {
   const prevHeight = box.scrollHeight;
   const prevTop = box.scrollTop;
   for (let i = 0; i < over && i < nodes.length; i++) nodes[i].remove();
-  box.scrollTop = Math.max(0, prevTop - (prevHeight - box.scrollHeight));
+  setScrollTopInstant(box, Math.max(0, prevTop - (prevHeight - box.scrollHeight)));
 }
 function distFromBottom() {
   const box = $('#messages');
@@ -891,10 +891,16 @@ function paintJump() {
 function jumpToBottom() {
   const box = $('#messages');
   S.stick = true; // an explicit jump (re)pins follow mode
-  box.style.scrollBehavior = 'auto';
-  box.scrollTop = box.scrollHeight;
-  box.style.scrollBehavior = '';
+  setScrollTopInstant(box, box.scrollHeight);
   hideJump();
+}
+// Assign scrollTop without the CSS smooth-scroll animation: compensating
+// adjustments (trim, history prepend) must apply instantly — a bare
+// assignment animates and the view visibly jerks/glides.
+function setScrollTopInstant(box, value) {
+  box.style.scrollBehavior = 'auto';
+  box.scrollTop = value;
+  box.style.scrollBehavior = '';
 }
 // Explicit scroll: force always goes to the bottom (smoothly, since the
 // user tapped the button); auto-follow stays instant.
