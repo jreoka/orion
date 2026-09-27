@@ -275,6 +275,30 @@ async function checkForDeploy() {
 }
 setInterval(checkForDeploy, 60000);
 
+/* ---------- haptics ---------- */
+// navigator.vibrate() is Android-only in practice (iOS Safari doesn't
+// expose it) — feature-detect and no-op everywhere else. Default on;
+// Settings → Appearance can turn it off.
+function hapticsEnabled() {
+  try { return localStorage.getItem('orion-haptics') !== 'off'; } catch (e) { return true; }
+}
+function haptic(pattern) {
+  if (!hapticsEnabled()) return;
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) {}
+}
+// One delegated press listener covers every button, link, toggle, chip,
+// and tray summary — including ones rendered later — without touching
+// each handler. A second vibrate() call replaces the first, so the
+// stronger confirm patterns below simply override this light tick.
+document.addEventListener('pointerdown', (e) => {
+  if (e.target && e.target.closest &&
+      e.target.closest('button, a, summary, input, select, textarea, label, [role="button"]')) {
+    haptic(8);
+  }
+}, { passive: true });
+const hTap = () => haptic(12);
+const hConfirm = () => haptic([14, 40, 22]); // message sent / run stopped: a two-tap nudge
+
 /* ---------- boot ---------- */
 async function boot() {
   onUnauthorized = () => {
@@ -506,6 +530,16 @@ function wireGlobal() {
   if (themeToggle) {
     themeToggle.checked = document.documentElement.dataset.theme === 'dark';
     themeToggle.addEventListener('change', () => applyTheme(themeToggle.checked));
+  }
+  // Haptics toggle (Settings → Appearance), persisted across visits. On by
+  // default; flipping it on gives a tick so the new setting can be felt.
+  const hapticsToggle = $('#haptics-toggle');
+  if (hapticsToggle) {
+    hapticsToggle.checked = hapticsEnabled();
+    hapticsToggle.addEventListener('change', () => {
+      try { localStorage.setItem('orion-haptics', hapticsToggle.checked ? 'on' : 'off'); } catch (e) {}
+      if (hapticsToggle.checked) hTap();
+    });
   }
 
   $('#tab-login').onclick = () => setAuthMode('login');
@@ -2226,6 +2260,7 @@ function wireChat() {
     e.preventDefault();
     // While a run is active the send button has morphed into the stop
     // button — clicking it stops the run. Enter still queues a message.
+    hConfirm();
     if (S.runActive) stopStream();
     else sendMessage();
   });
