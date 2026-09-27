@@ -1141,8 +1141,26 @@ function collapseWorkLogs() {
     // while a run might be active here.
     if (trailing && (S.runActive || (S.activeId && S.runByConv[S.activeId]))) return;
     // Belt and braces: skip if any row still carries a live marker.
+    // Self-healing: unwrap any previously-folded (non-live) work log back
+    // into plain rows first, so a re-fold never stacks a second tray on top
+    // of the first — e.g. after a live run was folded by mistake during a
+    // reconnect, then folded again at run end. One run always ends up with
+    // exactly one work log.
+    const flat = [];
+    const staleTrays = [];
+    for (const el of seg) {
+      if (
+        el.tagName === 'DETAILS' && el.classList.contains('worklog') &&
+        !el.hasAttribute('data-live')
+      ) {
+        flat.push(...el.querySelectorAll(':scope > .wl-body > *'));
+        staleTrays.push(el);
+      } else {
+        flat.push(el);
+      }
+    }
     if (
-      seg.some(
+      flat.some(
         (el) =>
           (el.classList && el.classList.contains('update') && el.dataset.liveRun) ||
           (el.dataset && el.dataset.mid && S.liveIds.has(Number(el.dataset.mid)))
@@ -1152,12 +1170,12 @@ function collapseWorkLogs() {
 
     // The final answer: the last assistant row with visible text.
     let finalIdx = -1;
-    seg.forEach((el, i) => {
+    flat.forEach((el, i) => {
       if (isIntermediateCandidate(el)) finalIdx = i;
     });
 
     const group = [];
-    seg.forEach((el, i) => {
+    flat.forEach((el, i) => {
       if (el.classList && el.classList.contains('msg') && el.classList.contains('update')) {
         group.push(el); // send_update note — always intermediate
       } else if (i !== finalIdx && isIntermediateCandidate(el) && !el.querySelector('.imgs > *, .u-imgs > *')) {
@@ -1173,8 +1191,11 @@ function collapseWorkLogs() {
       `<span class="wl-count">${n} ${n === 1 ? 'entry' : 'entries'}</span></summary>` +
       `<div class="wl-body"></div>`;
     const body = details.querySelector('.wl-body');
-    group[0].before(details);
+    // Anchor at the old tray's position when re-folding (group[0] may still
+    // sit inside it) — never inside the tray being replaced.
+    (staleTrays.length ? staleTrays[0] : group[0]).before(details);
     for (const el of group) body.appendChild(el);
+    for (const t of staleTrays) t.remove(); // drop the emptied old trays
   });
 }
 
@@ -2297,9 +2318,13 @@ async function switchConversation(id) {
     const data = await api(`/api/conversations/${id}`);
     closeEventStream();
     S.activeId = id;
-    // Seed the Stop-button state synchronously — the SSE hello that corrects
-    // it can lag, and without this the previous chat's run state leaks over.
-    S.runActive = !!S.runByConv[id];
+    // Seed the Stop-button state synchronously from the just-fetched
+    // conversation — fresher than the runByConv cache, which may predate a
+    // run that started while this client was away. The SSE hello that
+    // follows corrects it if the server disagrees.
+    S.runActive = !!data.running;
+    if (data.running) S.runByConv[id] = true;
+    else delete S.runByConv[id];
     setMessages(data);
     S.lastSeenAt[id] = Date.now();
     renderSidebar();
@@ -2418,6 +2443,10 @@ async function renderChat() {
         const data = await api(`/api/conversations/${list[0].id}`);
         S.activeId = list[0].id;
         setMessages(data);
+        // Seed run state from the fresh conversation payload (belt and
+        // braces alongside loadConversationsQuiet below): a run may be in
+        // flight and the fold pass must not tuck its steps into a work log.
+        if (data.running) S.runByConv[S.activeId] = true;
       } else {
         S.activeId = null;
         setMessages({ messages: [], hasMoreOlder: false });
@@ -2733,6 +2762,14 @@ async function refreshAfterReconnect(convId) {
     const data = await api(`/api/conversations/${convId}`);
     if (!data || S.activeId !== convId) return;
     setMessages(data);
+    // The stream was down: a run may have started or ended while away, and
+    // the hello event re-deriving live state hasn't arrived yet. Seed the
+    // run flags from the server BEFORE rendering, or collapseWorkLogs()
+    // folds a live run's steps into a work log — and the real run end then
+    // folds them a second time.
+    S.runActive = !!data.running;
+    if (data.running) S.runByConv[convId] = true;
+    else delete S.runByConv[convId];
     S.buffers.clear();
     S.toolRows.clear();
     renderMessages(); // live state re-derives from hello + subsequent events

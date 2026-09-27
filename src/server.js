@@ -475,6 +475,7 @@ function conversationPayload(conv, limit = 80) {
     conversation: { id: conv.id, title: conv.title, kind: conv.kind, task_id: conv.task_id, created_at: conv.created_at, updated_at: conv.updated_at },
     messages,
     hasMoreOlder,
+    running: isRunLocked(conv.id),
   };
 }
 
