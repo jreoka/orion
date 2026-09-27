@@ -3,11 +3,14 @@
 FROM mcr.microsoft.com/playwright:v1.49.0-noble
 
 # Lean on top of the Playwright base (node + chromium + playwright already
-# there): just the scripting basics.
+# there): just the scripting basics, plus the Docker CLI so the agent can
+# use the host's Docker daemon (socket is mounted at run time; the daemon
+# itself runs on the host, not in here).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 git curl jq \
+        python3 git curl jq docker.io \
     && rm -rf /var/lib/apt/lists/* \
-    && npm i -g playwright@1.49.0
+    && npm i -g playwright@1.49.0 \
+    && docker --version
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules

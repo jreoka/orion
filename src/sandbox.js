@@ -29,6 +29,18 @@ function getDocker() {
   return new Docker({ socketPath: SOCK });
 }
 
+// Supplementary groups granting the sandbox's `agent` user access to the
+// host Docker socket: just the socket's own gid. Empty when the socket is
+// unreadable — the mount still lands, and root-owned 0666 sockets work
+// without any group.
+function dockerSocketGroups() {
+  try {
+    return [String(fs.statSync(SOCK).gid)];
+  } catch {
+    return [];
+  }
+}
+
 // Container/volume names derive from the numeric user id only —
 // no user-controlled strings ever reach Docker, so no name injection.
 function names(userId) {
@@ -54,12 +66,28 @@ function clampTimeout(t) {
   return Math.max(1, Math.min(600, Number.isFinite(n) ? n : 60));
 }
 
-// Build the sandbox image from ./sandbox if it isn't there yet.
+// Hash of the sandbox build context (Dockerfile + orion-browser.js).
+// The image carries it as a label; ensureImage() rebuilds when it changes
+// so sandbox/Dockerfile edits actually take effect on existing installs.
+function sandboxSourceHash() {
+  const h = crypto.createHash('sha256');
+  for (const f of ['Dockerfile', 'orion-browser.js']) {
+    const p = path.join(__dirname, '..', 'sandbox', f);
+    h.update(f);
+    h.update(fs.readFileSync(p));
+  }
+  return h.digest('hex').slice(0, 16);
+}
+
+// Build the sandbox image from ./sandbox if it isn't there yet, or if the
+// sandbox sources changed since it was built.
 export async function ensureImage() {
   const docker = getDocker();
+  const hash = sandboxSourceHash();
   try {
-    await docker.getImage(SANDBOX_IMAGE).inspect();
-    return;
+    const img = await docker.getImage(SANDBOX_IMAGE).inspect();
+    if (img?.Config?.Labels?.['orion.sandbox-hash'] === hash) return;
+    console.log(`[orion] sandbox image ${SANDBOX_IMAGE} is stale (hash ${img?.Config?.Labels?.['orion.sandbox-hash'] || 'none'} → ${hash}); rebuilding …`);
   } catch (e) {
     if (e.statusCode !== 404) throw e;
   }
@@ -67,7 +95,7 @@ export async function ensureImage() {
   console.log(`[orion] building sandbox image ${SANDBOX_IMAGE} from ${context} …`);
   const stream = await docker.buildImage(
     { context, src: ['Dockerfile', 'orion-browser.js'] },
-    { t: SANDBOX_IMAGE }
+    { t: SANDBOX_IMAGE, labels: JSON.stringify({ 'orion.sandbox-hash': hash }) }
   );
   await new Promise((resolve, reject) => {
     docker.modem.followProgress(stream, (err, res) => (err ? reject(err) : resolve(res)), (ev) => {
@@ -102,10 +130,20 @@ export async function ensureSandbox(userId) {
     // non-root workload has no use for any of them. Chromium already runs
     // with --no-sandbox (sandbox/orion-browser.js), so dropping caps and
     // no-new-privileges doesn't affect the browser tools.
+    //
+    // Docker access: the host's Docker socket is bind-mounted and the
+    // socket's group id is added to the agent user's supplementary groups,
+    // so `docker` works inside the sandbox against the host daemon.
+    // No --privileged: the socket alone is enough, and privileged would
+    // hand over every capability and device on top of it. Note this still
+    // lets the sandbox manage host Docker (containers, volumes, host path
+    // mounts) — that is the point, but it does pierce the sandbox boundary
+    // by design.
     const baseHostConfig = {
       Memory: 2 * 1024 ** 3, // 2 GB
       NanoCpus: 1_000_000_000, // 1 CPU
-      Binds: [`${vname}:${WORKDIR}`],
+      Binds: [`${vname}:${WORKDIR}`, `${SOCK}:${SOCK}`],
+      GroupAdd: dockerSocketGroups(),
       PidsLimit: 256,
       CapDrop: ['ALL'],
       SecurityOpt: ['no-new-privileges:true'],
@@ -146,7 +184,18 @@ export async function ensureSandbox(userId) {
   let container = docker.getContainer(cname);
   try {
     const info = await container.inspect();
-    if (!info.State?.Running) {
+    const binds = info?.HostConfig?.Binds || [];
+    if (!binds.some((b) => String(b).split(':')[0] === SOCK)) {
+      // Container predates Docker-socket access: recreate it with the mount.
+      // The workspace volume is separate, so no agent data is lost.
+      console.warn(`[orion] sandbox ${cname} lacks the Docker socket mount; recreating`);
+      try {
+        await container.remove({ force: true });
+      } catch {
+        /* already gone */
+      }
+      container = await createFresh();
+    } else if (!info.State?.Running) {
       try {
         await container.start();
       } catch (startErr) {
