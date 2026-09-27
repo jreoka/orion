@@ -273,7 +273,7 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
   display: inline-flex; align-items: center; justify-content: center;
   font-family: var(--serif); font-weight: 700; font-size: 14px; color: var(--paper); flex-shrink: 0;
   overflow: hidden; padding: 0;
-  border: 2px solid transparent;
+  border: 3.5px solid transparent;
   background:
     linear-gradient(var(--ink), var(--ink)) padding-box,
     linear-gradient(120deg, #4f6df5, #8b5cf6, #c026d3, #4f6df5) border-box;
