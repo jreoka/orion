@@ -1754,9 +1754,9 @@ export async function runAgent({
  */
 export async function runAgentContinuation({
   userId, conversationId, userText, settings,
-  shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle,
+  shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle,
 }) {
-  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle });
+  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle });
 }
 
 /**
@@ -1806,7 +1806,7 @@ export async function generateChatTitle({ userId, conversationId, settings, user
 
 export async function runAgentLoop({
   userId, conversationId, userText, settings,
-  shouldAbort, signal, systemExtra, historyLimit,
+  shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit,
   onExecStart, onExecEnd, // optional: track the in-flight sandbox exec (Stop support)
   noAutoTitle, // system-injected prompts (heartbeat, tasks) must never title a chat
 }) {
@@ -1882,11 +1882,17 @@ export async function runAgentLoop({
     }
   };
 
-  const appendStoppedNote = (partial) => {
+  // Note appended when a run is cut short. A deploy/crash abort gets an
+  // "interrupted" note (the run resumes at boot); only a genuine user
+  // stop gets the stopped note — and the resume pass keys off it.
+  const stoppedNoteText = () =>
+    isShutdownAbort?.() ? '(interrupted by server restart — resuming automatically)' : '(stopped by user)';
+  const appendStoppedNote = (partial, note) => {
     if (!assistantId) return;
     try {
       const base = partial || '';
-      const content = base ? base + '\n\n(stopped by user)' : '(stopped by user)';
+      const marker = note || stoppedNoteText();
+      const content = base ? base + '\n\n' + marker : marker;
       db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, assistantId);
     } catch {
       /* ignore */

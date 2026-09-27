@@ -3533,14 +3533,14 @@ function render2faBox() {
   if (_twofaStatus.enabled) {
     box.innerHTML = `
       <div class="status-row"><span class="badge ok">Enabled</span>
-      <span class="muted">${_twofaStatus.backup_codes_remaining != null ? esc(String(_twofaStatus.backup_codes_remaining)) + ' backup codes left' : ''}</span></div>
-      <button id="twofa-disable-btn" class="btn danger">Disable 2FA</button>`;
+      <span class="muted" style="flex:1;min-width:200px">${_twofaStatus.backup_codes_remaining != null ? esc(String(_twofaStatus.backup_codes_remaining)) + ' backup codes left' : ''}</span>
+      <button id="twofa-disable-btn" class="btn danger">Disable 2FA</button></div>`;
     $('#twofa-disable-btn').onclick = () => disable2faModal();
     return;
   }
   box.innerHTML = `
-    <p class="muted">Two-factor authentication adds a second step to sign-in using an authenticator app.</p>
-    <button id="twofa-setup-btn" class="btn">Set up 2FA</button>
+    <div class="status-row"><span class="muted" style="flex:1;min-width:200px">Two-factor authentication adds a second step to sign-in using an authenticator app.</span>
+    <button id="twofa-setup-btn" class="btn">Set up 2FA</button></div>
     <div id="twofa-setup" hidden>
       <p class="muted">Scan this with your authenticator app, then enter a code to confirm.</p>
       <div class="secret-row"><code id="twofa-secret" class="secret"></code><button id="twofa-copy" class="btn small">Copy</button></div>

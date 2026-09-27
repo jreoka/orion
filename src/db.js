@@ -108,6 +108,10 @@ addColumn('sessions', 'name', 'TEXT'); // user-set custom device name (32 chars 
 }
 addColumn('conversations', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
 addColumn('conversations', 'task_id', 'INTEGER');
+// Persistent run state: 'active' while an agent run holds the conversation.
+// The in-memory run lock is lost on restart, so boot recovery uses this to
+// find runs that were in flight when the server went down and resume them.
+addColumn('conversations', 'run_state', "TEXT NOT NULL DEFAULT 'idle'");
 addColumn('messages', 'kind', "TEXT NOT NULL DEFAULT 'message'");
 // Phase 3: abuse lock + weekly token limits.
 // NOTE: weekly_token_limit is deliberately NULLABLE — NULL means unlimited

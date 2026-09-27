@@ -23,6 +23,17 @@ import { notifyConversation } from './push.js';
 
 export const MAX_CHAINED_RUNS = 10;
 
+/** Persistent run state (conversations.run_state). Mirrors the in-memory
+ *  run lock so boot recovery can find runs that were in flight when the
+ *  server went down. 'active' while a run holds the conversation. */
+export function setRunState(conversationId, state) {
+  try {
+    db.prepare('UPDATE conversations SET run_state = ? WHERE id = ?').run(state, Number(conversationId));
+  } catch {
+    /* telemetry must never break a run */
+  }
+}
+
 // Set when the process is shutting down (SIGTERM/SIGINT): in-flight runs
 // finish their finally blocks but must not chain follow-up runs — the
 // process is going away, and boot recovery re-answers anything stranded.
@@ -120,9 +131,13 @@ export async function runConversation(
   userId,
   userText,
   chainDepth = 0,
-  maxChain = MAX_CHAINED_RUNS
+  maxChain = MAX_CHAINED_RUNS,
+  opts = {}
 ) {
   const id = Number(conversationId);
+  // The caller holds the run lock. Persist it: if the server dies now,
+  // boot recovery resumes this run instead of stranding it.
+  setRunState(id, 'active');
   const startMaxId =
     db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM messages WHERE conversation_id = ?').get(id).m;
 
@@ -136,7 +151,11 @@ export async function runConversation(
       userText,
       settings: globalSettings(),
       shouldAbort: () => isStopRequested(id),
+      // Lets the agent distinguish a deploy/crash abort (the run will be
+      // resumed at boot) from the user pressing stop.
+      isShutdownAbort: () => shuttingDown && !isStopRequested(id),
       signal: controller.signal,
+      systemExtra: opts.systemExtra,
       onExecStart: (execId) => trackExecStart(id, userId, execId),
       onExecEnd: (execId) => trackExecEnd(id, execId),
     });
@@ -152,6 +171,11 @@ export async function runConversation(
 
   const wasStopped = isStopRequested(id);
   clearStop(id);
+  // A run that ends normally goes idle. One aborted by graceful shutdown
+  // deliberately STAYS active — the new process resumes it at boot.
+  // (A user stop during the shutdown window still goes idle: their stop
+  // wins over the resume.)
+  if (!shuttingDown || wasStopped) setRunState(id, 'idle');
   releaseRun(id);
 
   if (chainDepth >= maxChain) return { chained: false, reason: 'chain-cap' };
@@ -163,7 +187,7 @@ export async function runConversation(
     .prepare("SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND id > ? AND role = 'user'")
     .get(id, startMaxId).c;
   if (pending > 0 && !shuttingDown && tryAcquireRun(id)) {
-    return runConversation(id, userId, userText, chainDepth + 1, maxChain);
+    return runConversation(id, userId, userText, chainDepth + 1, maxChain, opts);
   }
 
   // Outermost run of this trigger finished: ping the user if they aren't
@@ -198,42 +222,122 @@ export async function runConversation(
  * Kick off a background run for a conversation the caller owns, unless one
  * is already running. Returns true when a run was started, false when the
  * conversation was busy (the message stays queued and the current run will
- * chain to it).
+ * chain to it). opts.systemExtra adds a system-prompt note (used by boot
+ * recovery so the resumed agent knows about the restart).
  */
-export function startRunIfIdle(conversationId, userId, userText) {
+export function startRunIfIdle(conversationId, userId, userText, opts = {}) {
   if (shuttingDown) return false;
   const id = Number(conversationId);
   if (!tryAcquireRun(id)) return false;
-  runConversation(id, userId, userText).catch((e) => {
+  runConversation(id, userId, userText, 0, MAX_CHAINED_RUNS, opts).catch((e) => {
     console.error(`[orion] background run for conversation ${id} failed:`, e?.message || e);
   });
   return true;
 }
 
 /**
+ * Pass 1 of boot recovery: resume runs that were in flight when the
+ * server went down (deploy, crash, SIGKILL). run_state stays 'active'
+ * for these — a clean run end flips it back to 'idle', and graceful
+ * shutdown deliberately leaves aborted runs 'active' so they resume.
+ *
+ * This is genuine continuation, not a restart: runAgentLoop rebuilds the
+ * full conversation history from the DB (loadHistory even synthesizes
+ * placeholder results for tool calls that never returned), so the agent
+ * sees its partial work and carries on. A system note tells it about the
+ * restart so it confirms completion instead of redoing finished work.
+ *
+ * Skipped: task-owned conversations (the scheduler owns those), runs the
+ * user stopped (their stop note is the marker — a stop during the
+ * shutdown window already flipped those back to idle), and runs idle
+ * for over a day (resuming week-old work unprompted is worse than
+ * leaving it; those flags are reset).
+ */
+function resumeInterruptedRuns() {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  let rows = [];
+  try {
+    rows = db
+      .prepare(
+        `SELECT c.id AS conversation_id, c.user_id,
+                (SELECT role FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) AS last_role,
+                (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) AS last_content,
+                (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) AS last_created,
+                (SELECT content FROM messages WHERE conversation_id = c.id AND role = 'user'
+                 ORDER BY id DESC LIMIT 1) AS last_user_text
+         FROM conversations c
+         WHERE c.run_state = 'active' AND c.task_id IS NULL`
+      )
+      .all();
+  } catch (e) {
+    console.warn('[orion] interrupted-run scan failed:', e?.message || e);
+    return;
+  }
+  const RESUME_NOTE =
+    'The server restarted while you were working on this conversation. ' +
+    'Review the message history: work that already has tool results is done — do not redo it. ' +
+    'If the task is already complete, just briefly confirm that. Otherwise pick up exactly where you left off.';
+  for (const r of rows) {
+    try {
+      if (!r.last_created || r.last_created <= cutoff) {
+        setRunState(r.conversation_id, 'idle');
+        continue;
+      }
+      const lastContent = String(r.last_content || '');
+      if (r.last_role === 'assistant' && lastContent.includes('(stopped by user)')) {
+        setRunState(r.conversation_id, 'idle');
+        continue;
+      }
+      if (r.last_role === 'assistant' && !lastContent.trim()) {
+        // Trailing empty reply placeholder: the run died before producing
+        // anything. Drop it so the resumed run starts clean instead of
+        // leaving a dead empty bubble in history.
+        db.prepare(
+          `DELETE FROM messages WHERE conversation_id = ? AND role = 'assistant'
+           AND (content = '' OR content IS NULL)
+           AND id > (SELECT COALESCE(MAX(id), 0) FROM messages
+                     WHERE conversation_id = ? AND role = 'assistant' AND content != '')`
+        ).run(r.conversation_id, r.conversation_id);
+      }
+      if (startRunIfIdle(r.conversation_id, r.user_id, String(r.last_user_text || ''), { systemExtra: RESUME_NOTE })) {
+        console.log(`[orion] boot recovery: resuming interrupted run in conversation ${r.conversation_id}`);
+      } else {
+        setRunState(r.conversation_id, 'idle');
+      }
+    } catch (e) {
+      console.warn(`[orion] boot resume for conversation ${r.conversation_id} failed:`, e?.message || e);
+      setRunState(r.conversation_id, 'idle');
+    }
+  }
+}
+
+/**
  * Boot-time recovery for stranded user messages.
  *
- * The run lock and chain state live in memory, so a deploy or crash
- * between a user message being stored and the agent run answering it
- * leaves the message hanging: the POST handler already returned and
- * nothing re-chains after a restart. On boot, two shapes are recovered:
+ * Pass 1 (resumeInterruptedRuns): conversations whose run_state is still
+ * 'active' had a run in flight when the server went down. They are
+ * resumed — the agent rebuilds full history from the DB and continues
+ * where it stopped, it does not start over.
  *
- *  1. The latest message is a recent user message — the run died before
- *     (or without) creating its reply placeholder.
- *  2. The latest message is an EMPTY assistant placeholder preceded by a
- *     recent user message — a chained run died after creating its
- *     placeholder but before producing any content. At boot no run is
- *     alive in this process, so the placeholder is definitionally
- *     abandoned: it is deleted and the user message is answered fresh.
+ * Pass 2 (legacy shapes): run_state is 'idle' but a message still slipped
+ * through — e.g. the process died between the POST handler storing the
+ * user message and the run starting, or data written before run_state
+ * existed. Two shapes are recovered: a trailing recent user message, and
+ * a trailing empty assistant placeholder after a recent user message.
  *
- * Anything older than a couple of hours is left alone — answering
- * ancient questions unprompted is worse than leaving them; the
+ * Anything older than a couple of hours is left alone in pass 2 —
+ * answering ancient questions unprompted is worse than leaving them; the
  * heartbeat will surface them if they still matter. Conversations owned
- * by a scheduled task (task_id set) are excluded: the task scheduler
- * owns those and has its own retry logic, so recovery must not
- * double-execute them.
+ * by a scheduled task (task_id set) are excluded from both passes: the
+ * task scheduler owns those and has its own retry logic, so recovery
+ * must not double-execute them.
  */
 export function recoverStrandedRuns() {
+  try {
+    resumeInterruptedRuns();
+  } catch (e) {
+    console.warn('[orion] interrupted-run resume failed:', e?.message || e);
+  }
   const cutoff = Date.now() - 2 * 60 * 60 * 1000;
   let convs = [];
   try {
@@ -247,7 +351,7 @@ export function recoverStrandedRuns() {
                    AND id < (SELECT MAX(id) FROM messages WHERE conversation_id = c.id)
                  ORDER BY id DESC LIMIT 1) AS prev_user_text
          FROM conversations c
-         WHERE c.task_id IS NULL`
+         WHERE c.task_id IS NULL AND c.run_state != 'active'`
       )
       .all();
   } catch (e) {
