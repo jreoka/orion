@@ -79,7 +79,8 @@ const S = {
   adminSettings: null,
   adminUsers: [],
   pendingByConv: {},   // conv id (or 'none') -> staged file uploads waiting to be sent [{id, filename, mime, size, url, uploading}]
-  jumpUnread: 0        // new messages arrived while the user was scrolled up
+  jumpUnread: 0,       // new messages arrived while the user was scrolled up
+  stick: true          // follow mode: pinned to the bottom; cleared when the user scrolls up
 };
 
 /* ---------- toasts ---------- */
@@ -774,6 +775,7 @@ function paintJump() {
 // duration of the jump, then restored.
 function jumpToBottom() {
   const box = $('#messages');
+  S.stick = true; // an explicit jump (re)pins follow mode
   box.style.scrollBehavior = 'auto';
   box.scrollTop = box.scrollHeight;
   box.style.scrollBehavior = '';
@@ -783,23 +785,28 @@ function jumpToBottom() {
 // user tapped the button); auto-follow stays instant.
 function scrollBottom(force) {
   if (force) {
+    S.stick = true;
     $('#messages').scrollTo({ top: $('#messages').scrollHeight, behavior: 'smooth' });
     hideJump();
-  } else if (nearBottom()) {
+  } else if (S.stick) {
     jumpToBottom();
   }
 }
-// A whole new message landed: scroll if we're at the bottom, otherwise
-// stay put and raise the "jump to latest" pill with a count.
+// A whole new message landed: follow if pinned, otherwise stay put and
+// raise the "jump to latest" pill with a count.
 function noteNewMessage() {
-  if (nearBottom()) jumpToBottom();
+  if (S.stick) jumpToBottom();
   else {
     S.jumpUnread++;
     paintJump();
   }
 }
-// Streamed content grew (tokens, tool rows): follow only if already at
-// the bottom — never yank the user's scroll position.
+// Streamed content grew (tokens, tool rows): follow only when pinned —
+// never yank the user's scroll position.
+function keepPlace() {
+  if (S.stick) jumpToBottom();
+  else paintJump();
+}
 // A model turn that only made tool calls arrives as an assistant row with no
 // text (and no attachments). Rendered hidden until text streams in, so it
 // takes no layout space — see .msg-empty.
@@ -807,14 +814,15 @@ function isEmptyPlaceholder(m) {
   return m.role === 'assistant' && (m.kind || 'message') === 'message' &&
     !m.content && !(m.attachments || []).length;
 }
-function keepPlace() {
-  if (nearBottom()) jumpToBottom();
-  else paintJump();
-}
 
 function wireJumpPill() {
   $('#jump-latest').addEventListener('click', () => scrollBottom(true));
   $('#messages').addEventListener('scroll', () => {
+    // Follow mode tracks the user's actual position: pinned while they're
+    // at the bottom, released the moment they scroll up. (nearBottom alone
+    // can't be trusted here — content that grows below the viewport while
+    // the user sits at the bottom never fires a scroll event.)
+    S.stick = nearBottom();
     // The circular button lives on screen whenever the user is scrolled up,
     // whether or not new messages arrived.
     if (nearBottom()) hideJump();
@@ -822,6 +830,12 @@ function wireJumpPill() {
     // Near the top with older history available: page it in.
     if ($('#messages').scrollTop < 600) loadOlder();
   }, { passive: true });
+  // Images finish loading after the scroll already happened (lazy
+  // attachments, markdown embeds) and push the bottom further down. If
+  // we're pinned, re-pin. (load doesn't bubble, hence capture.)
+  $('#messages').addEventListener('load', (e) => {
+    if (e.target && e.target.tagName === 'IMG' && S.stick) jumpToBottom();
+  }, true);
 }
 
 /* ---------- chat search (floating window) ---------- */
@@ -1280,6 +1294,8 @@ function foldLiveWorkLog() {
   for (const el of items) body.appendChild(el);
   const n = body.children.length;
   tray.querySelector('.wl-count').textContent = `${n} ${n === 1 ? 'entry' : 'entries'}`;
+  // Moving rows into the tray shifts the layout — stay pinned to the true bottom.
+  if (S.stick) jumpToBottom();
 }
 
 function finalizeLiveWorkLog() {
@@ -2686,6 +2702,8 @@ function setRunActive(on) {
       .forEach((el) => el.removeAttribute('data-live-run'));
     finalizeLiveWorkLog(); // collapse the live tray (its rows are already inside)
     collapseWorkLogs();
+    // Folding shifts the layout — if pinned, land exactly on the final answer.
+    if (S.stick) jumpToBottom();
     // The streaming caret never survives a run either — it may sit on a
     // nested paragraph, not just .content, so clear it everywhere.
     document.querySelectorAll('#messages .caret').forEach((el) => el.classList.remove('caret'));
