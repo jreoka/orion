@@ -152,6 +152,22 @@ function parseTokenLimit(v) {
   if (n <= 0) return { ok: false, error: 'The limit must be a positive number.' };
   return { ok: true, value: n };
 }
+// Compact display twin of parseTokenLimit: 1000000 → "1M", 1500000 → "1.5M".
+// Only shortens when it round-trips exactly through parseTokenLimit.
+function formatTokenLimit(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return String(v);
+  for (const [mag, sfx] of [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']]) {
+    if (n >= mag) {
+      const q = n / mag;
+      const str = Number.isInteger(q) ? String(q) : q.toFixed(2).replace(/\.?0+$/, '');
+      if (Math.floor(Number(str) * mag) === n) return str + sfx;
+      break; // right magnitude but not cleanly expressible — show the full number
+    }
+  }
+  return String(n);
+}
 
 /* ---------- routing ---------- */
 const ROUTES = ['login', 'chat', 'admin', 'settings'];
@@ -318,16 +334,99 @@ let authMode = 'login'; // or 'signup'
 
 async function renderAuth() {
   // Hide the signup tab when public signups are disabled (fail open).
+  S.turnstileSiteKey = null;
   try {
     const cfg = await api('/api/auth/config');
     const on = !cfg || cfg.signup_enabled !== false;
     $('#tab-signup').hidden = !on;
     if (!on) authMode = 'login';
+    S.turnstileSiteKey = (cfg && cfg.turnstile_site_key) || null;
   } catch (e) { $('#tab-signup').hidden = false; }
+  S.turnstileToken = null;
+  $('#turnstile-slot').hidden = true;
   setAuthMode(authMode);
   $('#auth-error').hidden = true;
   hide2faStep();
   updatePasskeyBtn();
+}
+
+/* Cloudflare Turnstile: the widget is rendered only after the first
+   Log in / Create account press, and its success callback fires doAuth()
+   automatically — no second click needed. */
+let turnstileWidgetId = null;
+let turnstileScriptPromise = null;
+function loadTurnstileScript() {
+  if (window.turnstile) return Promise.resolve();
+  if (!turnstileScriptPromise) {
+    turnstileScriptPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      s.async = true;
+      s.defer = true;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error('Could not load the captcha — check your connection and try again.'));
+      document.head.appendChild(s);
+    });
+  }
+  return turnstileScriptPromise;
+}
+function showTurnstile() {
+  const slot = $('#turnstile-slot');
+  slot.hidden = false;
+  loadTurnstileScript().then(() => {
+    if (turnstileWidgetId !== null) {
+      window.turnstile.reset(turnstileWidgetId);
+      return;
+    }
+    turnstileWidgetId = window.turnstile.render(slot, {
+      sitekey: S.turnstileSiteKey,
+      theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
+      callback: (token) => {
+        // Captcha complete — proceed straight to auth, no second click.
+        S.turnstileToken = token;
+        slot.hidden = true;
+        doAuth();
+      },
+      'expired-callback': () => { S.turnstileToken = null; },
+      'error-callback': () => {
+        const err = $('#auth-error');
+        err.textContent = 'Captcha error — please try again.';
+        err.hidden = false;
+        $('#auth-submit').disabled = false;
+      },
+    });
+  }).catch((e) => {
+    const err = $('#auth-error');
+    err.textContent = e.message;
+    err.hidden = false;
+    $('#auth-submit').disabled = false;
+  });
+}
+async function doAuth() {
+  const username = $('#auth-username').value.trim();
+  const password = $('#auth-password').value;
+  const err = $('#auth-error');
+  const btn = $('#auth-submit');
+  btn.disabled = true;
+  err.hidden = true;
+  try {
+    const body = { username, password };
+    if (S.turnstileToken) body.turnstile_token = S.turnstileToken;
+    const res = await api(authMode === 'login' ? '/api/auth/login' : '/api/auth/signup', {
+      method: 'POST', body
+    });
+    if (res && res.need_2fa) { show2faStep(res.challenge); return; }
+    S.me = res;
+    $('#auth-password').value = '';
+    go('chat');
+  } catch (ex) {
+    err.textContent = ex.message;
+    err.hidden = false;
+  } finally {
+    // Turnstile tokens are single-use — a fresh one is needed for any retry.
+    S.turnstileToken = null;
+    btn.disabled = false;
+  }
 }
 
 function updatePasskeyBtn() {
@@ -378,22 +477,15 @@ function wireGlobal() {
     const err = $('#auth-error');
     const btn = $('#auth-submit');
     if (!username || !password) return;
-    btn.disabled = true;
-    err.hidden = true;
-    try {
-      const res = await api(authMode === 'login' ? '/api/auth/login' : '/api/auth/signup', {
-        method: 'POST', body: { username, password }
-      });
-      if (res && res.need_2fa) { show2faStep(res.challenge); return; }
-      S.me = res;
-      $('#auth-password').value = '';
-      go('chat');
-    } catch (ex) {
-      err.textContent = ex.message;
-      err.hidden = false;
-    } finally {
-      btn.disabled = false;
+    // Captcha gate: when Turnstile is configured, the widget appears only
+    // after this first press; its success callback fires doAuth() itself.
+    if (S.turnstileSiteKey && !S.turnstileToken) {
+      btn.disabled = true;
+      err.hidden = true;
+      showTurnstile();
+      return;
     }
+    await doAuth();
   });
 
   // 2FA step + passkey login
@@ -2132,6 +2224,7 @@ function onBusImage(d) {
 async function renderAdmin() {
   await Promise.all([loadProviderSettings(), loadAdminUsers()]);
   wireProviderFormOnce();
+  wireLimitsFormOnce();
 }
 
 async function loadProviderSettings() {
@@ -2150,6 +2243,43 @@ async function loadProviderSettings() {
   $('#set-key').placeholder = s.has_key ? 'Saved ✓ — leave blank to keep' : 'Not set';
   // signup_enabled arrives as the string '1'/'0' — !!'0' is true, so compare explicitly.
   $('#set-signup').checked = s.signup_enabled === '1' || s.signup_enabled === true;
+  // Limits & captcha card. The default allowance shows in shorthand ("1M"),
+  // matching the per-user limit box.
+  $('#set-default-limit').value = formatTokenLimit(s.default_weekly_token_limit);
+  $('#set-turnstile-site').value = s.turnstile_site_key || '';
+  $('#set-turnstile-secret').value = '';
+  $('#set-turnstile-secret').placeholder = s.has_turnstile_secret ? 'Saved ✓ — leave blank to keep' : 'Not set';
+}
+
+let limitsWired = false;
+function wireLimitsFormOnce() {
+  if (limitsWired) return;
+  limitsWired = true;
+  $('#limits-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = $('#limits-save');
+    const saved = $('#limits-saved');
+    btn.disabled = true;
+    saved.hidden = true;
+    const secret = $('#set-turnstile-secret').value.trim();
+    const body = {
+      default_weekly_token_limit: $('#set-default-limit').value.trim(),
+      turnstile_site_key: $('#set-turnstile-site').value.trim(),
+    };
+    // Send the secret only when the admin typed a new one.
+    if (secret) body.turnstile_secret_key = secret;
+    try {
+      await api('/api/admin/settings', { method: 'PUT', body });
+      await loadProviderSettings(); // re-populate (placeholders, shorthand)
+      saved.hidden = false;
+      setTimeout(() => { saved.hidden = true; }, 2600);
+      toast('Limits & captcha saved');
+    } catch (ex) {
+      toast(ex.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 let providerWired = false;
@@ -2341,7 +2471,7 @@ function openUserActionsMenu(u, anchor, isSelf) {
     const v = await promptDialog({
       title: 'Weekly token limit',
       message: `For ${u.username}. Accepts 1K, 1M, 10M, 1B, 3T \u2026 Empty = unlimited.`,
-      value: cur === null || cur === undefined ? '' : String(cur),
+      value: formatTokenLimit(cur),
       placeholder: 'e.g. 1M',
       okLabel: 'Save limit',
     });

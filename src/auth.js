@@ -2,7 +2,7 @@
 // The very first user ever created becomes the admin.
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
-import { db } from './db.js';
+import { db, getSetting } from './db.js';
 import { totpEnabled, createLoginChallenge } from './totp.js';
 
 export const COOKIE_NAME = 'orion_session';
@@ -47,10 +47,13 @@ export function signup(username, password) {
   const pw = checkPasswordRules(password);
   const count = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
   const role = count === 0 ? 'admin' : 'user'; // first user is the admin
+  // New accounts start on the admin-configured default allowance ('' = unlimited).
+  const defRaw = getSetting('default_weekly_token_limit', '1000000').trim();
+  const defLimit = defRaw === '' ? null : Number(defRaw);
   try {
     const info = db
-      .prepare('INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)')
-      .run(username, hashPassword(pw), role, Date.now());
+      .prepare('INSERT INTO users (username, password_hash, role, weekly_token_limit, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(username, hashPassword(pw), role, defLimit, Date.now());
     return { id: Number(info.lastInsertRowid), username, role };
   } catch (e) {
     if (String(e.message).includes('UNIQUE constraint failed')) {

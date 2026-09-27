@@ -79,6 +79,7 @@ import {
   setWeeklyLimit,
   resetWeeklyUsage,
   allWeeklyUsage,
+  parseTokenLimitSetting,
 } from './usage.js';
 import {
   checkLimit,
@@ -187,14 +188,49 @@ app.post('/api/debug/layout', (req, res) => {
 
 app.get('/api/auth/config', (req, res) => {
   const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
-  res.json({ signup_enabled: userCount === 0 || getSetting('signup_enabled', '1') === '1' });
+  res.json({
+    signup_enabled: userCount === 0 || getSetting('signup_enabled', '1') === '1',
+    // Public site key only — the secret never leaves the server.
+    turnstile_site_key: getSetting('turnstile_site_key', '') || null,
+  });
 });
+
+// Verify a Cloudflare Turnstile token with the siteverify API.
+// Only enforced when a secret key is configured; otherwise returns true.
+async function verifyTurnstile(token, ip) {
+  const secret = getSetting('turnstile_secret_key', '');
+  if (!secret) return true; // not configured — captcha disabled
+  if (!token) return false;
+  try {
+    const params = new URLSearchParams({ secret, response: token });
+    if (ip) params.set('remoteip', ip);
+    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await r.json();
+    return data && data.success === true;
+  } catch {
+    return false; // fail closed — a verification outage must not open the gate
+  }
+}
+
+// Captcha gate for password auth: when Turnstile is configured, the client
+// sends the token from the widget; reject before touching credentials.
+async function checkTurnstile(req) {
+  if (!getSetting('turnstile_secret_key', '')) return; // not configured
+  const ok = await verifyTurnstile(req.body?.turnstile_token, req.ip);
+  if (!ok) throw httpError(403, 'Captcha verification failed — please try again.');
+}
 
 app.post('/api/auth/signup', asyncRoute(async (req, res) => {
   const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
   if (userCount > 0 && getSetting('signup_enabled', '1') !== '1') {
     throw httpError(403, 'Sign-ups are disabled');
   }
+  await checkTurnstile(req);
   // Account-creation spam: 5/hour per IP.
   checkAuthLimit(req, res, 'signup', null, { max: 5, windowMs: 60 * 60 * 1000 });
   let user;
@@ -210,6 +246,7 @@ app.post('/api/auth/signup', asyncRoute(async (req, res) => {
 
 app.post('/api/auth/login', asyncRoute(async (req, res) => {
   checkAuthLimit(req, res, 'login', req.body?.username);
+  await checkTurnstile(req);
   let result;
   try {
     result = loginStep1(req.body?.username, req.body?.password);
@@ -1283,16 +1320,24 @@ app.get('/api/files/:id', requireAuth, (req, res) => {  const att = db.prepare('
 
 // ---- admin ----------------------------------------------------------------
 
-const ADMIN_SETTING_KEYS = ['provider_name', 'base_url', 'api_key', 'model', 'signup_enabled'];
+// Token-limit shorthand parsing lives in usage.js (imported above).
+const ADMIN_SETTING_KEYS = ['provider_name', 'base_url', 'api_key', 'model', 'signup_enabled', 'default_weekly_token_limit', 'turnstile_site_key', 'turnstile_secret_key'];
+// Settings that hold secrets: only overwrite when a non-empty value is sent
+// (the client never sees the real value, it sends '' when untouched).
+const SECRET_SETTING_KEYS = new Set(['api_key', 'turnstile_secret_key']);
 
 app.get('/api/admin/settings', requireAdmin, (req, res) => {
   const apiKey = getSetting('api_key', '');
+  const tsSecret = getSetting('turnstile_secret_key', '');
   res.json({
     provider_name: getSetting('provider_name', ''),
     base_url: getSetting('base_url', ''),
     model: getSetting('model', ''),
     signup_enabled: getSetting('signup_enabled', '1'),
+    default_weekly_token_limit: getSetting('default_weekly_token_limit', '1000000'),
+    turnstile_site_key: getSetting('turnstile_site_key', ''),
     has_key: apiKey.length > 0, // the raw key is never sent to clients
+    has_turnstile_secret: tsSecret.length > 0,
   });
 });
 
@@ -1304,12 +1349,17 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
     // the settings table (api keys are dozens of chars; 4000 is generous).
     const val = String(body[key]);
     if (val.length > 4000) throw httpError(400, `Setting ${key} is too long (4000 character limit).`);
-    if (key === 'api_key') {
+    if (SECRET_SETTING_KEYS.has(key)) {
       // Only overwrite when a non-empty value is sent — the client sends ''
       // when the admin didn't touch the field (it never sees the real key).
       if (val.length > 0) setSetting(key, val);
     } else if (key === 'signup_enabled') {
       setSetting(key, body[key] === '0' || body[key] === false ? '0' : '1');
+    } else if (key === 'default_weekly_token_limit') {
+      // Accepts shorthand ("1M", "500K") or a plain number; empty = unlimited.
+      const parsed = parseTokenLimitSetting(val);
+      if (!parsed.ok) throw httpError(400, parsed.error);
+      setSetting(key, parsed.value === null ? '' : String(parsed.value));
     } else {
       setSetting(key, val);
     }

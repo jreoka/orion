@@ -113,6 +113,22 @@ export function setWeeklyLimit(userId, limit) {
   return null;
 }
 
+/**
+ * Parse a token-limit setting value: shorthand ("1M", "500K") or a plain
+ * number; empty string = unlimited (null). Server-side twin of the client's
+ * parseTokenLimit.
+ */
+export function parseTokenLimitSetting(v) {
+  const s = String(v ?? '').trim();
+  if (s === '') return { ok: true, value: null };
+  const m = /^(\d+(?:\.\d+)?)\s*([kmbt])?$/i.exec(s);
+  if (!m) return { ok: false, error: 'Use a number like 1000000 — or shorthand like 1K, 1M, 10M, 1B, 3T.' };
+  const mult = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 }[(m[2] || '').toLowerCase()] || 1;
+  const n = Math.floor(Number(m[1]) * mult);
+  if (n <= 0) return { ok: false, error: 'The limit must be a positive number.' };
+  return { ok: true, value: n };
+}
+
 /** All users' current-week usage, for the admin panel. */
 export function allWeeklyUsage() {
   const ws = weekStartMs();

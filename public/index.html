@@ -56,6 +56,7 @@
             </label>
             <p id="auth-error" class="form-error" hidden></p>
             <button type="submit" class="btn primary block" id="auth-submit">Log in</button>
+            <div id="turnstile-slot" hidden></div>
             <button type="button" class="btn block" id="passkey-btn" hidden>Sign in with passkey</button>
           </form>
           <div id="auth-2fa-step" hidden>
@@ -187,6 +188,32 @@
             <div class="form-row">
               <button type="submit" class="btn primary" id="provider-save">Save changes</button>
               <span id="provider-saved" class="saved-note" hidden>Saved ✓</span>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>Limits &amp; login captcha</h2>
+          <p class="muted small">The allowance every new account starts with, and the Cloudflare Turnstile captcha shown on the sign-in / sign-up screen.</p>
+          <form id="limits-form">
+            <label class="field">
+              <span>Default weekly token allowance</span>
+              <input id="set-default-limit" type="text" placeholder="1M" maxlength="16" autocomplete="off">
+              <span class="field-hint">Shorthand like 1K, 1M, 10M… Empty = unlimited. Applies to accounts created from now on.</span>
+            </label>
+            <div class="grid2">
+              <label class="field">
+                <span>Turnstile site key</span>
+                <input id="set-turnstile-site" type="text" placeholder="Not set" maxlength="256" autocomplete="off">
+              </label>
+              <label class="field">
+                <span>Turnstile secret key</span>
+                <input id="set-turnstile-secret" type="password" placeholder="Not set" maxlength="256" autocomplete="new-password">
+              </label>
+            </div>
+            <div class="form-row">
+              <button type="submit" class="btn primary" id="limits-save">Save changes</button>
+              <span id="limits-saved" class="saved-note" hidden>Saved ✓</span>
             </div>
           </form>
         </div>

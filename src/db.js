@@ -270,7 +270,10 @@ INSERT OR IGNORE INTO settings (key, value) VALUES
   ('base_url', 'https://api.openai.com/v1'),
   ('api_key', ''),
   ('model', 'gpt-4o'),
-  ('signup_enabled', '1');
+  ('signup_enabled', '1'),
+  ('default_weekly_token_limit', '1000000'),
+  ('turnstile_site_key', ''),
+  ('turnstile_secret_key', '');
 `);
 
 export function getSetting(key, fallback = '') {
