@@ -1723,7 +1723,7 @@ async function sharedChatsModal() {
       return;
     }
     if (!shares.length) {
-      list.innerHTML = '<p class="muted">Nothing shared yet. Right-click a chat in the sidebar and choose Share.</p>';
+      list.innerHTML = '<p class="muted">Nothing shared yet. Click the &#8942; menu on a chat in the sidebar and choose Share.</p>';
       return;
     }
     list.innerHTML = shares.map((s) => {
