@@ -651,6 +651,142 @@ function wireJumpPill() {
   }, { passive: true });
 }
 
+/* ---------- chat search (floating window) ---------- */
+let searchTimer = 0;
+let searchResults = [];
+let searchSel = -1;
+
+// Highlight the first case-insensitive match. Indices are found in the raw
+// text and each segment is escaped, so entities can't break the markup.
+function highlightMatch(text, q) {
+  text = text || '';
+  if (!q) return esc(text);
+  const li = text.toLowerCase().indexOf(q.toLowerCase());
+  if (li < 0) return esc(text);
+  return (
+    esc(text.slice(0, li)) +
+    '<mark>' + esc(text.slice(li, li + q.length)) + '</mark>' +
+    esc(text.slice(li + q.length))
+  );
+}
+
+function openSearch() {
+  const ov = $('#search-overlay');
+  if (!ov) return;
+  ov.hidden = false;
+  searchResults = [];
+  searchSel = -1;
+  const input = $('#search-input');
+  input.value = '';
+  $('#search-results').innerHTML =
+    '<div class="search-hint">Type to search chat titles and messages.</div>';
+  setTimeout(() => input.focus(), 0);
+}
+
+function closeSearch() {
+  const ov = $('#search-overlay');
+  if (ov) ov.hidden = true;
+  clearTimeout(searchTimer);
+  $('#search-input')?.blur();
+}
+
+async function runChatSearch(q) {
+  q = (q || '').trim();
+  if (q.length < 2) {
+    searchResults = [];
+    searchSel = -1;
+    $('#search-results').innerHTML =
+      '<div class="search-hint">Type to search chat titles and messages.</div>';
+    return;
+  }
+  try {
+    const rows = await api('/api/conversations/search?q=' + encodeURIComponent(q));
+    searchResults = Array.isArray(rows) ? rows : [];
+  } catch {
+    searchResults = [];
+  }
+  searchSel = searchResults.length ? 0 : -1;
+  paintSearchResults(q);
+}
+
+function paintSearchResults(q) {
+  const box = $('#search-results');
+  if (!box) return;
+  if (!searchResults.length) {
+    box.innerHTML = '<div class="search-hint">No chats match.</div>';
+    return;
+  }
+  box.innerHTML = '';
+  searchResults.forEach((r, i) => {
+    const b = document.createElement('button');
+    b.className = 'search-item' + (i === searchSel ? ' sel' : '');
+    b.setAttribute('role', 'option');
+    b.innerHTML =
+      '<div class="s-title">' + highlightMatch(r.title || 'New chat', q) + '</div>' +
+      (r.snippet ? '<div class="s-snippet">' + highlightMatch(r.snippet, q) + '</div>' : '') +
+      '<div class="s-meta">' + esc(timeAgo(r.updated_at)) + '</div>';
+    b.addEventListener('click', () => {
+      closeSearch();
+      switchConversation(r.id);
+    });
+    b.addEventListener('mousemove', () => {
+      if (searchSel !== i) {
+        searchSel = i;
+        paintSearchResults(q);
+      }
+    });
+    box.appendChild(b);
+  });
+}
+
+function wireSearchOnce() {
+  if (wireSearchOnce.done) return;
+  wireSearchOnce.done = true;
+  $('#search-overlay')?.addEventListener('mousedown', (e) => {
+    if (e.target.id === 'search-overlay') closeSearch();
+  });
+  const input = $('#search-input');
+  if (!input) return;
+  input.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => runChatSearch(input.value), 200);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeSearch();
+      return;
+    }
+    if (!searchResults.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      searchSel = (searchSel + 1) % searchResults.length;
+      paintSearchResults(input.value.trim());
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      searchSel = (searchSel - 1 + searchResults.length) % searchResults.length;
+      paintSearchResults(input.value.trim());
+    } else if (e.key === 'Enter') {
+      const r = searchResults[searchSel];
+      if (r) {
+        closeSearch();
+        switchConversation(r.id);
+      }
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    const ov = $('#search-overlay');
+    const open = ov && !ov.hidden;
+    if (e.key === 'Escape' && open) {
+      closeSearch();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      open ? closeSearch() : openSearch();
+    }
+  });
+}
+
 /* ---------- file uploads ---------- */
 function fmtBytes(n) {
   n = Number(n) || 0;
@@ -1234,6 +1370,55 @@ async function loadConversationsQuiet() {
   } catch { /* sidebar refresh is best-effort */ }
 }
 
+// Date bucket for the sidebar: Today / Yesterday / Previous 7 days /
+// Previous 30 days, then one bucket per calendar month.
+function convBucketLabel(ts) {
+  const d = new Date(ts || 0);
+  const now = new Date();
+  const startOfDay = (x) => {
+    const t = new Date(x);
+    t.setHours(0, 0, 0, 0);
+    return t.getTime();
+  };
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+  if (diffDays <= 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays <= 7) return 'Previous 7 days';
+  if (diffDays <= 30) return 'Previous 30 days';
+  return d.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+}
+
+function convItemEl(c) {
+  const el = document.createElement('div');
+  el.className = 'conv-item' + (c.id === S.activeId ? ' active' : '');
+  el.setAttribute('role', 'button');
+  el.tabIndex = 0;
+  el.title = c.title || 'New chat';
+  const seen = S.lastSeenAt[c.id] || 0;
+  const hasNew = c.id !== S.activeId && seen > 0 && c.updated_at > seen;
+  const working = !!(c.running || S.runByConv[c.id]);
+  el.innerHTML = `
+    <div class="conv-meta">
+      <div class="conv-title">${esc(c.title || 'New chat')}</div>
+      <div class="conv-sub">${working ? 'working…' : esc(timeAgo(c.updated_at))}</div>
+    </div>
+    ${working ? '<span class="conv-dot working" aria-label="Agent working"></span>'
+              : hasNew ? '<span class="conv-dot" aria-label="New activity"></span>' : ''}
+    <button class="conv-menu-btn" aria-label="Chat options" title="Chat options">⋯</button>`;
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('.conv-menu-btn')) return;
+    switchConversation(c.id);
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchConversation(c.id); }
+  });
+  el.querySelector('.conv-menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openConvMenu(c, e.currentTarget);
+  });
+  return el;
+}
+
 function renderSidebar() {
   const list = $('#conv-list');
   if (!list) return;
@@ -1245,36 +1430,18 @@ function renderSidebar() {
     empty.textContent = 'No chats yet — press + to start one.';
     list.appendChild(empty);
   }
+  let lastBucket = null;
   for (const c of S.conversations) {
     if (c.id === S.activeId) activeTitle = c.title || 'New chat';
-    const el = document.createElement('div');
-    el.className = 'conv-item' + (c.id === S.activeId ? ' active' : '');
-    el.setAttribute('role', 'button');
-    el.tabIndex = 0;
-    el.title = c.title || 'New chat';
-    const seen = S.lastSeenAt[c.id] || 0;
-    const hasNew = c.id !== S.activeId && seen > 0 && c.updated_at > seen;
-    const working = !!(c.running || S.runByConv[c.id]);
-    el.innerHTML = `
-      <div class="conv-meta">
-        <div class="conv-title">${esc(c.title || 'New chat')}</div>
-        <div class="conv-sub">${working ? 'working…' : esc(timeAgo(c.updated_at))}</div>
-      </div>
-      ${working ? '<span class="conv-dot working" aria-label="Agent working"></span>'
-                : hasNew ? '<span class="conv-dot" aria-label="New activity"></span>' : ''}
-      <button class="conv-menu-btn" aria-label="Chat options" title="Chat options">⋯</button>`;
-    el.addEventListener('click', (e) => {
-      if (e.target.closest('.conv-menu-btn')) return;
-      switchConversation(c.id);
-    });
-    el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchConversation(c.id); }
-    });
-    el.querySelector('.conv-menu-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      openConvMenu(c, e.currentTarget);
-    });
-    list.appendChild(el);
+    const bucket = convBucketLabel(c.updated_at);
+    if (bucket !== lastBucket) {
+      lastBucket = bucket;
+      const h = document.createElement('div');
+      h.className = 'conv-group';
+      h.textContent = bucket;
+      list.appendChild(h);
+    }
+    list.appendChild(convItemEl(c));
   }
   const t = $('#chat-title');
   if (t) t.textContent = activeTitle;
@@ -1442,6 +1609,8 @@ function wireSidebarOnce() {
   if (sidebarWired) return;
   sidebarWired = true;
   $('#new-chat-btn')?.addEventListener('click', newChat);
+  $('#search-btn')?.addEventListener('click', openSearch);
+  wireSearchOnce();
   $('#menu-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
     if (window.matchMedia('(max-width: 760px)').matches) openSidebarDrawer();

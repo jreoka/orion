@@ -497,6 +497,31 @@ app.get('/api/conversations', requireAuth, (req, res) => {
   res.json(rows);
 });
 
+// Full-text-ish search over the user's chats: matches conversation titles
+// and message bodies, newest first, with a snippet from the first matching
+// message. (Registered before /:id so "search" isn't swallowed as an id.)
+app.get('/api/conversations/search', requireAuth, (req, res) => {
+  const q = (req.query.q || '').trim().slice(0, 120);
+  if (q.length < 2) return res.json([]);
+  const like = `%${q.replace(/[\\%_]/g, (m) => '\\' + m)}%`;
+  const rows = db
+    .prepare(
+      `SELECT c.id, c.title, c.updated_at,
+         (SELECT substr(m.content, 1, 200) FROM messages m
+           WHERE m.conversation_id = c.id AND m.content LIKE ? ESCAPE '\\'
+           ORDER BY m.id LIMIT 1) AS snippet
+       FROM conversations c
+       WHERE c.user_id = ?
+         AND (c.title LIKE ? ESCAPE '\\' OR EXISTS (
+           SELECT 1 FROM messages m2
+           WHERE m2.conversation_id = c.id AND m2.content LIKE ? ESCAPE '\\'))
+       ORDER BY c.updated_at DESC
+       LIMIT 20`
+    )
+    .all(like, req.user.id, like, like);
+  res.json(rows);
+});
+
 app.post('/api/conversations', requireAuth, (req, res) => {
   // Never stack up empty chats: if the user already has a message-less
   // conversation, hand that one back instead of creating another.
