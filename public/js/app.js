@@ -674,7 +674,11 @@ function prependHistoryBatch(msgs) {
   // logs when something later re-folds the whole list.
   for (const seg of splitRuns([...frag.children])) foldRunSegment(seg);
   box.insertBefore(frag, ensureOlderSpinner().nextSibling);
-  setScrollTopInstant(box, prevTop + (box.scrollHeight - prevHeight));
+  // Pinned to the top: stay pinned, so the sentinel stays visible and the
+  // observer keeps paging in history without the user having to re-scroll.
+  // Otherwise preserve the reading position.
+  if (prevTop < 100) setScrollTopInstant(box, 0);
+  else setScrollTopInstant(box, prevTop + (box.scrollHeight - prevHeight));
 }
 
 // Re-attach messages that are loaded in S.messages but missing from the DOM
@@ -730,7 +734,16 @@ async function loadOlder() {
   // client already has but can't see.
   if (reattachMissingOlder()) return;
   if (!S.hasMoreOlder) return;
-  await fetchOlderBatch();
+  if (!(await fetchOlderBatch())) return;
+  // Still pinned to the top with more on the server? Keep paging. The
+  // IntersectionObserver only fires on intersection CHANGES, so it won't
+  // re-trigger while the sentinel stays continuously visible — without
+  // this the user has to nudge the scroll to load each batch.
+  const box = $('#messages');
+  if (S.hasMoreOlder && box.scrollTop < 100) {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    if (box.scrollTop < 100 && S.activeId) loadOlder();
+  }
 }
 
 /* ---------- turn rail: one line per user turn, tap to jump ---------- */
