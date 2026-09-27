@@ -1761,7 +1761,9 @@ export async function runAgentContinuation({
 
 /**
  * Ask the model for a short title for a new conversation, based on the first
- * exchange. Fire-and-forget: publishes a 'title' bus event when it lands.
+ * user message (and the assistant's final text when called after a run).
+ * Called at run start so long tasks get a name while they work.
+ * Fire-and-forget: publishes a 'title' bus event when it lands.
  * Falls back to the first words of the user message if the model call fails
  * or returns nothing usable. Never overwrites a title the user (or another
  * path) set while the call was in flight.
@@ -1849,6 +1851,19 @@ export async function runAgentLoop({
   // loop iteration, so partial text always lands in the in-flight row.
   let assistantId = null;
   let status = 'done'; // done | error | stopped
+  // Auto-title: first user message in an untitled conversation. Fired at run
+  // start (not run end) so long tasks get a name while they work. Never from
+  // a system-injected prompt — a heartbeat check or task run must not leave
+  // chats titled "Check in…" / "Task: …".
+  {
+    const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId);
+    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && userText && !noAutoTitle && !isOverLimit(userId)) {
+      // Fire-and-forget: the title is published on the bus when it lands,
+      // so the run isn't held up by a second model call. Failures fall
+      // back to the old first-words slice inside generateChatTitle.
+      generateChatTitle({ userId, conversationId, settings, userText, finalText: '' }).catch(() => {});
+    }
+  }
   // Assistant message IDs created during this run, in turn order. At run end
   // Bridge the loop's emit() calls onto the conversation event bus.
   const busEmit = (type, data) => {
@@ -1988,17 +2003,6 @@ export async function runAgentLoop({
       status = 'stopped';
       const row = db.prepare('SELECT content FROM messages WHERE id = ?').get(assistantId);
       appendStoppedNote(row?.content || '');
-    }
-
-    // Auto-title: first exchange in an untitled conversation. Never from a
-    // system-injected prompt — a heartbeat check or task run must not leave
-    // chats titled "Check in…" / "Task: …".
-    const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId);
-    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && userText && !noAutoTitle && !isOverLimit(userId)) {
-      // Fire-and-forget: the title is published on the bus when it lands,
-      // so the response isn't held up by a second model call. Failures fall
-      // back to the old first-words slice inside generateChatTitle.
-      generateChatTitle({ userId, conversationId, settings, userText, finalText }).catch(() => {});
     }
 
     return { finalText, status };
