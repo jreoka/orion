@@ -603,10 +603,14 @@ function paintJump() {
   if (S.jumpUnread > 0) { count.textContent = S.jumpUnread; count.hidden = false; }
   else count.hidden = true;
 }
-// Explicit scroll: force always goes to the bottom.
+// Explicit scroll: force always goes to the bottom (smoothly, since the
+// user tapped the button); auto-follow stays instant.
 function scrollBottom(force) {
   if (force || nearBottom()) {
-    $('#messages').scrollTop = $('#messages').scrollHeight;
+    $('#messages').scrollTo({
+      top: $('#messages').scrollHeight,
+      behavior: force ? 'smooth' : 'auto',
+    });
     hideJump();
   }
 }
@@ -638,8 +642,10 @@ function keepPlace() {
 function wireJumpPill() {
   $('#jump-latest').addEventListener('click', () => scrollBottom(true));
   $('#messages').addEventListener('scroll', () => {
+    // The circular button lives on screen whenever the user is scrolled up,
+    // whether or not new messages arrived.
     if (nearBottom()) hideJump();
-    else if (!$('#jump-latest').hidden) paintJump();
+    else paintJump();
     // Near the top with older history available: page it in.
     if ($('#messages').scrollTop < 600) loadOlder();
   }, { passive: true });
