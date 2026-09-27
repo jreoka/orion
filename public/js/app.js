@@ -217,17 +217,11 @@ window.addEventListener('hashchange', () => {
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
-    // When a new service worker takes over (e.g. a fresh deploy), reload
-    // once so the tab runs the new code without a manual hard refresh.
-    // The composer draft is persisted on every keystroke (see wireChat),
-    // so reloading never eats what the user was typing.
-    let swReloaded = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (swReloaded) return;
-      swReloaded = true;
-      toast('Orion updated — reloading…');
-      setTimeout(() => location.reload(), 900);
-    });
+    // NOTE: no reload on controllerchange. sw.js never changes between
+    // deploys, so controllerchange only fires on a fresh install — where
+    // the page just loaded the latest code and a reload 900ms after load
+    // would only interrupt the user (e.g. mid-login). Real deploys are
+    // picked up by the checkForDeploy poll below.
     // A push-notification tap while a tab is open: the service worker
     // focuses it and asks it to navigate to the conversation.
     navigator.serviceWorker.addEventListener('message', (event) => {      const data = event.data || {};
@@ -1868,6 +1862,19 @@ function applyTheme(dark, save = true) {
 async function afterLogin() {
   try { S.me = await api('/api/auth/me'); } catch { /* keep S.me as-is */ }
   if (S.me) adoptTheme();
+  // TEMPORARY diagnostic beacon: report what this tab saw so the
+  // post-login theme issue can be diagnosed server-side. Remove with
+  // the /api/debug/theme-trace endpoint once resolved.
+  try {
+    let ls = null;
+    try { ls = localStorage.getItem('orion-theme'); } catch (e) { ls = 'ERR'; }
+    api('/api/debug/theme-trace', { method: 'POST', body: {
+      v: (typeof myAssetVersion === 'function' ? myAssetVersion() : null),
+      meTheme: S.me ? S.me.theme : null,
+      appliedDark: document.documentElement.dataset.theme === 'dark',
+      localStorage: ls,
+    } }).catch(() => {});
+  } catch { /* never break login for a diagnostic */ }
   S.activeId = null;
   S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
   go('chat');

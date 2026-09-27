@@ -1652,6 +1652,16 @@ app.delete('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => 
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, asset: ASSET_VERSION }));
 
+// TEMPORARY diagnostic: client beacons what its tab saw at login
+// (asset version, theme from /api/auth/me, theme actually applied).
+// Remove once the post-login theme issue is diagnosed.
+app.post('/api/debug/theme-trace', (req, res) => {
+  try {
+    console.log('[theme-trace]', JSON.stringify({ ip: req.ip, body: req.body || null }));
+  } catch { /* never break login for a diagnostic */ }
+  res.json({ ok: true });
+});
+
 // Errors from httpError carry .status; everything else is a 500.
 // Never leak stack traces, SQL, or filesystem paths to clients —
 // unexpected failures get a generic message (details stay in the log).
