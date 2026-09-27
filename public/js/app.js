@@ -810,17 +810,18 @@ function paintTurnRail() {
   const midY = viewTop + (viewBottom - viewTop) / 2;
   let bestMid = null;
   let bestDist = Infinity;
-  for (const n of box.querySelectorAll('[data-mid]')) {
-    if (!n.classList.contains('user')) continue;
+  // Direct children only: rows nested inside collapsed work logs also carry
+  // data-mid, and their rects are garbage — they'd poison the pick.
+  for (const n of box.querySelectorAll(':scope > [data-mid].user')) {
     const r = n.getBoundingClientRect();
+    if (!r.width && !r.height) continue; // hidden
     if (r.bottom < viewTop || r.top > viewBottom) continue; // not visible
     const dist = Math.abs((r.top + r.bottom) / 2 - midY);
     if (dist < bestDist) { bestDist = dist; bestMid = n.dataset.mid; }
   }
   // Fallback: scrolled past everything — highlight the last turn above.
   if (!bestMid) {
-    for (const n of box.querySelectorAll('[data-mid]')) {
-      if (!n.classList.contains('user')) continue;
+    for (const n of box.querySelectorAll(':scope > [data-mid].user')) {
       if (n.getBoundingClientRect().bottom <= viewTop) bestMid = n.dataset.mid;
       else break;
     }
