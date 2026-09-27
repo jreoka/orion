@@ -489,9 +489,8 @@ async function doAuth() {
       method: 'POST', body
     });
     if (res && res.need_2fa) { show2faStep(res.challenge); return; }
-    S.me = res;
     $('#auth-password').value = '';
-    go('chat');
+    await afterLogin();
   } catch (ex) {
     err.textContent = ex.message;
     err.hidden = false;
@@ -1860,6 +1859,18 @@ function applyTheme(dark, save = true) {
     S.themePushedAt = Date.now();
     api('/api/auth/me', { method: 'PATCH', body: { theme: dark ? 'dark' : 'light' } }).catch(() => {});
   }
+}
+
+// Single post-login landing: re-fetch the authoritative user record
+// (login responses don't all carry every field, e.g. theme) and apply
+// the synced theme, then go to chat. Every login path funnels here so
+// a cleared localStorage can't strand the user on the wrong theme.
+async function afterLogin() {
+  try { S.me = await api('/api/auth/me'); } catch { /* keep S.me as-is */ }
+  if (S.me) adoptTheme();
+  S.activeId = null;
+  S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
+  go('chat');
 }
 
 // Boot: the server copy wins when set; otherwise adopt this device's
@@ -3313,10 +3324,8 @@ async function submit2fa(e) {
     }
     S.me = d.user;
 
-    S.activeId = null;
-    S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
     hide2faStep();
-    go('chat');
+    await afterLogin();
   } catch (err) {
     errEl.textContent = err.message || 'That code didn’t work.';
     errEl.hidden = false;
@@ -3332,9 +3341,7 @@ async function passkeyLogin() {
     const d = await api('/api/auth/passkey/login/verify', { method: 'POST', body: { token, response: webauthnCredToJson(cred) } });
     S.me = d;
 
-    S.activeId = null;
-    S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
-    go('chat');
+    await afterLogin();
   } catch (err) {
     if (err && (err.name === 'NotAllowedError' || err.name === 'AbortError')) return; // user cancelled
     errEl.textContent = err.message || 'Passkey sign-in failed.';
