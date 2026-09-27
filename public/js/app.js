@@ -2481,6 +2481,7 @@ async function renderAdmin() {
   await Promise.all([loadProviderSettings(), loadAdminUsers()]);
   wireProviderFormOnce();
   wireLimitsFormOnce();
+  wireSearchFormOnce();
 }
 
 async function loadProviderSettings() {
@@ -2505,6 +2506,9 @@ async function loadProviderSettings() {
   $('#set-turnstile-site').value = s.turnstile_site_key || '';
   $('#set-turnstile-secret').value = '';
   $('#set-turnstile-secret').placeholder = s.has_turnstile_secret ? 'Saved ✓ — leave blank to keep' : 'Not set';
+  // Web search card.
+  $('#set-brave-key').value = '';
+  $('#set-brave-key').placeholder = s.has_brave_key ? 'Saved ✓ — leave blank to keep' : 'Not set';
 }
 
 let limitsWired = false;
@@ -2530,6 +2534,34 @@ function wireLimitsFormOnce() {
       saved.hidden = false;
       setTimeout(() => { saved.hidden = true; }, 2600);
       toast('Limits & captcha saved');
+    } catch (ex) {
+      toast(ex.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+let searchWired = false;
+function wireSearchFormOnce() {
+  if (searchWired) return;
+  searchWired = true;
+  $('#search-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = $('#search-save');
+    const saved = $('#search-saved');
+    btn.disabled = true;
+    saved.hidden = true;
+    const key = $('#set-brave-key').value.trim();
+    const body = {};
+    // Send the key only when the admin typed a new one.
+    if (key) body.brave_api_key = key;
+    try {
+      await api('/api/admin/settings', { method: 'PUT', body });
+      await loadProviderSettings(); // re-populate (placeholders)
+      saved.hidden = false;
+      setTimeout(() => { saved.hidden = true; }, 2600);
+      toast('Web search saved');
     } catch (ex) {
       toast(ex.message, 'error');
     } finally {

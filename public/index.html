@@ -222,6 +222,22 @@
         </div>
 
         <div class="card">
+          <h2>Web search</h2>
+          <p class="muted small">Powers the agent's web_search tool. A Brave Search API key is the reliable option (free tier: 2,000 searches/month, no card — <a href="https://brave.com/search/api/" target="_blank" rel="noopener">brave.com/search/api</a>). Without one, the agent falls back to best-effort public search.</p>
+          <form id="search-form">
+            <label class="field">
+              <span>Brave Search API key</span>
+              <input id="set-brave-key" type="password" placeholder="Not set" maxlength="256" autocomplete="new-password">
+              <span class="field-hint">Stored server-side, never shown again. Leave blank to keep the saved key.</span>
+            </label>
+            <div class="form-row">
+              <button type="submit" class="btn primary" id="search-save">Save changes</button>
+              <span id="search-saved" class="saved-note" hidden>Saved ✓</span>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
           <h2>Users</h2>
           <div class="table-wrap">
             <table class="users-table">

@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import dns from 'node:dns';
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, attachmentSummary, groupedReactions } from './db.js';
+import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, attachmentSummary, groupedReactions, getSetting } from './db.js';
 import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
 import { imagePartsForMessage, imagePartFromFile, messageHasImages, stripImageParts } from './vision.js';
 import { notifyConversation } from './push.js';
@@ -808,12 +808,30 @@ function createAgentTask(userId, args) {
 // execCtx (optional): { onExecStart(execId), onExecEnd(execId) } — lets the
 // run driver track the in-flight sandbox exec so Stop can kill it.
 
-// Web search for the agent: SearXNG JSON first, Wikipedia API as fallback.
-// Both are keyless and server-side — the model must never curl search
-// engines itself. Returns clean numbered "title / url / snippet" text.
+// Web search for the agent: Brave API first (keyed, reliable), then SearXNG
+// JSON (keyless, best-effort), then Wikipedia API (factual fallback).
+// All server-side — the model must never curl search engines itself.
+// Returns clean numbered "title / url / snippet" text.
 async function webSearch(query, count) {
   const q = encodeURIComponent(query);
   const ua = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36' };
+  const braveKey = getSetting('brave_api_key', '');
+  if (braveKey) {
+    try {
+      const r = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${q}&count=${count}`, {
+        headers: { ...ua, 'X-Subscription-Token': braveKey },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        const items = ((j.web && j.web.results) || [])
+          .filter((x) => x && x.title && x.url)
+          .slice(0, count)
+          .map((x) => ({ title: x.title, url: x.url, snippet: x.description || '' }));
+        if (items.length) return formatSearchResults(items);
+      }
+    } catch { /* fall through */ }
+  }
   try {
     const r = await fetch(`https://searx.be/search?q=${q}&format=json&language=en`, {
       headers: ua, signal: AbortSignal.timeout(15000),

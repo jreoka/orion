@@ -1466,10 +1466,10 @@ app.get('/s/:token', (req, res) => {
 // ---- admin ----------------------------------------------------------------
 
 // Token-limit shorthand parsing lives in usage.js (imported above).
-const ADMIN_SETTING_KEYS = ['provider_name', 'base_url', 'api_key', 'model', 'signup_enabled', 'default_weekly_token_limit', 'turnstile_site_key', 'turnstile_secret_key'];
+const ADMIN_SETTING_KEYS = ['provider_name', 'base_url', 'api_key', 'model', 'signup_enabled', 'default_weekly_token_limit', 'turnstile_site_key', 'turnstile_secret_key', 'brave_api_key'];
 // Settings that hold secrets: only overwrite when a non-empty value is sent
 // (the client never sees the real value, it sends '' when untouched).
-const SECRET_SETTING_KEYS = new Set(['api_key', 'turnstile_secret_key']);
+const SECRET_SETTING_KEYS = new Set(['api_key', 'turnstile_secret_key', 'brave_api_key']);
 
 app.get('/api/admin/settings', requireAdmin, (req, res) => {
   const apiKey = getSetting('api_key', '');
@@ -1483,6 +1483,7 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
     turnstile_site_key: getSetting('turnstile_site_key', ''),
     has_key: apiKey.length > 0, // the raw key is never sent to clients
     has_turnstile_secret: tsSecret.length > 0,
+    has_brave_key: getSetting('brave_api_key', '').length > 0,
   });
 });
 
