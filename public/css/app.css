@@ -1123,6 +1123,10 @@ button.avatar.lg:hover { opacity: .85; }
 .msg.user .rx-chip:hover { background: rgba(244, 240, 232, .22); }
 .msg.user .rx-chip.mine { background: rgba(244, 240, 232, .26); }
 .msg.user .rx-n { color: var(--paper); opacity: .8; }
+[data-theme="dark"] .msg.user .rx-chip { background: rgba(236, 228, 211, .14); color: var(--ink); }
+[data-theme="dark"] .msg.user .rx-chip:hover { background: rgba(236, 228, 211, .22); }
+[data-theme="dark"] .msg.user .rx-chip.mine { background: rgba(236, 228, 211, .28); }
+[data-theme="dark"] .msg.user .rx-n { color: var(--ink); }
 .msg.user .rx-add, .msg.user .rx-copy { border-color: rgba(244, 240, 232, .55); color: var(--paper); background: rgba(244, 240, 232, .1); }
 .msg.user .rx-add:hover, .msg.user .rx-copy:hover { background: rgba(244, 240, 232, .15); }
 .rx-picker {
