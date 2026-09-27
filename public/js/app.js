@@ -1723,6 +1723,7 @@ function wireSidebarOnce() {
     if (window.matchMedia('(max-width: 760px)').matches) openSidebarDrawer();
     else setSidebarCollapsed(!document.body.classList.contains('side-collapsed'));
   });
+  $('#compose-btn')?.addEventListener('click', newChat);
   $('#side-backdrop')?.addEventListener('click', closeSidebarDrawer);
   try {
     if (localStorage.getItem('orion-sidebar-collapsed') === '1') {

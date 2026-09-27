@@ -1112,6 +1112,9 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
 
 @media (max-width: 760px) {
   .only-mobile { display: inline-flex !important; }
+  /* Compose (new chat) button sits right of the title, beside the avatar. */
+  #compose-btn { margin-left: auto; }
+  #chat-header .head-user { margin-left: 0; }
   #chat-header { display: flex; }
   #chat-header .icon-btn { width: 44px; height: 44px; }
   #chat-header .wordmark { font-size: 16px; }
