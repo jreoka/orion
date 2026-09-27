@@ -738,6 +738,36 @@ app.post('/api/reset', requireAuth, asyncRoute(async (req, res) => {
   res.json({ ok: true, conversation_id: freshId });
 }));
 
+// Delete every conversation (all chats) but leave the sandbox alone — the
+// agent's files, installed tools, and persistent memory (SOUL.md / MEMORY.md)
+// survive. Same password (+2FA) gate as the full reset: this is destructive.
+// Task definitions are kept; only their chat transcripts go.
+app.post('/api/chats/delete-all', requireAuth, asyncRoute(async (req, res) => {
+  const { password, totp_code } = req.body || {};
+  if (!verifyPassword(req.user.id, password || '')) {
+    return res.status(403).json({ error: 'Wrong password.' });
+  }
+  if (totpEnabled(req.user.id) && !verifySecondFactor(req.user.id, totp_code || '')) {
+    return res.status(403).json({ error: 'Wrong two-factor code.' });
+  }
+  const convIds = db
+    .prepare('SELECT id FROM conversations WHERE user_id = ?')
+    .all(req.user.id)
+    .map((c) => c.id);
+  for (const cid of convIds) deleteConversation(cid);
+  // Drop this user's staged (unclaimed) uploads too.
+  const stagedPaths = db
+    .prepare('SELECT path FROM attachments WHERE staged = 1 AND user_id = ?')
+    .all(req.user.id)
+    .map((r) => r.path);
+  db.prepare('DELETE FROM attachments WHERE staged = 1 AND user_id = ?').run(req.user.id);
+  removeDataPaths(stagedPaths);
+  for (const cid of convIds) publish(cid, { type: 'chat_cleared' });
+  // The sandbox (and the agent's memory inside it) is deliberately untouched.
+  const freshId = getOrCreateConversation(req.user.id);
+  res.json({ ok: true, conversation_id: freshId });
+}));
+
 // ---- tasks ----------------------------------------------------------------
 
 app.get('/api/tasks', requireAuth, (req, res) => {

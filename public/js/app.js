@@ -2263,6 +2263,7 @@ function wireSettings() {
   wireSessionsTab();
   wireProfileCard();
   $('#reset-everything').onclick = resetEverythingModal;
+  $('#delete-all-chats').onclick = deleteAllChatsModal;
 }
 
 /* ---------- full reset: chat + sandbox, password + 2FA confirmed ---------- */
@@ -2310,6 +2311,55 @@ async function resetEverythingModal() {
       err.hidden = false;
       btn.disabled = false;
       btn.textContent = 'Reset everything';
+    }
+  });
+}
+
+/* ---------- delete all chats: transcripts go, sandbox + memory stay ---------- */
+async function deleteAllChatsModal() {
+  // Ask for the 2FA status fresh so the code field only appears when needed.
+  let need2fa = false;
+  try { need2fa = !!(await api('/api/auth/2fa/status')).enabled; } catch {}
+  const bd = openModal(`
+    <h3>Delete all chats?</h3>
+    <p class="muted">This erases <b>every chat transcript</b> — all messages in all conversations. The agent's <b>sandbox and memory are kept</b>: files, installed tools, SOUL.md / MEMORY.md, and scheduled tasks all survive. This can't be undone.</p>
+    <form id="delchats-form">
+      <label class="field"><span>Your password</span>
+        <input id="delchats-password" type="password" autocomplete="current-password" required>
+      </label>
+      ${need2fa ? `<label class="field"><span>Two-factor code</span>
+        <input id="delchats-totp" type="text" inputmode="numeric" autocomplete="one-time-code" required maxlength="8">
+      </label>` : ''}
+      <p id="delchats-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-x="cancel">Cancel</button>
+        <button type="submit" class="btn danger-ghost" id="delchats-submit">Delete all chats</button>
+      </div>
+    </form>`);
+  bd.querySelector('[data-x=cancel]').onclick = closeModal;
+  bd.querySelector('#delchats-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = bd.querySelector('#delchats-error');
+    const btn = bd.querySelector('#delchats-submit');
+    err.hidden = true;
+    btn.disabled = true;
+    btn.textContent = 'Deleting…';
+    try {
+      const out = await api('/api/chats/delete-all', { method: 'POST', body: {
+        password: bd.querySelector('#delchats-password').value,
+        totp_code: need2fa ? bd.querySelector('#delchats-totp').value : undefined
+      }});
+      closeModal();
+      clearChatState();
+      // The server wiped every chat and made a fresh one — open it.
+      await loadConversationsQuiet();
+      if (out && out.conversation_id) await switchConversation(out.conversation_id);
+      toast('All chats deleted — sandbox and memory kept');
+    } catch (ex) {
+      err.textContent = ex.message || 'Delete failed.';
+      err.hidden = false;
+      btn.disabled = false;
+      btn.textContent = 'Delete all chats';
     }
   });
 }
