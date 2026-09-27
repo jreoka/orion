@@ -1405,6 +1405,7 @@ function wireUserMenu() {
     } else if (act === 'settings') go('settings');
     else if (act === 'password') changePasswordModal();
     else if (act === 'shared') sharedChatsModal();
+    else if (act === 'vault') vaultModal();
     else if (act === 'admin') go('admin');
   });
 }
@@ -1760,6 +1761,67 @@ async function sharedChatsModal() {
         toast(ex.message || 'Revoke failed', 'error');
         revokeBtn.disabled = false;
       }
+    }
+  });
+  await render();
+}
+
+// Vault popup: the same list-and-revoke as the Settings Vault tab, reachable
+// from the user menu without leaving the chat.
+async function vaultModal() {
+  const bd = openModal(`
+    <h3>Vault</h3>
+    <p class="muted" style="margin-top:-6px">Secrets the agent stored through its secure forms. Values never leave the vault — this lists labels only.</p>
+    <div id="vault-list"><p class="muted">Loading…</p></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" data-x="cancel">Close</button>
+    </div>`);
+  bd.querySelector('[data-x=cancel]').onclick = closeModal;
+  const list = bd.querySelector('#vault-list');
+  const render = async () => {
+    let items;
+    try {
+      items = await api('/api/vault/items');
+    } catch {
+      list.innerHTML = '<p class="form-error">Couldn\'t load the vault.</p>';
+      return;
+    }
+    if (!items.length) {
+      list.innerHTML = '<p class="muted">No secrets stored. When the agent needs a credential, it will offer you a secure form right in the chat.</p>';
+      return;
+    }
+    list.innerHTML = items.map((i) => {
+      const when = i.created_at ? new Date(i.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+      return `
+      <div class="shared-row">
+        <div class="shared-info">
+          <div class="shared-title"><span aria-hidden="true">🔒</span> ${esc(i.label || 'Secret')}</div>
+          ${when ? `<div class="shared-meta">Added ${esc(when)}</div>` : ''}
+        </div>
+        <div class="shared-actions">
+          <button type="button" class="btn danger-ghost" data-vault-del="${esc(i.id)}" data-vault-label="${esc(i.label || 'Secret')}">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+  };
+  list.addEventListener('click', async (e) => {
+    const delBtn = e.target.closest('[data-vault-del]');
+    if (!delBtn) return;
+    const ok = await confirmDialog({
+      title: 'Delete secret?',
+      message: `Remove "${delBtn.dataset.vaultLabel}" from the vault? The agent will no longer be able to use it. This can't be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    delBtn.disabled = true;
+    try {
+      await api(`/api/vault/items/${encodeURIComponent(delBtn.dataset.vaultDel)}`, { method: 'DELETE' });
+      toast('Secret deleted');
+      await render();
+    } catch (ex) {
+      toast(ex.message || 'Delete failed', 'error');
+      delBtn.disabled = false;
     }
   });
   await render();
