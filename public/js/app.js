@@ -603,24 +603,32 @@ function paintJump() {
   if (S.jumpUnread > 0) { count.textContent = S.jumpUnread; count.hidden = false; }
   else count.hidden = true;
 }
+// Instant jump to the bottom. A plain scrollTop assignment (or scrollTo
+// with behavior:'auto') still animates when the element has
+// scroll-behavior: smooth in CSS, so the behavior is overridden for the
+// duration of the jump, then restored.
+function jumpToBottom() {
+  const box = $('#messages');
+  box.style.scrollBehavior = 'auto';
+  box.scrollTop = box.scrollHeight;
+  box.style.scrollBehavior = '';
+  hideJump();
+}
 // Explicit scroll: force always goes to the bottom (smoothly, since the
 // user tapped the button); auto-follow stays instant.
 function scrollBottom(force) {
-  if (force || nearBottom()) {
-    $('#messages').scrollTo({
-      top: $('#messages').scrollHeight,
-      behavior: force ? 'smooth' : 'auto',
-    });
+  if (force) {
+    $('#messages').scrollTo({ top: $('#messages').scrollHeight, behavior: 'smooth' });
     hideJump();
+  } else if (nearBottom()) {
+    jumpToBottom();
   }
 }
 // A whole new message landed: scroll if we're at the bottom, otherwise
 // stay put and raise the "jump to latest" pill with a count.
 function noteNewMessage() {
-  if (nearBottom()) {
-    $('#messages').scrollTop = $('#messages').scrollHeight;
-    hideJump();
-  } else {
+  if (nearBottom()) jumpToBottom();
+  else {
     S.jumpUnread++;
     paintJump();
   }
@@ -635,7 +643,7 @@ function isEmptyPlaceholder(m) {
     !m.content && !(m.attachments || []).length;
 }
 function keepPlace() {
-  if (nearBottom()) $('#messages').scrollTop = $('#messages').scrollHeight;
+  if (nearBottom()) jumpToBottom();
   else paintJump();
 }
 
@@ -885,10 +893,10 @@ function renderMessages() {
   if (status) box.appendChild(status); // keep it last, text intact
   // Full re-render: jump straight to the bottom in the same task as the DOM
   // build, so the first paint is already at the bottom — never a flash of
-  // the top followed by a scroll-down. A direct scrollTop assignment is
-  // instant (it bypasses the CSS smooth scroll-behavior on .messages).
-  box.scrollTop = box.scrollHeight;
-  hideJump();
+  // the top followed by a scroll-down. jumpToBottom() overrides the CSS
+  // smooth scroll-behavior for the jump (a bare scrollTop assignment still
+  // animates otherwise).
+  jumpToBottom();
 }
 
 // Copy-button delegation for code blocks (works for streamed content too).
