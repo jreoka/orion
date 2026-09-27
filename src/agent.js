@@ -809,8 +809,7 @@ function createAgentTask(userId, args) {
 // execCtx (optional): { onExecStart(execId), onExecEnd(execId) } — lets the
 // run driver track the in-flight sandbox exec so Stop can kill it.
 
-// Web search for the agent: bundled SearXNG first (self-hosted, keyless),
-// then Brave API (if an admin key is set), then Wikipedia API (fallback).
+// Web search for the agent: the bundled self-hosted SearXNG, full stop.
 // All server-side — the model must never curl search engines itself.
 // Returns clean numbered "title / url / snippet" text.
 async function webSearch(query, count) {
@@ -828,38 +827,12 @@ async function webSearch(query, count) {
         .slice(0, count)
         .map((x) => ({ title: x.title, url: x.url, snippet: x.content || '' }));
       if (items.length) return formatSearchResults(items);
+      return '(no results found)';
     }
-  } catch { /* fall through */ }
-  const braveKey = getSetting('brave_api_key', '');
-  if (braveKey) {
-    try {
-      const r = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${q}&count=${count}`, {
-        headers: { ...ua, 'X-Subscription-Token': braveKey },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (r.ok) {
-        const j = await r.json();
-        const items = ((j.web && j.web.results) || [])
-          .filter((x) => x && x.title && x.url)
-          .slice(0, count)
-          .map((x) => ({ title: x.title, url: x.url, snippet: x.description || '' }));
-        if (items.length) return formatSearchResults(items);
-      }
-    } catch { /* fall through */ }
+    throw new Error(`HTTP ${r.status}`);
+  } catch (e) {
+    throw new Error(`web_search: bundled search engine unreachable (${e.message})`);
   }
-  const r = await fetch(
-    `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${q}&srlimit=${count}&format=json`,
-    { headers: { 'User-Agent': 'OrionAgent/1.0' }, signal: AbortSignal.timeout(15000) }
-  );
-  if (!r.ok) throw new Error(`web_search: search backends failed (HTTP ${r.status})`);
-  const j = await r.json();
-  const items = ((j.query && j.query.search) || []).map((x) => ({
-    title: x.title,
-    url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(String(x.title).replace(/ /g, '_')),
-    snippet: String(x.snippet || '').replace(/<[^>]+>/g, ''),
-  }));
-  if (!items.length) return '(no results found)';
-  return formatSearchResults(items);
 }
 
 function formatSearchResults(items) {
