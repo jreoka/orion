@@ -80,7 +80,8 @@ const S = {
   adminUsers: [],
   pendingByConv: {},   // conv id (or 'none') -> staged file uploads waiting to be sent [{id, filename, mime, size, url, uploading}]
   jumpUnread: 0,       // new messages arrived while the user was scrolled up
-  stick: true          // follow mode: pinned to the bottom; cleared when the user scrolls up
+  stick: true,         // follow mode: pinned to the bottom; cleared when the user scrolls up
+  turns: [],           // [{id, snippet}] every user message in the open conversation, oldest first
 };
 
 /* ---------- toasts ---------- */
@@ -700,55 +701,154 @@ function showOlderSpinner(on) {
 }
 
 // Prepend an older batch fetched from the server, keeping the view stable.
-async function loadOlder() {
-  if (S.loadingOlder || !S.hasMoreOlder || !S.messages.length || !S.activeId) return;
+// Build elements for messages (oldest first), fold finished runs before
+// they hit the DOM, and prepend them above the older-spinner while keeping
+// the user's viewport stable.
+function prependHistoryBatch(msgs) {
+  if (!msgs.length) return;
   const box = $('#messages');
-  // trimRenderedTop() drops DOM nodes for messages that are still loaded in
-  // S.messages. Re-attach those first — otherwise scrolling up dead-ends on
-  // messages the client already has but can't see. Key by the raw dataset
-  // string: optimistic local bubbles use ids like 'local-<ts>', which
-  // Number() turns into NaN and would resurrect as duplicates. Match ALL
-  // descendants, not just direct children — rows folded into a
-  // <details class="worklog"> tray are nested inside .wl-body, and treating
-  // them as missing re-attaches a duplicate copy on every scroll-up.
+  const prevHeight = box.scrollHeight;
+  const prevTop = box.scrollTop;
+  const frag = document.createDocumentFragment();
+  for (const m of msgs) frag.appendChild(messageEl(m)); // S.messages order: oldest first
+  // Fold finished runs before they hit the DOM — otherwise older runs
+  // flash as loose messages while scrolling up and only jump into work
+  // logs when something later re-folds the whole list.
+  for (const seg of splitRuns([...frag.children])) foldRunSegment(seg);
+  box.insertBefore(frag, ensureOlderSpinner().nextSibling);
+  box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
+}
+
+// Re-attach messages that are loaded in S.messages but missing from the DOM
+// (trimRenderedTop() drops top nodes past RENDER_CAP). Returns true when it
+// did work. Key by the raw dataset string: optimistic local bubbles use ids
+// like 'local-<ts>', which Number() turns into NaN and would resurrect as
+// duplicates. Match ALL descendants, not just direct children — rows folded
+// into a <details class="worklog"> tray are nested inside .wl-body, and
+// treating them as missing re-attaches a duplicate copy on every scroll-up.
+function reattachMissingOlder() {
+  const box = $('#messages');
   const inDom = new Set();
   for (const n of box.querySelectorAll('[data-mid]')) inDom.add(n.dataset.mid);
   const missing = S.messages.filter((m) => !inDom.has(String(m.id)));
-  if (missing.length) {
-    const prevHeight = box.scrollHeight;
-    const prevTop = box.scrollTop;
-    const frag = document.createDocumentFragment();
-    for (const m of missing) frag.appendChild(messageEl(m)); // S.messages order: oldest first
-    // Fold finished runs before they hit the DOM — otherwise older runs
-    // flash as loose messages while scrolling up and only jump into work
-    // logs when something later re-folds the whole list.
-    for (const seg of splitRuns([...frag.children])) foldRunSegment(seg);
-    box.insertBefore(frag, ensureOlderSpinner().nextSibling);
-    box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
-    return;
-  }
+  if (!missing.length) return false;
+  prependHistoryBatch(missing);
+  return true;
+}
+
+// Fetch the next older page from the server and prepend it. Returns true
+// when a batch arrived.
+async function fetchOlderBatch() {
+  if (!S.activeId || !S.messages.length) return false;
   S.loadingOlder = true;
   showOlderSpinner(true);
   try {
     const data = await api(`/api/conversations/${S.activeId}/messages?before=${S.messages[0].id}&limit=${OLDER_BATCH}`);
     const batch = data.messages || [];
     S.hasMoreOlder = !!data.hasMoreOlder;
-    if (!batch.length) return;
-    const prevHeight = box.scrollHeight;
-    const prevTop = box.scrollTop;
+    if (!batch.length) return false;
     S.messages = [...batch, ...S.messages];
-    const frag = document.createDocumentFragment();
-    for (const m of batch) frag.appendChild(messageEl(m));
-    // Same fold-before-insert as above: fetched history must arrive
-    // already grouped.
-    for (const seg of splitRuns([...frag.children])) foldRunSegment(seg);
-    box.insertBefore(frag, ensureOlderSpinner().nextSibling);
-    box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
+    prependHistoryBatch(batch);
+    return true;
   } catch {
     /* a failed page just means scrolling up tries again later */
+    return false;
   } finally {
     S.loadingOlder = false;
     showOlderSpinner(false);
+  }
+}
+
+async function loadOlder() {
+  if (S.loadingOlder || !S.messages.length || !S.activeId) return;
+  // Re-attach trimmed nodes first — even when the server has nothing older
+  // left (hasMoreOlder false), or scrolling up dead-ends on messages the
+  // client already has but can't see.
+  if (reattachMissingOlder()) return;
+  if (!S.hasMoreOlder) return;
+  await fetchOlderBatch();
+}
+
+/* ---------- turn rail: one line per user turn, tap to jump ---------- */
+async function loadTurns() {
+  S.turns = [];
+  renderTurnRail();
+  if (!S.activeId) return;
+  try {
+    const data = await api(`/api/conversations/${S.activeId}/turns`);
+    if (!data || !S.activeId) return;
+    S.turns = data.turns || [];
+  } catch {
+    /* rail just stays hidden */
+  }
+  renderTurnRail();
+}
+
+function renderTurnRail() {
+  const rail = document.getElementById('turn-rail');
+  const track = rail && rail.querySelector('.rail-track');
+  if (!rail || !track) return;
+  const turns = S.turns;
+  if (turns.length < 2) { rail.hidden = true; return; }
+  rail.hidden = false;
+  track.innerHTML = '';
+  const n = turns.length;
+  turns.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'turn-tick';
+    b.dataset.mid = String(t.id);
+    b.style.top = (n === 1 ? 0 : (i / (n - 1)) * 100) + '%';
+    b.title = (t.snippet || '').trim() || `Turn ${i + 1}`;
+    b.setAttribute('aria-label', `Jump to turn ${i + 1}`);
+    b.addEventListener('click', (e) => { e.stopPropagation(); jumpToTurn(t.id); });
+    track.appendChild(b);
+  });
+  paintTurnRail();
+}
+
+let railRaf = 0;
+function schedulePaintRail() {
+  if (railRaf) return;
+  railRaf = requestAnimationFrame(() => { railRaf = 0; paintTurnRail(); });
+}
+
+// Highlight the tick for the turn the user is currently reading: the last
+// user message at or above the viewport's reading line.
+function paintTurnRail() {
+  const track = document.querySelector('#turn-rail .rail-track');
+  if (!track || !track.children.length) return;
+  const box = document.getElementById('messages');
+  const boxRect = box.getBoundingClientRect();
+  const line = boxRect.top + 120;
+  let activeMid = null;
+  for (const n of box.querySelectorAll(':scope > [data-mid]')) {
+    if (!n.classList.contains('user')) continue;
+    if (n.getBoundingClientRect().top <= line) activeMid = n.dataset.mid;
+    else break;
+  }
+  for (const t of track.children) {
+    t.classList.toggle('active', t.dataset.mid === String(activeMid));
+  }
+}
+
+// Jump to a turn, paging older history in first when it isn't loaded yet.
+async function jumpToTurn(mid) {
+  if (S.jumpingTurn) return;
+  S.jumpingTurn = true;
+  try {
+    let guard = 0;
+    while (!S.messages.some((m) => m.id === mid) && S.hasMoreOlder && guard++ < 25) {
+      if (!(await fetchOlderBatch())) break;
+    }
+    reattachMissingOlder();
+    const el = msgElById(mid);
+    if (!el) { toast('Could not find that turn', 'error'); return; }
+    el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    el.classList.add('turn-flash');
+    setTimeout(() => el.classList.remove('turn-flash'), 1200);
+  } finally {
+    S.jumpingTurn = false;
   }
 }
 
@@ -842,6 +942,7 @@ function wireJumpPill() {
     // whether or not new messages arrived.
     if (nearBottom()) hideJump();
     else paintJump();
+    schedulePaintRail();
     // Near the top with older history available: page it in.
     if ($('#messages').scrollTop < 600) loadOlder();
   }, { passive: true });
@@ -2377,6 +2478,7 @@ async function switchConversation(id) {
     S.lastSeenAt[id] = Date.now();
     renderSidebar();
     renderMessages();
+    loadTurns();
     openEventStream(id);
     // Clear the composer before restoring this chat's draft — otherwise a
     // chat with no draft inherits the previous chat's text. Also re-render
@@ -2509,6 +2611,7 @@ async function renderChat() {
   restoreDraft();
   await loadConversationsQuiet();
   renderMessages();
+  loadTurns();
   // Late layout (webfonts, images without known dimensions) can grow the
   // scrollable area after the initial jump — re-pin once it settles, as
   // long as the user hasn't scrolled up on their own in the meantime.
@@ -2876,6 +2979,11 @@ function onVaultEvent(d) {
 
 function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return;
   markSeen();
+  // A user message is a new turn — keep the rail in sync live.
+  if (m.role === 'user' && !S.turns.some((t) => t.id === m.id)) {
+    S.turns.push({ id: m.id, snippet: (m.content || '').slice(0, 80) });
+    renderTurnRail();
+  }
   let added = false;
   let msg = S.messages.find((x) => x.id === m.id);
   if (!msg) {

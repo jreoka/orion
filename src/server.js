@@ -522,6 +522,20 @@ app.get('/api/chat', requireAuth, (req, res) => {
   res.json(conversationPayload(conv, req.query.limit));
 });
 
+// Turn index for the side rail: every user message (one per turn), light
+// enough to fetch for the whole conversation regardless of windowing.
+app.get('/api/conversations/:id/turns', requireAuth, (req, res) => {
+  const conv = getConv(req.params.id, req.user.id);
+  if (!conv) return res.status(404).json({ error: 'Not found' });
+  const turns = db
+    .prepare(
+      `SELECT id, substr(content, 1, 80) AS snippet, created_at FROM messages
+       WHERE conversation_id = ? AND role = 'user' ORDER BY id`
+    )
+    .all(conv.id);
+  res.json({ turns });
+});
+
 // Older messages for scroll-up windowing: messages before `before` (exclusive).
 app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
   const conv = getConv(req.params.id, req.user.id);

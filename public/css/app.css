@@ -760,6 +760,35 @@ button.avatar.lg:hover { opacity: .85; }
 .jump-latest[hidden] { display: none; }
 .jump-latest:hover { transform: scale(1.06); }
 .jump-latest:active { transform: scale(.96); }
+/* ---------- turn rail: slim side minimap, one line per turn ---------- */
+#turn-rail {
+  position: absolute; top: 0; bottom: 0; right: 3px; width: 18px;
+  z-index: 20; pointer-events: none;
+}
+#turn-rail[hidden] { display: none; }
+#turn-rail .rail-track {
+  position: absolute; top: 16px; bottom: 16px; left: 50%; width: 2px;
+  transform: translateX(-50%);
+  background: var(--hairline); border-radius: 2px;
+}
+.turn-tick {
+  position: absolute; left: 50%; transform: translate(-50%, -50%);
+  width: 18px; height: 16px; padding: 0;
+  background: none; border: 0; cursor: pointer; pointer-events: auto;
+}
+.turn-tick::after {
+  content: ''; display: block; width: 8px; height: 2px; margin: 7px auto;
+  background: var(--ink-3); opacity: .55; border-radius: 2px;
+  transition: background .18s, width .18s, opacity .18s;
+}
+.turn-tick:hover::after { background: var(--ink-2); opacity: 1; }
+.turn-tick.active::after { background: var(--accent); opacity: 1; width: 13px; }
+/* brief highlight on the turn jumped to via the rail */
+.msg.turn-flash { animation: turnflash 1.1s var(--ease); }
+@keyframes turnflash {
+  0%, 100% { box-shadow: none; }
+  25%, 60% { box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 4px var(--accent); border-radius: 8px; }
+}
 .jump-count {
   position: absolute; top: -5px; right: -5px;
   background: var(--accent); color: #fff;
