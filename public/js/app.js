@@ -1593,6 +1593,29 @@ function renderSidebar() {
   }
   const t = $('#chat-title');
   if (t) t.textContent = activeTitle;
+  ensureBgRunPoller();
+}
+
+// A backgrounded chat's run_ended event never arrives — its SSE stream was
+// closed when we switched away — so its sidebar "working" light would stay
+// lit until the chat is reopened. While any non-active conversation carries
+// a run mark, poll the cheap conversation list until the server confirms
+// the runs ended; the poller stops itself when no background marks remain.
+let bgRunTimer = null;
+function bgRunMarks() {
+  return Object.keys(S.runByConv)
+    .some((id) => S.runByConv[id] && String(id) !== String(S.activeId));
+}
+function ensureBgRunPoller() {
+  if (bgRunMarks() && !bgRunTimer) {
+    bgRunTimer = setInterval(() => {
+      loadConversationsQuiet().finally(() => {
+        if (!bgRunMarks() && bgRunTimer) { clearInterval(bgRunTimer); bgRunTimer = null; }
+      });
+    }, 4000);
+  } else if (!bgRunMarks() && bgRunTimer) {
+    clearInterval(bgRunTimer); bgRunTimer = null;
+  }
 }
 
 function closeConvMenu() { document.getElementById('conv-menu')?.remove(); }
