@@ -36,6 +36,7 @@ import {
 } from './vault.js';
 
 const MAX_ITERATIONS = 12;
+const RESUME_ITERATIONS = 8; // one automatic continuation when a run stalls mid-task
 const RUN_CAP_MS = 12 * 60 * 1000; // overall run budget, shared with subagents
 const STUCK_REPEATS = 3; // identical consecutive tool calls before we stop
 
@@ -1227,6 +1228,40 @@ async function runToolLoop({
   let stopReason = null;
   let steps = 0;
 
+  // Recovery: a parent run that stalls mid-task gets ONE automatic
+  // continuation instead of ending silently —
+  //   (a) the step budget runs out while tool calls are still in flight, or
+  //   (b) the model returns an empty reply after real tool work.
+  // A nudge is pushed into the conversation and the loop gets
+  // RESUME_ITERATIONS more turns. If it still can't finish, the user gets
+  // a visible "say continue" note instead of a dead stop.
+  const RESUME_NUDGE_STEPS =
+    '[System: you hit the step budget before finishing the task. ' +
+    'Continue exactly where you left off — do not repeat completed steps, ' +
+    'be efficient, and end with a clear summary for the user.]';
+  const RESUME_NUDGE_EMPTY =
+    '[System: your last reply came back empty with the task unfinished. ' +
+    'Continue the task now — do not repeat completed steps, and end with ' +
+    'a clear summary for the user.]';
+  let iterCap = maxIterations;
+  let resumeAvailable = !isChild;
+  let lastTurnTools = false;
+  const note = (text) => {
+    try {
+      onNote(text);
+    } catch {
+      /* ignore */
+    }
+  };
+  const tryResume = (nudge, visibleNote) => {
+    if (!resumeAvailable) return false;
+    resumeAvailable = false;
+    iterCap += RESUME_ITERATIONS;
+    note(visibleNote);
+    convo.push({ role: 'user', content: nudge });
+    return true;
+  };
+
   const timeUp = () => {
     if (Date.now() > deadlineAt) {
       const note = '(stopped: run time limit reached)';
@@ -1242,7 +1277,10 @@ async function runToolLoop({
     return false;
   };
 
-  for (let i = 0; i < maxIterations; i++) {
+  let i = 0;
+  let running = true;
+  while (running) {
+    while (i < iterCap) {
     if (shouldAbort?.()) {
       stopReason = 'aborted';
       break;
@@ -1328,7 +1366,22 @@ async function runToolLoop({
       /* persistence must not kill the loop */
     }
 
-    if (!toolCalls.length) break; // final answer
+    lastTurnTools = toolCalls.length > 0;
+    if (!toolCalls.length) {
+      // Empty stall: the model ended the turn with no text and no tools,
+      // but this run did real tool work and produced no visible answer.
+      // Nudge once instead of ending silently mid-task.
+      if (
+        !(content || '').trim() &&
+        !finalText.trim() &&
+        Object.keys(toolCounts).length > 0 &&
+        tryResume(RESUME_NUDGE_EMPTY, '(empty reply mid-task — continuing automatically)')
+      ) {
+        i++;
+        continue;
+      }
+      break; // final answer
+    }
 
     for (const tc of toolCalls) {
       if (shouldAbort?.()) {
@@ -1429,6 +1482,22 @@ async function runToolLoop({
       }
     }
     if (stopReason) break;
+    i++;
+  }
+    // Step budget spent. If the run was still doing tool work (not a clean
+    // final answer, abort, timeout, or limit), recover: one automatic
+    // continuation, else a visible "say continue" note — never a dead stop.
+    if (!stopReason && lastTurnTools) {
+      if (tryResume(RESUME_NUDGE_STEPS, '(reached the step limit mid-task — continuing automatically)')) {
+        lastTurnTools = false; // re-arm: only a fresh tool turn counts
+        continue;
+      }
+      stopReason = 'iterations';
+      const msg = 'I hit my step limit mid-task — say "continue" and I\'ll pick up where I left off.';
+      finalText += (finalText ? '\n\n' : '') + msg;
+      note(msg);
+    }
+    running = false;
   }
 
   return { finalText, steps, toolCounts, stopReason };
