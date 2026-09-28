@@ -4458,7 +4458,7 @@ async function renderNotificationsTab() {
       : ''}
     ${on ? '<div style="margin-top:12px"><button class="btn" id="notif-test">Send test notification</button></div>' : ''}
     ${on && /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches
-      ? '<p class="muted small" style="margin-top:8px">iPhone note: Apple only delivers push to web apps added to the Home Screen. Open the share menu → Add to Home Screen, then enable notifications from the installed app.</p>'
+      ? '<p class="muted small" style="margin-top:8px">iPhone note: open Orion from the Home Screen icon (not Safari), then turn notifications off and back on here so Apple registers this install.</p>'
       : ''}`;
   $('#notif-toggle').onclick = async () => {
     try {
