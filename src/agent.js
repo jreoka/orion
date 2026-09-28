@@ -1468,6 +1468,7 @@ async function runToolLoop({
   onTurnStart, onTurnEnd, onTool, onNote,
   emit, shouldAbort, signal,
   onExecStart, onExecEnd, // optional: track the in-flight sandbox exec (Stop support)
+  noUsageCharge, // inherited from the parent run (heartbeat); children always count
 }) {
   const { base_url: baseUrl, api_key: apiKey, model } = settings || {};
   if (!apiKey) throw new Error(LLM_NOT_CONFIGURED);
@@ -2091,6 +2092,7 @@ export async function runAgentLoop({
       signal,
       onExecStart,
       onExecEnd,
+      noUsageCharge,
     });
 
     if (stopReason === 'aborted' || shouldAbort?.()) {
