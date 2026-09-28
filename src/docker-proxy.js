@@ -482,8 +482,10 @@ function serve(ip) {
   let ip = null;
   for (let i = 0; i < 60; i++) {
     const info = await inspect();
-    if (info && info.State && info.State.Running && info.NetworkSettings && info.NetworkSettings.IPAddress) {
-      ip = info.NetworkSettings.IPAddress;
+    const nets = info && info.NetworkSettings && info.NetworkSettings.Networks;
+    const firstNet = nets && Object.values(nets)[0];
+    if (info && info.State && info.State.Running && firstNet && firstNet.IPAddress) {
+      ip = firstNet.IPAddress;
       break;
     }
     await sleep(1000);
@@ -508,7 +510,9 @@ function serve(ip) {
   setInterval(async () => {
     const info = await inspect();
     const running = !!(info && info.State && info.State.Running);
-    const curIp = info && info.NetworkSettings && info.NetworkSettings.IPAddress;
+    const nets = info && info.NetworkSettings && info.NetworkSettings.Networks;
+    const firstNet = nets && Object.values(nets)[0];
+    const curIp = firstNet && firstNet.IPAddress;
     if (!running || !curIp) process.exit(0);
     if (curIp + ':' + containerPort !== target) {
       try { server.close(); } catch (e) {}
