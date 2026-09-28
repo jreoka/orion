@@ -173,7 +173,9 @@ function sendRaw(res, { status, headers, body }) {
 
 async function handleProxy(userId, req, res) {
   const u = new URL(req.url, 'http://localhost');
-  const p = u.pathname;
+  // Docker API paths are versioned (/v1.43/containers/json) — strip the
+  // version prefix so the filters below match. Forward the original URL.
+  const p = u.pathname.replace(/^\/v\d+\.\d+/, '') || '/';
   const m = req.method;
 
   // ---- container create ----
