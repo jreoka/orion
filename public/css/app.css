@@ -32,9 +32,8 @@
 html, body { height: 100%; }
 /* iOS Safari: lock the page so the keyboard can't pan the visual viewport
    around — the JS sizes #app to the visible area instead. */
-html { position: fixed; width: 100%; height: 100%; overflow: hidden; }
+html, body { height: 100%; overflow: hidden; }
 body {
-  position: fixed; width: 100%; height: 100%; overflow: hidden;
   margin: 0;
   background: var(--paper);
   color: var(--ink);
