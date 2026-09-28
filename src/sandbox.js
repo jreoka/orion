@@ -104,8 +104,10 @@ export async function ensureSandbox(userId) {
   const { container: cname, volume: vname } = names(userId);
   // The filtering proxy must be listening whenever the sandbox exists —
   // not just on fresh creation — because the socket file persists across
-  // server restarts but the listener does not.
-  ensureDockerProxy(userId);
+  // server restarts but the listener does not. Awaited: the socket must
+  // exist before a container bind-mounts it, or Docker creates a directory
+  // at the mount point instead.
+  await ensureDockerProxy(userId);
 
   try {
     await docker.getVolume(vname).inspect();

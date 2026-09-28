@@ -341,13 +341,19 @@ async function handleProxy(userId, req, res) {
   return sendRaw(res, r);
 }
 
-/** Ensure a proxy socket exists for this user; returns its path. */
+/** Ensure a proxy socket exists for this user; resolves to its path
+ *  once the socket is actually listening (so containers can bind-mount it). */
 export function ensureDockerProxy(userId) {
   const id = Number(userId);
   if (!Number.isInteger(id) || id <= 0) throw new Error('Invalid user id');
-  if (servers.has(id)) return proxySockPath(id);
-  fs.mkdirSync(PROXY_DIR, { recursive: true });
   const sockPath = proxySockPath(id);
+  const existing = servers.get(id);
+  if (existing) {
+    // Already listening? Resolve immediately; otherwise wait for it.
+    if (existing.listening) return Promise.resolve(sockPath);
+    return existing.ready;
+  }
+  fs.mkdirSync(PROXY_DIR, { recursive: true });
   try {
     fs.unlinkSync(sockPath);
   } catch {
@@ -363,17 +369,24 @@ export function ensureDockerProxy(userId) {
       }
     });
   });
-  server.listen(sockPath, () => {
-    // World-writable socket: the sandbox's `agent` user (different uid)
-    // must be able to talk to it.
-    try {
-      fs.chmodSync(sockPath, 0o777);
-    } catch {
-      /* best effort */
-    }
+  const ready = new Promise((resolve, reject) => {
+    server.listen(sockPath, () => {
+      // World-writable socket: the sandbox's `agent` user (different uid)
+      // must be able to talk to it.
+      try {
+        fs.chmodSync(sockPath, 0o777);
+      } catch {
+        /* best effort */
+      }
+      resolve(sockPath);
+    });
+    server.on('error', reject);
   });
+  server.ready = ready;
+  // Don't let an unobserved rejection crash the process on restart races.
+  ready.catch(() => {});
   servers.set(id, server);
-  return sockPath;
+  return ready;
 }
 
 export function proxySockPath(userId) {
