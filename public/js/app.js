@@ -4456,7 +4456,10 @@ async function renderNotificationsTab() {
     ${!on && perm === 'denied'
       ? '<p class="muted small">Notifications are blocked for this site — allow them in your browser\u2019s site settings, then enable here.</p>'
       : ''}
-    ${on ? '<div style="margin-top:12px"><button class="btn" id="notif-test">Send test notification</button></div>' : ''}`;
+    ${on ? '<div style="margin-top:12px"><button class="btn" id="notif-test">Send test notification</button></div>' : ''}
+    ${on && /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches
+      ? '<p class="muted small" style="margin-top:8px">iPhone note: Apple only delivers push to web apps added to the Home Screen. Open the share menu → Add to Home Screen, then enable notifications from the installed app.</p>'
+      : ''}`;
   $('#notif-toggle').onclick = async () => {
     try {
       if (on) {
@@ -4479,7 +4482,7 @@ async function renderNotificationsTab() {
     btn.disabled = true;
     try {
       const r = await api('/api/push/test', { method: 'POST' });
-      toast(r.sent ? 'Test notification sent — check your device.' : 'No push subscriptions found for this account.');
+      toast(r.sent ? 'Test notification sent — check your device.' : (r.detail || 'No push subscriptions found for this account.'));
     } catch (err) {
       toast('Couldn\u2019t send test: ' + err.message, 'error');
     }

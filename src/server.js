@@ -1021,11 +1021,20 @@ app.delete('/api/push/unsubscribe', requireAuth, asyncRoute(async (req, res) => 
 }));
 
 app.post('/api/push/test', requireAuth, asyncRoute(async (req, res) => {
+  const subs = listSubscriptions(req.user.id);
+  if (!subs.length) return res.json({ ok: true, sent: 0 });
   const r = await notifyUser(req.user.id, {
     title: 'Orion test notification',
     body: 'If you got this, push notifications are working.',
   });
-  res.json({ ok: true, sent: r?.sent || 0 });
+  const sent = r?.sent || 0;
+  res.json({
+    ok: true,
+    sent,
+    detail: sent === 0
+      ? 'Push service rejected the notification — on iPhone, the app must be installed to the Home Screen.'
+      : undefined,
+  });
 }));
 
 // ---- token usage (self) -------------------------------------------------------
