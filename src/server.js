@@ -457,7 +457,7 @@ function conversationPayload(conv, limit = 80) {
   const n = Math.max(1, Math.min(200, Number(limit) || 80));
   const messages = db
     .prepare(
-      `SELECT id, role, content, kind, created_at FROM messages
+      `SELECT id, role, content, kind, created_at, run_start FROM messages
        WHERE conversation_id = ? AND role != 'tool' ORDER BY id DESC LIMIT ?`
     )
     .all(conv.id, n)
@@ -547,7 +547,7 @@ app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
   if (!Number.isFinite(before)) return res.status(400).json({ error: 'before is required' });
   const messages = db
     .prepare(
-      `SELECT id, role, content, kind, created_at FROM messages
+      `SELECT id, role, content, kind, created_at, run_start FROM messages
        WHERE conversation_id = ? AND role != 'tool' AND id < ?
        ORDER BY id DESC LIMIT ?`
     )
@@ -825,7 +825,7 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
 
   // A run is already active — the message stays queued; the in-flight run
   // chains a follow-up when it finishes. Never 409: sending mid-run is fine.
-  if (!startRunIfIdle(conv.id, req.user.id, content)) {
+  if (!startRunIfIdle(conv.id, req.user.id, content, { trigger: 'user-message' })) {
     publish(conv.id, { type: 'queued' });
     return res.json({ message, queued: true });
   }

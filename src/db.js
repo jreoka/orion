@@ -107,6 +107,7 @@ addColumn('sessions', 'name', 'TEXT'); // user-set custom device name (32 chars 
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_public_id ON sessions(public_id)');
 }
 addColumn('conversations', 'kind', "TEXT NOT NULL DEFAULT 'chat'");
+addColumn('messages', 'run_start', 'INTEGER NOT NULL DEFAULT 0'); // first assistant row of each run (work-log folding boundary)
 addColumn('conversations', 'task_id', 'INTEGER');
 // Persistent run state: 'active' while an agent run holds the conversation.
 // The in-memory run lock is lost on restart, so boot recovery uses this to

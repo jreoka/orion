@@ -1366,7 +1366,11 @@ function renderMessages() {
 // (the model sometimes narrates in ordinary chat text instead of using
 // send_update). The in-flight (trailing) run is never touched — it folds
 // when the run ends.
-// Split an ordered node list into runs at each user message.
+// Split an ordered node list into runs at each user message and each run
+// boundary (the first assistant row of an agent run). Without the
+// run-boundary split, a second run arriving with no intervening user message
+// would be treated as part of the previous run — demoting that run's real
+// final answer into the work log tray and promoting the new run's text.
 function splitRuns(nodes) {
   const runs = [];
   let cur = [];
@@ -1374,7 +1378,8 @@ function splitRuns(nodes) {
     const isUser =
       el.classList && el.classList.contains('msg') &&
       el.classList.contains('user') && !el.classList.contains('update');
-    if (isUser && cur.length) {
+    const isRunStart = el.dataset && el.dataset.runStart;
+    if ((isUser || isRunStart) && cur.length) {
       runs.push(cur);
       cur = [];
     }
@@ -1491,15 +1496,16 @@ function foldLiveWorkLog() {
   if (!S.runActive || !S.activeId) return;
   const box = document.getElementById('messages');
   if (!box) return;
-  // The in-flight run is the trailing segment (after the last user message).
+  // The in-flight run is the trailing segment: after the last user message
+  // or the last run boundary, whichever is later.
   const kids = [...box.children];
   let start = 0;
   kids.forEach((el, i) => {
-    if (
+    const isUser =
       el.classList && el.classList.contains('msg') &&
-      el.classList.contains('user') && !el.classList.contains('update')
-    )
-      start = i + 1;
+      el.classList.contains('user') && !el.classList.contains('update');
+    const isRunStart = el.dataset && el.dataset.runStart;
+    if (isUser || isRunStart) start = i + 1;
   });
   // The latest assistant text row is the potential final answer — everything
   // before it (plus live update notes) belongs in the tray.
@@ -1593,6 +1599,11 @@ function messageEl(m) {
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + (m.role === 'user' ? 'user' : 'assistant');
   wrap.dataset.mid = m.id || '';
+  // Run boundary: the first assistant row of an agent run. Work-log folding
+  // splits segments here so a previous run's final answer is never demoted
+  // to "intermediate" when a new run's rows arrive with no user message
+  // between them (e.g. a queued follow-up or a phantom empty run).
+  if (m.run_start) wrap.dataset.runStart = '1';
   // Tool-only turns arrive as empty assistant rows. Hide them here — in the
   // single place every render path funnels through — so they never take
   // layout space (not even the flex gap). Unhidden by JS when text streams
@@ -3386,7 +3397,7 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
       reconcileLocal(local, m);
       return;
     }
-    msg = { id: m.id, role: m.role, content: m.content || '', kind: m.kind || 'message', attachments: m.attachments || [], reactions: m.reactions || [] };
+    msg = { id: m.id, role: m.role, content: m.content || '', kind: m.kind || 'message', run_start: m.run_start || 0, attachments: m.attachments || [], reactions: m.reactions || [] };
     S.messages.push(msg);
     const el = messageEl(msg);
     $('#messages').appendChild(el);
@@ -3405,6 +3416,10 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
     if ((live && m.content.length >= buf.length) || (!live && !msg.content && m.content)) {
       S.buffers.set(msg.id, m.content);
       msg.content = m.content;
+      if (m.run_start && !msg.run_start) {
+        msg.run_start = 1;
+        msgElById(msg.id)?.setAttribute('data-run-start', '1');
+      }
       if (m.content) msgElById(msg.id)?.classList.remove('msg-empty');
       paintContent(msg);
     }

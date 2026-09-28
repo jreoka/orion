@@ -136,11 +136,35 @@ export async function runConversation(
   opts = {}
 ) {
   const id = Number(conversationId);
+  // Hard invariant: a chat run must have a reason to exist — real user text
+  // or an explicit trusted trigger (boot recovery, chain). A triggerless,
+  // textless run is the phantom that once posted "nothing new came in" as a
+  // standalone follow-up; refuse it before it touches the model. The caller
+  // holds the run lock on entry, so release it on the way out.
+  const triggerName = opts.trigger || (chainDepth > 0 ? 'chain' : 'direct');
+  const hasUserText = userText != null && String(userText).length > 0;
+  const trustedWithoutText =
+    triggerName.includes('chain') || triggerName.startsWith('boot-recovery');
+  if (!hasUserText && !trustedWithoutText) {
+    console.warn(
+      `[orion] refusing triggerless run conv=${id} trigger=${triggerName} (no user text, no trusted trigger)`
+    );
+    setRunState(id, 'idle');
+    releaseRun(id);
+    return { status: 'refused', reason: 'no-trigger' };
+  }
   // The caller holds the run lock. Persist it: if the server dies now,
   // boot recovery resumes this run instead of stranding it.
   setRunState(id, 'active');
   const startMaxId =
     db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM messages WHERE conversation_id = ?').get(id).m;
+  // Durable run-start record: if a run ever appears with no visible trigger
+  // (no user message, no task), this line names the code path that started
+  // it, the chain depth, and whether real user text was passed.
+  console.log(
+    `[orion] run start conv=${id} trigger=${triggerName} ` +
+    `chainDepth=${chainDepth} startMaxId=${startMaxId} hasUserText=${hasUserText}`
+  );
 
   const controller = new AbortController();
   controllers.set(id, controller);
@@ -217,7 +241,10 @@ export async function runConversation(
     .prepare("SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND id > ? AND role = 'user'")
     .get(id, startMaxId).c;
   if (pending > 0 && !shuttingDown && tryAcquireRun(id)) {
-    return runConversation(id, userId, userText, chainDepth + 1, maxChain, opts);
+    return runConversation(id, userId, userText, chainDepth + 1, maxChain, {
+      ...opts,
+      trigger: opts.trigger ? `${opts.trigger}+chain` : 'chain',
+    });
   }
 
   // Outermost run of this trigger finished: ping the user if they aren't
@@ -329,7 +356,7 @@ function resumeInterruptedRuns() {
                      WHERE conversation_id = ? AND role = 'assistant' AND content != '')`
         ).run(r.conversation_id, r.conversation_id);
       }
-      if (startRunIfIdle(r.conversation_id, r.user_id, String(r.last_user_text || ''), { systemExtra: RESUME_NOTE })) {
+      if (startRunIfIdle(r.conversation_id, r.user_id, String(r.last_user_text || ''), { trigger: 'boot-recovery', systemExtra: RESUME_NOTE })) {
         console.log(`[orion] boot recovery: resuming interrupted run in conversation ${r.conversation_id}`);
       } else {
         setRunState(r.conversation_id, 'idle');
@@ -420,7 +447,7 @@ export function recoverStrandedRuns() {
                      WHERE conversation_id = ? AND role = 'assistant' AND content != '')`
         ).run(r.conversation_id, r.conversation_id);
       }
-      if (startRunIfIdle(r.conversation_id, r.user_id, userText)) {
+      if (startRunIfIdle(r.conversation_id, r.user_id, userText, { trigger: 'boot-recovery-stranded' })) {
         console.log(`[orion] boot recovery: answering stranded message in conversation ${r.conversation_id}`);
       }
     } catch (e) {
@@ -442,5 +469,16 @@ export function chainPendingUserMessages(conversationId, userId, maxIdBefore, ow
       "SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND id > ? AND role = 'user' AND id != ?"
     )
     .get(Number(conversationId), maxIdBefore, ownUserMsgId ?? -1).c;
-  if (pending > 0) startRunIfIdle(conversationId, userId);
+  if (pending > 0) {
+    // Pass the actual newest pending user text (not undefined) so the
+    // chained run knows what it's answering — undefined userText is what
+    // produces "nothing new came in" confusion when a run starts without
+    // a visible prompt.
+    const latest = db
+      .prepare(
+        "SELECT content FROM messages WHERE conversation_id = ? AND id > ? AND role = 'user' AND id != ? ORDER BY id DESC LIMIT 1"
+      )
+      .get(Number(conversationId), maxIdBefore, ownUserMsgId ?? -1);
+    startRunIfIdle(conversationId, userId, latest?.content, { trigger: 'chain-pending' });
+  }
 }

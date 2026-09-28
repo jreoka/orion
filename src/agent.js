@@ -1912,6 +1912,7 @@ export async function runAgentLoop({
   // The assistant row is created by onTurnStart at the top of the first
   // loop iteration, so partial text always lands in the in-flight row.
   let assistantId = null;
+  let runStartMarked = false; // the run's first assistant row gets run_start=1 (folding boundary)
   let status = 'done'; // done | error | stopped
   // Auto-title: first user message in an untitled conversation. Fired at run
   // start (not run end) so long tasks get a name while they work. Never from
@@ -1953,7 +1954,7 @@ export async function runAgentLoop({
     if (!assistantId) return;
     try {
       const row = db
-        .prepare('SELECT id, role, content, kind, created_at FROM messages WHERE id = ?')
+        .prepare('SELECT id, role, content, kind, created_at, run_start FROM messages WHERE id = ?')
         .get(assistantId);
       if (row) publish(conversationId, { type: 'message', message: row });
     } catch {
@@ -2040,14 +2041,22 @@ export async function runAgentLoop({
       conversationId,
       getAssistantId: () => assistantId,
       onTurnStart: () => {
+        const firstTurn = !runStartMarked;
         assistantId = Number(
           db
             .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
             .run(conversationId, 'assistant', '', Date.now()).lastInsertRowid
         );
+        if (firstTurn) {
+          // Mark the run's first row so work-log folding never treats a
+          // previous run's final answer as intermediate when a new run's
+          // rows arrive without an intervening user message.
+          runStartMarked = true;
+          try { db.prepare('UPDATE messages SET run_start = 1 WHERE id = ?').run(assistantId); } catch { /* best-effort */ }
+        }
         publish(conversationId, {
           type: 'message',
-          message: { id: assistantId, role: 'assistant', content: '', created_at: Date.now() },
+          message: { id: assistantId, role: 'assistant', content: '', created_at: Date.now(), ...(firstTurn ? { run_start: 1 } : {}) },
         });
         return assistantId;
       },
