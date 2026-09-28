@@ -711,6 +711,9 @@ app.delete('/api/conversations/:id', requireAuth, (req, res) => {
   // All chats are equal: any of them can be deleted. The heartbeat lazily
   // recreates its anchor chat if it ever goes missing.
   deleteConversation(conv.id);
+  // Our other devices hold a stale sidebar row that would 404 when opened —
+  // tell them to drop it now.
+  publishToUser(req.user.id, { type: 'conversation_deleted', conversation_id: conv.id });
   res.json({ ok: true });
 });
 

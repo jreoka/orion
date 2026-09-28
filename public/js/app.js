@@ -122,6 +122,7 @@ const S = {
   runByConv: {},      // conversation id -> true while a run is known-active there
   doneByConv: {},      // conversation id -> true when a run finished while the user was looking at another chat
   lastSeenAt: {},     // conversation id -> timestamp the user last opened it
+  selfDeletedAt: {},  // conversation id -> timestamp of our own delete (echo suppression for conversation_deleted)
   switching: false,   // a conversation switch is in flight
   messages: [],        // [{id, role, content, attachments}]
   runActive: false,    // an agent run is in flight for the open conversation
@@ -2492,6 +2493,7 @@ function deleteChatModal(conv) {
         catch { /* best-effort: the delete proceeds regardless */ }
       }
       await api(`/api/conversations/${conv.id}`, { method: 'DELETE' });
+      S.selfDeletedAt[conv.id] = Date.now(); // our own delete echoes back on the user bus
       closeModal();
       delete S.runByConv[conv.id];
       delete S.doneByConv[conv.id]; saveDoneFlags();
@@ -3229,6 +3231,10 @@ function openUserEventStream() {
   const es = new EventSource('/api/user/events');
   S.userEvt = es;
   es.addEventListener('usage_updated', () => { refreshUsage(); renderUsageCard(); });
+  es.addEventListener('conversation_deleted', (e) => {
+    const d = parseBusEvent(e);
+    if (d && d.conversation_id != null) onConversationDeleted(d.conversation_id);
+  });
   es.onerror = () => {
     // EventSource auto-reconnects; if the session died the next api() call
     // surfaces it and the normal logout path closes this stream.
@@ -3236,6 +3242,44 @@ function openUserEventStream() {
 }
 function closeUserEventStream() {
   if (S.userEvt) { try { S.userEvt.close(); } catch {} S.userEvt = null; }
+}
+
+// A chat was deleted — on this device or another one. Drop it from the
+// sidebar immediately so there's no stale row that 404s when opened. If it
+// was the open chat, fall through to the next one (or the empty state),
+// mirroring the local delete flow.
+async function onConversationDeleted(rawId) {
+  const id = Number(rawId);
+  // Our own delete echoes back on this same channel — don't announce it as
+  // if it came from elsewhere. (Entries are timestamped and pruned here;
+  // SQLite can reuse a deleted id for a future chat, so stale entries must
+  // never suppress a real later event.)
+  const self = S.selfDeletedAt[id] && Date.now() - S.selfDeletedAt[id] < 30000;
+  delete S.selfDeletedAt[id];
+  const wasListed = (S.conversations || []).some((c) => Number(c.id) === id);
+  S.conversations = (S.conversations || []).filter((c) => Number(c.id) !== id);
+  delete S.runByConv[id];
+  if (S.doneByConv[id]) { delete S.doneByConv[id]; saveDoneFlags(); }
+  delete S.lastSeenAt[id];
+  delete S.pendingByConv[id];
+  if (wasListed) renderSidebar();
+  if (Number(S.activeId) === id) {
+    closeEventStream();
+    setRunActive(false); // no stream left to deliver run_ended; clear Stop now
+    S.activeId = null;
+    try { localStorage.removeItem('orion-active-chat'); } catch {}
+    const next = S.conversations[0];
+    try {
+      if (next) await switchConversation(next.id);
+      else {
+        setMessages({ messages: [], hasMoreOlder: false });
+        renderMessages();
+        renderAttachTray();
+        updateComposer();
+      }
+    } catch {}
+    if (!self) toast('Chat deleted on another device');
+  }
 }
 function closeEventStream() {
   if (S.evt) { try { S.evt.close(); } catch {} S.evt = null; }
