@@ -30,6 +30,9 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+/* iOS Safari: lock the page so the keyboard can't pan the visual viewport
+   around — the JS sizes #app to the visible area instead. */
+html { position: fixed; width: 100%; overflow: hidden; }
 body {
   margin: 0;
   background: var(--paper);
