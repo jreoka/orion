@@ -51,6 +51,7 @@ Your tools:
 - web_search: search the web — clean titles, URLs, and snippets. Never curl search engines, APIs, or HTML pages with exec to research something — that is what this tool is for.
 - browser_shot: take a real screenshot of a URL with headless Chromium and attach it to your reply so the user can see it. You receive the screenshot as vision too — actually look at it and describe or verify what it genuinely shows. Use it when the user wants to SEE a page, or to verify how a page you built looks.
 - send_image: attach an image file from your workspace to your reply so the user sees it inline in chat. When the user asks for an image ("send me a picture of ..."), download or generate it with exec, then send_image it — don't just describe it or drop links. You receive it as vision too: actually look at it and verify it shows what you claim before sending.
+- send_file: attach any other file from your workspace (a script, a text file, a PDF, a zip, ...) to your reply so the user can download it. Write or fetch the file with exec first, then send_file it — don't paste long files as chat text when the user asked for a file.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
 - send_update: post a progress note mid-run. It appears as a slim status line in the chat (not a full message card), so use it for meaningful milestones during long multi-step work — a sentence or two, not a narration of every tool call.
 - send_push: buzz the user's phone with a short push notification that deep-links to this chat. Use only when the user is likely away and the news is worth an interruption — a long task finished, you need them to act (approve something, unblock you), or they asked to be notified. The chat message itself is usually enough; never for routine progress (use send_update for that). Limited to 3 per chat per 10 minutes. Skipped automatically when the user is watching this chat, and when they have no push subscription — the result tells you which.
@@ -196,6 +197,21 @@ export const TOOLS = [
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Workspace path to the image file (png, jpg, gif, webp).' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'send_file',
+      description:
+        'Attach a file from your workspace to your reply so the user can download it. Use when the user asked for a file (a script, a text file, a document, an archive, ...). Write or fetch the file with exec first, then send_file it. For images the user wants to SEE inline, use send_image instead.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Workspace path to the file to send (max 12 MB).' },
         },
         required: ['path'],
       },
@@ -548,19 +564,46 @@ function safeHost(u) {
   }
 }
 
-// Store an image buffer as a user-visible attachment on the in-flight
-// assistant message. Returns { url, filename, fullPath } for the client's
-// image event and the agent's vision feedback.
-function storeUserImage({ conversationId, assistantMessageId, filename, buffer }) {
+// Store a buffer as a user-visible attachment on the in-flight assistant
+// message. Returns { url, filename, fullPath } for the client's event and,
+// for images, the agent's vision feedback.
+function storeUserAttachment({ conversationId, assistantMessageId, filename, buffer, mime, kind }) {
   const dir = path.join(DATA_DIR, 'files', String(conversationId));
   fs.mkdirSync(dir, { recursive: true });
-  const safeName = `${crypto.randomUUID()}${path.extname(filename || '').toLowerCase() || '.png'}`;
+  const safeName = `${crypto.randomUUID()}${path.extname(filename || '').toLowerCase()}`;
   const fullPath = path.join(dir, safeName);
   fs.writeFileSync(fullPath, buffer);
   const info = db
     .prepare('INSERT INTO attachments (message_id, kind, filename, mime, path) VALUES (?, ?, ?, ?, ?)')
-    .run(assistantMessageId, 'image', filename || safeName, mimeForImage(safeName), `files/${conversationId}/${safeName}`);
+    .run(assistantMessageId, kind, filename || safeName, mime, `files/${conversationId}/${safeName}`);
   return { url: `/api/files/${info.lastInsertRowid}`, filename: filename || safeName, fullPath };
+}
+
+function storeUserImage({ conversationId, assistantMessageId, filename, buffer }) {
+  const name = filename || 'image.png';
+  const withExt = path.extname(name) ? name : `${name}.png`;
+  return storeUserAttachment({
+    conversationId, assistantMessageId, filename: withExt, buffer,
+    mime: mimeForImage(withExt), kind: 'image',
+  });
+}
+
+function mimeForFile(name) {
+  const ext = path.extname(name || '').toLowerCase();
+  const map = {
+    '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv',
+    '.json': 'application/json', '.js': 'text/javascript', '.mjs': 'text/javascript',
+    '.ts': 'text/plain', '.py': 'text/plain', '.sh': 'text/plain', '.rb': 'text/plain',
+    '.log': 'text/plain', '.yaml': 'text/plain', '.yml': 'text/plain', '.toml': 'text/plain',
+    '.xml': 'application/xml', '.pdf': 'application/pdf',
+    '.zip': 'application/zip', '.gz': 'application/gzip', '.tgz': 'application/gzip',
+    '.tar': 'application/x-tar',
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml',
+    '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+    '.mp4': 'video/mp4', '.webm': 'video/webm',
+  };
+  return map[ext] || 'application/octet-stream';
 }
 
 function mimeForImage(name) {
@@ -988,6 +1031,23 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
         image: { url: stored.url, filename: stored.filename },
         imagePath: tmpPath,
         tmpImage: true,
+      };
+    }
+    case 'send_file': {
+      const rel = String(args.path || '').trim();
+      if (!rel) throw new Error('send_file: path is required');
+      if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(rel))
+        throw new Error('send_file: that is an image — use send_image so the user sees it inline');
+      const buf = await sandboxPullFile(userId, rel);
+      if (!buf || !buf.length) throw new Error(`send_file: could not read ${rel} from the workspace`);
+      const filename = path.posix.basename(rel);
+      const stored = storeUserAttachment({
+        conversationId, assistantMessageId, filename, buffer: buf,
+        mime: mimeForFile(filename), kind: 'file',
+      });
+      return {
+        text: `File "${filename}" attached — the user can download it from your reply.`,
+        file: { url: stored.url, filename: stored.filename },
       };
     }
     case 'schedule_task': {
@@ -1649,6 +1709,7 @@ async function runToolLoop({
       try {
         emit('tool', { name: tc.function.name, status: 'done', result_summary: text.slice(0, 300) });
         if (result.image) emit('image', result.image);
+        if (result.file) emit('file', result.file);
       } catch {
         /* ignore */
       }
@@ -1875,6 +1936,8 @@ export async function runAgentLoop({
         publish(conversationId, { type: 'tool', message_id: assistantId, ...data });
       } else if (type === 'image') {
         publish(conversationId, { type: 'image', message_id: assistantId, ...data });
+      } else if (type === 'file') {
+        publish(conversationId, { type: 'file', message_id: assistantId, ...data });
       } else if (type === 'error') {
         publish(conversationId, { type: 'error', ...data });
       }

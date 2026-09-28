@@ -3202,6 +3202,7 @@ function openEventStream(convId) {
   es.addEventListener('token', (e) => onBusToken(parseBusEvent(e)));
   es.addEventListener('tool', (e) => onBusTool(parseBusEvent(e)));
   es.addEventListener('image', (e) => onBusImage(parseBusEvent(e)));
+  es.addEventListener('file', (e) => onBusFile(parseBusEvent(e)));
   es.addEventListener('queued', () => { /* ordinary bubble already shown */ });
   es.addEventListener('error', (e) => {
     // Named SSE 'error' frames from the server (agent failure) arrive as
@@ -3533,6 +3534,23 @@ function onBusImage(d) {
   imgsEl.appendChild(img);
   // The image may arrive on a tool-only turn whose row was hidden as an
   // empty placeholder — unhide it, like the token handler does for text.
+  el.classList.remove('msg-empty');
+  const msg = S.messages.find((x) => x.id === d.message_id);
+  if (msg) (msg.attachments = msg.attachments || []).push({ url: d.url, filename: d.filename });
+  keepPlace();
+}
+
+// A file the agent sent with send_file: append a download chip to the
+// in-flight assistant row, mirroring onBusImage.
+function onBusFile(d) {
+  if (!d || !d.url || d.message_id == null) return;
+  const el = msgElById(d.message_id);
+  const imgsEl = el?.querySelector('.imgs');
+  if (!imgsEl) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = attachmentHtml({ url: d.url, filename: d.filename || 'file' });
+  const chip = tmp.firstElementChild;
+  if (chip) imgsEl.appendChild(chip);
   el.classList.remove('msg-empty');
   const msg = S.messages.find((x) => x.id === d.message_id);
   if (msg) (msg.attachments = msg.attachments || []).push({ url: d.url, filename: d.filename });
