@@ -40,8 +40,11 @@ function fitForKeyboard() {
   kbActive = kbH > 40;
   // Shrink the app to the visible area so the header anchors to the top
   // instead of Safari showing the middle of a full-height page.
-  if (kbActive) app.style.height = vv.height + 'px';
-  else app.style.height = '';
+  if (kbActive) {
+    app.style.height = vv.height + 'px';
+    // Safari pans the visual viewport on focus; pull it back to the top.
+    if ((vv.offsetTop || 0) > 1 || window.scrollY > 1) window.scrollTo(0, 0);
+  } else app.style.height = '';
   if (kbH > 40) {
     cw.style.position = 'fixed';
     cw.style.left = '0'; cw.style.right = '0';
