@@ -31,8 +31,13 @@ let kbPoller = null;
 function fitForKeyboard() {
   const vv = window.visualViewport;
   const cw = document.querySelector('.composer-wrap');
-  if (!vv || !cw) return;
+  const app = document.getElementById('app');
+  if (!vv || !cw || !app) return;
   const kbH = window.innerHeight - vv.height - (vv.offsetTop || 0);
+  // Shrink the app to the visible area so the header anchors to the top
+  // instead of Safari showing the middle of a full-height page.
+  if (kbH > 40) app.style.height = vv.height + 'px';
+  else app.style.height = '';
   if (kbH > 40) {
     cw.style.position = 'fixed';
     cw.style.left = '0'; cw.style.right = '0';
@@ -51,6 +56,8 @@ function startKbPoller() {
 }
 function stopKbPoller() {
   if (kbPoller) { clearInterval(kbPoller); kbPoller = null; }
+  const app = document.getElementById('app');
+  if (app) app.style.height = '';
   const cw = document.querySelector('.composer-wrap');
   if (cw) {
     cw.style.position = ''; cw.style.left = ''; cw.style.right = '';
