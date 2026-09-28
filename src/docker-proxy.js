@@ -377,5 +377,5 @@ export function ensureDockerProxy(userId) {
 }
 
 export function proxySockPath(userId) {
-  return path.join(PROXY_DIR, `u${Number(userId)}.sock`);
+  return path.resolve(path.join(PROXY_DIR, `u${Number(userId)}.sock`));
 }
