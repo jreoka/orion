@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { ensureDockerProxy, proxySockPath } from './docker-proxy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,18 +28,6 @@ function getDocker() {
     );
   }
   return new Docker({ socketPath: SOCK });
-}
-
-// Supplementary groups granting the sandbox's `agent` user access to the
-// host Docker socket: just the socket's own gid. Empty when the socket is
-// unreadable — the mount still lands, and root-owned 0666 sockets work
-// without any group.
-function dockerSocketGroups() {
-  try {
-    return [String(fs.statSync(SOCK).gid)];
-  } catch {
-    return [];
-  }
 }
 
 // Container/volume names derive from the numeric user id only —
@@ -113,6 +102,10 @@ export async function ensureSandbox(userId) {
   const docker = getDocker();
   await ensureImage();
   const { container: cname, volume: vname } = names(userId);
+  // The filtering proxy must be listening whenever the sandbox exists —
+  // not just on fresh creation — because the socket file persists across
+  // server restarts but the listener does not.
+  ensureDockerProxy(userId);
 
   try {
     await docker.getVolume(vname).inspect();
@@ -131,19 +124,17 @@ export async function ensureSandbox(userId) {
     // with --no-sandbox (sandbox/orion-browser.js), so dropping caps and
     // no-new-privileges doesn't affect the browser tools.
     //
-    // Docker access: the host's Docker socket is bind-mounted and the
-    // socket's group id is added to the agent user's supplementary groups,
-    // so `docker` works inside the sandbox against the host daemon.
-    // No --privileged: the socket alone is enough, and privileged would
-    // hand over every capability and device on top of it. Note this still
-    // lets the sandbox manage host Docker (containers, volumes, host path
-    // mounts) — that is the point, but it does pierce the sandbox boundary
-    // by design.
+    // Docker access: a per-user FILTERING proxy socket is bind-mounted at
+    // the usual docker.sock path, so `docker` works inside the sandbox but
+    // can only touch this user's own namespaced resources (u<id>-*) and can
+    // never use privileged mode, host-path mounts, or other users'
+    // containers. See src/docker-proxy.js. The raw host socket never enters
+    // the sandbox.
+    const proxySock = proxySockPath(userId);
     const baseHostConfig = {
       Memory: 2 * 1024 ** 3, // 2 GB
       NanoCpus: 1_000_000_000, // 1 CPU
-      Binds: [`${vname}:${WORKDIR}`, `${SOCK}:${SOCK}`],
-      GroupAdd: dockerSocketGroups(),
+      Binds: [`${vname}:${WORKDIR}`, `${proxySock}:${SOCK}`],
       PidsLimit: 256,
       CapDrop: ['ALL'],
       SecurityOpt: ['no-new-privileges:true'],
@@ -190,11 +181,14 @@ export async function ensureSandbox(userId) {
   try {
     const info = await container.inspect();
     const binds = info?.HostConfig?.Binds || [];
+    // The docker.sock bind must be the per-user filtering proxy — a bind of
+    // the raw host socket (pre-proxy containers) forces a recreate.
+    const expectSock = proxySockPath(userId);
     const needsRecreate =
-      !binds.some((b) => String(b).split(':')[0] === SOCK) ||
+      !binds.some((b) => String(b).split(':')[0] === expectSock) ||
       info?.HostConfig?.Init !== true;
     if (needsRecreate) {
-      // Container predates Docker-socket access or the init reaper:
+      // Container predates the proxy socket or the init reaper:
       // recreate it with the current config. The workspace volume is
       // separate, so no agent data is lost.
       console.warn(`[orion] sandbox ${cname} has stale config; recreating`);
