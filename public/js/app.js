@@ -22,10 +22,21 @@ function fitAppHeight() {
    height, applied as a bottom offset so the composer rides above it. */
 function fitForKeyboard() {
   const app = document.getElementById('app');
-  if (!app || !window.visualViewport) return;
-  const kb = Math.max(0, window.innerHeight - window.visualViewport.height - (window.visualViewport.offsetTop || 0));
-  app.style.paddingBottom = kb > 40 ? kb + 'px' : '';
-  fitAppHeight();
+  if (!app || !window.visualViewport) { fitAppHeight(); return; }
+  const vv = window.visualViewport;
+  // iOS Safari: keyboard shrinks the visual viewport but not the layout
+  // viewport. Pin the app to the visual height and offset it to the
+  // visual top so the composer rides directly above the keyboard.
+  const kbOpen = vv.height < window.innerHeight - 40;
+  if (kbOpen) {
+    app.style.height = vv.height + 'px';
+    app.style.transform = `translateY(${vv.offsetTop || 0}px)`;
+    app.style.paddingBottom = '';
+  } else {
+    app.style.height = '';
+    app.style.transform = '';
+    fitAppHeight();
+  }
 }
 window.addEventListener('resize', fitAppHeight);
 if (window.visualViewport) {
@@ -2681,9 +2692,42 @@ function openSidebarDrawer() {
   if (b) b.hidden = false;
 }
 function closeSidebarDrawer() {
-  $('#sidebar')?.classList.remove('open');
+  const sb = $('#sidebar');
+  if (sb) { sb.classList.remove('open'); sb.style.transform = ''; }
   const b = $('#side-backdrop');
   if (b) b.hidden = true;
+}
+/* Mobile: swipe the drawer away. A horizontal drag left on the open drawer
+   follows the finger; releasing past 40% (or flicking left) dismisses it. */
+function wireSidebarSwipe() {
+  const sb = $('#sidebar');
+  if (!sb || sb.dataset.swipeWired) return;
+  sb.dataset.swipeWired = '1';
+  let startX = 0, curX = 0, dragging = false, pid = 0;
+  sb.addEventListener('pointerdown', (e) => {
+    if (!sb.classList.contains('open') || !window.matchMedia('(max-width: 760px)').matches) return;
+    if (e.pointerType === 'mouse') return;
+    dragging = true; pid = e.pointerId; startX = curX = e.clientX;
+    sb.style.transition = 'none';
+    try { sb.setPointerCapture(pid); } catch {}
+  });
+  sb.addEventListener('pointermove', (e) => {
+    if (!dragging || e.pointerId !== pid) return;
+    curX = e.clientX;
+    const dx = Math.min(0, curX - startX);
+    sb.style.transform = `translateX(${dx}px)`;
+  });
+  const end = (e) => {
+    if (!dragging || (e.pointerId !== undefined && e.pointerId !== pid)) return;
+    dragging = false;
+    sb.style.transition = '';
+    const dx = curX - startX;
+    const w = sb.getBoundingClientRect().width || 272;
+    if (dx < -w * 0.4) closeSidebarDrawer();
+    else sb.style.transform = '';
+  };
+  sb.addEventListener('pointerup', end);
+  sb.addEventListener('pointercancel', end);
 }
 
 let sidebarWired = false;
@@ -2705,6 +2749,7 @@ function wireSidebarOnce() {
   });
   $('#compose-btn')?.addEventListener('click', newChat);
   $('#side-backdrop')?.addEventListener('click', closeSidebarDrawer);
+  wireSidebarSwipe();
   try {
     if (localStorage.getItem('orion-sidebar-collapsed') === '1') {
       document.body.classList.add('side-collapsed');
