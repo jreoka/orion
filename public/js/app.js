@@ -12,8 +12,8 @@
    window.innerHeight and re-pin on every resize (rotation, toolbar
    show/hide, keyboard). */
 function fitAppHeight() {
-  // Don't fight the keyboard poller — it owns the height while typing.
-  if (kbPoller) return;
+  // Don't fight the keyboard layout — it owns the height while typing.
+  if (kbActive) return;
   const app = document.getElementById('app');
   if (app) app.style.height = window.innerHeight + 'px';
 }
@@ -30,15 +30,17 @@ function fitAppHeight() {
    positioning. Resizing #app proved unreliable — Safari pans the visual
    viewport independently. This anchors the composer to the visual bottom. */
 let kbPoller = null;
+let kbActive = false;
 function fitForKeyboard() {
   const vv = window.visualViewport;
   const cw = document.querySelector('.composer-wrap');
   const app = document.getElementById('app');
   if (!vv || !cw || !app) return;
   const kbH = window.innerHeight - vv.height - (vv.offsetTop || 0);
+  kbActive = kbH > 40;
   // Shrink the app to the visible area so the header anchors to the top
   // instead of Safari showing the middle of a full-height page.
-  if (kbH > 40) app.style.height = vv.height + 'px';
+  if (kbActive) app.style.height = vv.height + 'px';
   else app.style.height = '';
   if (kbH > 40) {
     cw.style.position = 'fixed';
@@ -56,25 +58,19 @@ function startKbPoller() {
   fitForKeyboard();
   kbPoller = setInterval(fitForKeyboard, 200);
 }
-function stopKbPoller() {
-  if (kbPoller) { clearInterval(kbPoller); kbPoller = null; }
-  const app = document.getElementById('app');
-  if (app) app.style.height = '';
-  const cw = document.querySelector('.composer-wrap');
-  if (cw) {
-    cw.style.position = ''; cw.style.left = ''; cw.style.right = '';
-    cw.style.bottom = ''; cw.style.zIndex = ''; cw.style.background = '';
-  }
-}
+
 window.addEventListener('resize', fitAppHeight);
 if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', fitForKeyboard);
   window.visualViewport.addEventListener('scroll', fitForKeyboard);
 }
-document.addEventListener('focusin', (e) => {
-  if (e.target && (e.target.id === 'composer-input' || e.target.tagName === 'TEXTAREA')) startKbPoller();
-});
-document.addEventListener('focusout', stopKbPoller);
+/* Always-on watcher: iOS focus events are flaky (accessory taps blur the
+   input), so derive everything from the actual keyboard height instead. */
+function startKbPoller() {
+  if (kbPoller) return;
+  kbPoller = setInterval(fitForKeyboard, 300);
+}
+startKbPoller();
 fitAppHeight();
 
 /* ---------- tiny helpers ---------- */
