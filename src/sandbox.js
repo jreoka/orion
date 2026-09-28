@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { ensureDockerProxy, proxySockPath } from './docker-proxy.js';
+import { ensureDockerProxy, proxySockPath, proxySockHostPath } from './docker-proxy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -132,11 +132,12 @@ export async function ensureSandbox(userId) {
     // never use privileged mode, host-path mounts, or other users'
     // containers. See src/docker-proxy.js. The raw host socket never enters
     // the sandbox.
-    const proxySock = proxySockPath(userId);
+    // Bind source must be the HOST path (Docker resolves binds on the host).
+    const proxySockHost = proxySockHostPath(userId);
     const baseHostConfig = {
       Memory: 2 * 1024 ** 3, // 2 GB
       NanoCpus: 1_000_000_000, // 1 CPU
-      Binds: [`${vname}:${WORKDIR}`, `${proxySock}:${SOCK}`],
+      Binds: [`${vname}:${WORKDIR}`, `${proxySockHost}:${SOCK}`],
       PidsLimit: 256,
       CapDrop: ['ALL'],
       SecurityOpt: ['no-new-privileges:true'],
@@ -185,7 +186,7 @@ export async function ensureSandbox(userId) {
     const binds = info?.HostConfig?.Binds || [];
     // The docker.sock bind must be the per-user filtering proxy — a bind of
     // the raw host socket (pre-proxy containers) forces a recreate.
-    const expectSock = proxySockPath(userId);
+    const expectSock = proxySockHostPath(userId);
     const needsRecreate =
       !binds.some((b) => String(b).split(':')[0] === expectSock) ||
       info?.HostConfig?.Init !== true;

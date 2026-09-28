@@ -5,9 +5,12 @@ services:
     volumes:
       - orion-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-proxy:/docker-proxy
     environment:
       - PORT=3000
       - DATA_DIR=/app/data
+      - DOCKER_PROXY_DIR=/docker-proxy
+      - DOCKER_PROXY_HOST_DIR=/opt/orion/docker-proxy
 
   caddy:
     image: caddy:2-alpine

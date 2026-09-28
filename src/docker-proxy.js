@@ -18,7 +18,11 @@ import path from 'node:path';
 import { DATA_DIR } from './db.js';
 
 const REAL_SOCK = '/var/run/docker.sock';
-const PROXY_DIR = path.join(DATA_DIR, 'docker-proxy');
+// Sockets live in DOCKER_PROXY_DIR (a host bind-mount, NOT a Docker volume:
+// bind-mount sources resolve on the Docker host, so a volume path would not
+// resolve). DOCKER_PROXY_HOST_DIR is the host-side path of that same dir.
+const PROXY_DIR = process.env.DOCKER_PROXY_DIR || path.join(DATA_DIR, 'docker-proxy');
+const PROXY_HOST_DIR = process.env.DOCKER_PROXY_HOST_DIR || PROXY_DIR;
 
 const servers = new Map(); // userId -> http.Server
 
@@ -391,4 +395,9 @@ export function ensureDockerProxy(userId) {
 
 export function proxySockPath(userId) {
   return path.resolve(path.join(PROXY_DIR, `u${Number(userId)}.sock`));
+}
+
+/** Host-side path for bind-mounting the user's proxy socket into sandboxes. */
+export function proxySockHostPath(userId) {
+  return path.resolve(path.join(PROXY_HOST_DIR, `u${Number(userId)}.sock`));
 }
