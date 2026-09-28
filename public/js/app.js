@@ -1022,10 +1022,19 @@ function wireJumpPill() {
   $('#jump-latest').addEventListener('click', () => scrollBottom(true));
   $('#messages').addEventListener('scroll', () => {
     // Follow mode tracks the user's actual position: pinned while they're
-    // at the bottom, released the moment they scroll up. (nearBottom alone
-    // can't be trusted here — content that grows below the viewport while
-    // the user sits at the bottom never fires a scroll event.)
-    S.stick = nearBottom();
+    // at the bottom, released the moment they scroll up. Only a scroll
+    // *away* from the bottom (scrollTop decreasing) releases the pin — a
+    // smooth programmatic glide toward the bottom (e.g. after sending a
+    // large paste) fires scroll events mid-flight, and unpinning on those
+    // meant the run-status line appended mid-glide was never scrolled to.
+    // (nearBottom alone can't be trusted here — content that grows below
+    // the viewport while the user sits at the bottom never fires a scroll
+    // event.)
+    const box = $('#messages');
+    const nb = nearBottom();
+    if (nb) S.stick = true;
+    else if (box.scrollTop < (S.lastScrollTop ?? box.scrollTop)) S.stick = false;
+    S.lastScrollTop = box.scrollTop;
     // The circular button lives on screen whenever the user is scrolled up,
     // whether or not new messages arrived.
     if (nearBottom()) hideJump();
