@@ -1725,12 +1725,11 @@ app.patch('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.delete('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
-  const id = Number(req.params.id);
-  if (id === req.user.id) throw httpError(400, 'You cannot delete yourself');
-  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  if (!target) return res.status(404).json({ error: 'Not found' });
-
+/** Delete a user account and everything it owns: chats, uploads, vault,
+ * sessions, tasks, settings, passkeys, TOTP, push subscriptions, usage,
+ * and the sandbox. Shared by the admin delete route and self-service
+ * account deletion. */
+async function deleteUserAccount(id) {
   for (const conv of db.prepare('SELECT id FROM conversations WHERE user_id = ?').all(id)) {
     deleteConversation(conv.id);
   }
@@ -1762,6 +1761,41 @@ app.delete('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => 
   } catch (e) {
     console.warn(`[orion] could not remove sandbox for deleted user ${id}: ${e.message}`);
   }
+}
+
+app.delete('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  if (id === req.user.id) throw httpError(400, 'You cannot delete yourself');
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!target) return res.status(404).json({ error: 'Not found' });
+
+  await deleteUserAccount(id);
+  res.json({ ok: true });
+}));
+
+// Self-service account deletion: password + 2FA confirmed, just like the
+// full reset. The sole admin account can't delete itself — the box would
+// be left with no administrator.
+app.delete('/api/account', requireAuth, asyncRoute(async (req, res) => {
+  const id = req.user.id;
+  const { password, totp_code } = req.body || {};
+  if (!verifyPassword(id, password || '')) {
+    return res.status(403).json({ error: 'Wrong password.' });
+  }
+  if (totpEnabled(id) && !verifySecondFactor(id, totp_code || '')) {
+    return res.status(403).json({ error: 'Wrong two-factor code.' });
+  }
+  if (req.user.role === 'admin') {
+    const otherAdmins = db
+      .prepare("SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND id != ? AND (disabled = 0 OR disabled IS NULL)")
+      .get(id).c;
+    if (!otherAdmins) {
+      return res.status(400).json({ error: 'You are the only admin — promote someone else first.' });
+    }
+  }
+  destroySession(req.cookies?.[COOKIE_NAME]);
+  clearSessionCookie(res);
+  await deleteUserAccount(id);
   res.json({ ok: true });
 }));
 

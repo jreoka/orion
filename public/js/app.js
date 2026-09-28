@@ -4048,6 +4048,7 @@ function wireSettings() {
   wireSessionsTab();
   wireProfileCard();
   $('#reset-everything').onclick = resetEverythingModal;
+  $('#delete-account').onclick = deleteAccountModal;
   $('#delete-all-chats').onclick = deleteAllChatsModal;
 }
 
@@ -4096,6 +4097,56 @@ async function resetEverythingModal() {
       err.hidden = false;
       btn.disabled = false;
       btn.textContent = 'Reset everything';
+    }
+  });
+}
+
+/* ---------- delete account: password + 2FA confirmed, everything goes ---------- */
+async function deleteAccountModal() {
+  // Ask for the 2FA status fresh so the code field only appears when needed.
+  let need2fa = false;
+  try { need2fa = !!(await api('/api/auth/2fa/status')).enabled; } catch {}
+  const bd = openModal(`
+    <h3>Delete your account?</h3>
+    <p class="muted">This permanently deletes your account and <b>everything</b> attached to it — all chats, the sandbox, the vault, settings, scheduled tasks, the works. There is no way back from this.</p>
+    <form id="delete-account-form">
+      <label class="field"><span>Your password</span>
+        <input id="delete-account-password" type="password" autocomplete="current-password" required>
+      </label>
+      ${need2fa ? `<label class="field"><span>Two-factor code</span>
+        <input id="delete-account-totp" type="text" inputmode="numeric" autocomplete="one-time-code" required maxlength="8">
+      </label>` : ''}
+      <p id="delete-account-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-x="cancel">Cancel</button>
+        <button type="submit" class="btn danger-ghost" id="delete-account-submit">Delete my account</button>
+      </div>
+    </form>`);
+  bd.querySelector('[data-x=cancel]').onclick = closeModal;
+  bd.querySelector('#delete-account-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = bd.querySelector('#delete-account-error');
+    const btn = bd.querySelector('#delete-account-submit');
+    err.hidden = true;
+    btn.disabled = true;
+    btn.textContent = 'Deleting…';
+    try {
+      await api('/api/account', { method: 'DELETE', body: {
+        password: bd.querySelector('#delete-account-password').value,
+        totp_code: need2fa ? bd.querySelector('#delete-account-totp').value : undefined
+      }});
+      closeModal();
+      closeEventStream();
+      closeUserEventStream();
+      S.me = null; S.activeId = null; S.messages = [];
+      try { localStorage.removeItem('orion-active-chat'); } catch {}
+      go('login');
+      toast('Account deleted');
+    } catch (ex) {
+      err.textContent = ex.message || 'Delete failed.';
+      err.hidden = false;
+      btn.disabled = false;
+      btn.textContent = 'Delete my account';
     }
   });
 }
