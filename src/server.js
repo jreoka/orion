@@ -617,6 +617,7 @@ app.post('/api/conversations', requireAuth, (req, res) => {
   const info = db
     .prepare("INSERT INTO conversations (user_id, title, kind, created_at, updated_at) VALUES (?, ?, 'chat', ?, ?)")
     .run(req.user.id, title, now, now);
+  publishToUser(req.user.id, { type: 'conversations_changed' }); // other devices gain the new row
   res.json({ id: Number(info.lastInsertRowid), title, kind: 'chat', created_at: now, updated_at: now });
 });
 
@@ -633,6 +634,7 @@ app.patch('/api/conversations/:id', requireAuth, asyncRoute(async (req, res) => 
   if (!title || title.length > 120) throw httpError(400, 'Title must be 1–120 characters');
   db.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?')
     .run(title, Date.now(), conv.id);
+  publishToUser(req.user.id, { type: 'conversations_changed' }); // renamed elsewhere: refresh sidebars
   res.json({ ok: true, title });
 }));
 
@@ -810,6 +812,7 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
   const message = { id: messageId, role: 'user', content, created_at: now, attachments };
   db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, conv.id);
   publish(conv.id, { type: 'message', message });
+  publishToUser(req.user.id, { type: 'conversations_changed' }); // sidebar reorder/preview on other devices
 
   // Abuse screening: the message is already stored (evidence). A positive
   // verdict locks the account and no run starts.
@@ -881,6 +884,7 @@ app.post('/api/reset', requireAuth, asyncRoute(async (req, res) => {
   db.prepare('DELETE FROM attachments WHERE staged = 1 AND user_id = ?').run(req.user.id);
   removeDataPaths(stagedPaths);
   for (const cid of convIds) publish(cid, { type: 'chat_cleared' });
+  publishToUser(req.user.id, { type: 'conversations_changed' }); // other devices rebuild their lists
   await sandboxReset(req.user.id);
   // Hand the client a fresh empty chat so it never sits on a deleted one.
   const freshId = getOrCreateConversation(req.user.id);
@@ -912,6 +916,7 @@ app.post('/api/chats/delete-all', requireAuth, asyncRoute(async (req, res) => {
   db.prepare('DELETE FROM attachments WHERE staged = 1 AND user_id = ?').run(req.user.id);
   removeDataPaths(stagedPaths);
   for (const cid of convIds) publish(cid, { type: 'chat_cleared' });
+  publishToUser(req.user.id, { type: 'conversations_changed' }); // other devices rebuild their lists
   // The sandbox (and the agent's memory inside it) is deliberately untouched.
   const freshId = getOrCreateConversation(req.user.id);
   res.json({ ok: true, conversation_id: freshId });

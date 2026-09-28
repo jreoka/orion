@@ -128,6 +128,7 @@ const S = {
   runActive: false,    // an agent run is in flight for the open conversation
   evt: null,           // EventSource for the open conversation's event bus
   userEvt: null,       // EventSource for the per-user event bus (usage updates)
+  userEvtPoll: null,   // safety-net interval re-syncing the conversation list
   evtRetry: 0,         // reconnect backoff step
   liveIds: new Set(),  // assistant message ids currently streaming
   buffers: new Map(),  // message id -> accumulated streamed text
@@ -3235,6 +3236,10 @@ function openUserEventStream() {
     const d = parseBusEvent(e);
     if (d && d.conversation_id != null) onConversationDeleted(d.conversation_id);
   });
+  es.addEventListener('conversations_changed', () => scheduleConvRefresh()); // created/renamed/messaged/run toggled elsewhere
+  // Safety net: even if an event was missed (dropped SSE, slept-through
+  // reconnect), the list converges on its own within a minute.
+  S.userEvtPoll = setInterval(() => { loadConversationsQuiet(); }, 45000);
   es.onerror = () => {
     // EventSource auto-reconnects; if the session died the next api() call
     // surfaces it and the normal logout path closes this stream.
@@ -3242,6 +3247,18 @@ function openUserEventStream() {
 }
 function closeUserEventStream() {
   if (S.userEvt) { try { S.userEvt.close(); } catch {} S.userEvt = null; }
+  if (S.userEvtPoll) { clearInterval(S.userEvtPoll); S.userEvtPoll = null; }
+}
+
+// Cross-device list sync arrives as small bursts (message + run_started, or
+// a reset wiping N chats) — coalesce them into one quiet refresh.
+let convRefreshTimer = null;
+function scheduleConvRefresh() {
+  if (convRefreshTimer) return;
+  convRefreshTimer = setTimeout(() => {
+    convRefreshTimer = null;
+    loadConversationsQuiet();
+  }, 600);
 }
 
 // A chat was deleted — on this device or another one. Drop it from the

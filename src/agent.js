@@ -15,7 +15,7 @@ import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, attachmentS
 import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
 import { imagePartsForMessage, imagePartFromFile, messageHasImages, stripImageParts } from './vision.js';
 import { notifyConversation } from './push.js';
-import { publish } from './events.js';
+import { publish, publishToUser } from './events.js';
 import { recordUsage, isOverLimit, LIMIT_REACHED_MESSAGE } from './usage.js';
 import {
   sandboxExec,
@@ -1956,10 +1956,12 @@ export async function runAgentLoop({
     });
     publish(conversationId, { type: 'run_started' });
     publish(conversationId, { type: 'run_ended', status: 'done' });
+    publishToUser(userId, { type: 'conversations_changed' }); // sidebar run marks on other devices
     return { finalText: LIMIT_REACHED_MESSAGE, status: 'done' };
   }
 
   publish(conversationId, { type: 'run_started' });
+  publishToUser(userId, { type: 'conversations_changed' }); // sidebar working light on other devices
   try {
     const systemContent =
       (systemExtra ? `${SYSTEM_PROMPT}\n\n${systemExtra}` : SYSTEM_PROMPT) + identitySection;
@@ -2034,5 +2036,6 @@ export async function runAgentLoop({
   } finally {
     publishAssistantRow();
     publish(conversationId, { type: 'run_ended', status });
+    publishToUser(userId, { type: 'conversations_changed' }); // clear working lights / show finish checks elsewhere
   }
 }
