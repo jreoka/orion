@@ -24,45 +24,50 @@ function fitAppHeight() {
    interactive-widget meta is ignored), so the app must track the visual
    viewport instead. Events are unreliable on iOS, so while the composer is
    focused we poll and pin #app to the visible area. */
+/* iOS Safari keyboard: pin the composer above the keyboard with fixed
+   positioning. Resizing #app proved unreliable — Safari pans the visual
+   viewport independently. This anchors the composer to the visual bottom. */
 let kbPoller = null;
 function fitForKeyboard() {
-  const app = document.getElementById('app');
-  if (!app || !window.visualViewport) { fitAppHeight(); return; }
   const vv = window.visualViewport;
-  const kbOpen = vv.height < window.innerHeight - 40;
-  if (kbOpen) {
-    app.style.height = vv.height + 'px';
-    app.style.transform = `translateY(${vv.offsetTop || 0}px)`;
+  const cw = document.querySelector('.composer-wrap');
+  if (!vv || !cw) return;
+  const kbH = window.innerHeight - vv.height - (vv.offsetTop || 0);
+  if (new URLSearchParams(location.search).has('kbdebug')) {
+    let d = document.getElementById('kb-debug');
+    if (!d) {
+      d = document.createElement('div');
+      d.id = 'kb-debug';
+      d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#000;color:#0f0;font:11px monospace;padding:4px;pointer-events:none;white-space:pre-wrap;';
+      document.body.appendChild(d);
+    }
+    d.textContent = `innerH=${window.innerHeight} vv.h=${Math.round(vv.height)} kbH=${Math.round(kbH)}`;
+  }
+  if (kbH > 40) {
+    cw.style.position = 'fixed';
+    cw.style.left = '0'; cw.style.right = '0';
+    cw.style.bottom = kbH + 'px';
+    cw.style.zIndex = '50';
+    cw.style.background = 'var(--paper)';
   } else {
-    app.style.height = '';
-    app.style.transform = '';
-    fitAppHeight();
+    cw.style.position = ''; cw.style.left = ''; cw.style.right = '';
+    cw.style.bottom = ''; cw.style.zIndex = ''; cw.style.background = '';
   }
 }
 function startKbPoller() {
   stopKbPoller();
   fitForKeyboard();
-  kbPoller = setInterval(() => {
-    fitForKeyboard();
-    // Temporary iOS keyboard debug: ?kbdebug=1 shows live viewport values
-    if (new URLSearchParams(location.search).has('kbdebug')) {
-      const vv = window.visualViewport;
-      let d = document.getElementById('kb-debug');
-      if (!d) {
-        d = document.createElement('div');
-        d.id = 'kb-debug';
-        d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#000;color:#0f0;font:11px monospace;padding:4px;pointer-events:none;white-space:pre-wrap;';
-        document.body.appendChild(d);
-      }
-      d.textContent = `innerH=${window.innerHeight} vv.h=${Math.round(vv.height)} vv.top=${Math.round(vv.offsetTop)} app.h=${document.getElementById('app')?.style.height || 'auto'}`;
-    }
-  }, 250);
+  kbPoller = setInterval(fitForKeyboard, 200);
 }
 function stopKbPoller() {
   if (kbPoller) { clearInterval(kbPoller); kbPoller = null; }
-  const app = document.getElementById('app');
-  if (app) { app.style.height = ''; app.style.transform = ''; }
-  fitAppHeight();
+  const cw = document.querySelector('.composer-wrap');
+  if (cw) {
+    cw.style.position = ''; cw.style.left = ''; cw.style.right = '';
+    cw.style.bottom = ''; cw.style.zIndex = ''; cw.style.background = '';
+  }
+  const d = document.getElementById('kb-debug');
+  if (d) d.remove();
 }
 window.addEventListener('resize', fitAppHeight);
 if (window.visualViewport) {
