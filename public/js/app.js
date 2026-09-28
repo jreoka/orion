@@ -20,29 +20,45 @@ function fitAppHeight() {
    shrinks — the composer floats mid-screen above the keyboard. Use the
    visual viewport instead: when it shrinks, the difference is the keyboard
    height, applied as a bottom offset so the composer rides above it. */
+/* iOS Safari keyboard: the layout viewport never shrinks (the Chrome-only
+   interactive-widget meta is ignored), so the app must track the visual
+   viewport instead. Events are unreliable on iOS, so while the composer is
+   focused we poll and pin #app to the visible area. */
+let kbPoller = null;
 function fitForKeyboard() {
   const app = document.getElementById('app');
   if (!app || !window.visualViewport) { fitAppHeight(); return; }
   const vv = window.visualViewport;
-  // iOS Safari: keyboard shrinks the visual viewport but not the layout
-  // viewport. Pin the app to the visual height and offset it to the
-  // visual top so the composer rides directly above the keyboard.
   const kbOpen = vv.height < window.innerHeight - 40;
   if (kbOpen) {
     app.style.height = vv.height + 'px';
     app.style.transform = `translateY(${vv.offsetTop || 0}px)`;
-    app.style.paddingBottom = '';
   } else {
     app.style.height = '';
     app.style.transform = '';
     fitAppHeight();
   }
 }
+function startKbPoller() {
+  stopKbPoller();
+  fitForKeyboard();
+  kbPoller = setInterval(fitForKeyboard, 250);
+}
+function stopKbPoller() {
+  if (kbPoller) { clearInterval(kbPoller); kbPoller = null; }
+  const app = document.getElementById('app');
+  if (app) { app.style.height = ''; app.style.transform = ''; }
+  fitAppHeight();
+}
 window.addEventListener('resize', fitAppHeight);
 if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', fitForKeyboard);
   window.visualViewport.addEventListener('scroll', fitForKeyboard);
 }
+document.addEventListener('focusin', (e) => {
+  if (e.target && (e.target.id === 'composer-input' || e.target.tagName === 'TEXTAREA')) startKbPoller();
+});
+document.addEventListener('focusout', stopKbPoller);
 fitAppHeight();
 
 /* ---------- tiny helpers ---------- */
