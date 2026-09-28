@@ -56,6 +56,18 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', fitForKeyboard);
   window.visualViewport.addEventListener('scroll', fitForKeyboard);
 }
+/* iOS Safari pans the visual viewport on tap-to-focus and the pan is
+   read-only afterwards — prevent it by taking over the tap and focusing
+   with preventScroll. */
+document.addEventListener('touchstart', (e) => {
+  const t = e.target.closest && e.target.closest('#composer-input');
+  if (!t) return;
+  if (document.activeElement === t) return;
+  e.preventDefault();
+  try { t.focus({ preventScroll: true }); } catch { t.focus(); }
+  // Ensure the caret lands where the finger tapped
+  try { const v = t.value; t.setSelectionRange(v.length, v.length); } catch {}
+}, { passive: false });
 /* Always-on watcher: iOS focus events are flaky (accessory taps blur the
    input), so derive everything from the actual keyboard height instead. */
 function startKbPoller() {
