@@ -4051,14 +4051,14 @@ function wireSettings() {
   $('#delete-all-chats').onclick = deleteAllChatsModal;
 }
 
-/* ---------- full reset: chat + sandbox, password + 2FA confirmed ---------- */
+/* ---------- full reset: chats + sandbox + vault, password + 2FA confirmed ---------- */
 async function resetEverythingModal() {
   // Ask for the 2FA status fresh so the code field only appears when needed.
   let need2fa = false;
   try { need2fa = !!(await api('/api/auth/2fa/status')).enabled; } catch {}
   const bd = openModal(`
-    <h3>Reset chat &amp; sandbox?</h3>
-    <p class="muted">This erases <b>all chats</b> — every message in every conversation — and <b>everything</b> in the agent's sandbox — files, installed tools, the agent's memory (SOUL.md / MEMORY.md), the works. The sandbox starts over fresh. This can't be undone.</p>
+    <h3>Reset everything?</h3>
+    <p class="muted">This erases <b>all chats</b> — every message in every conversation — <b>everything</b> in the agent's sandbox — files, installed tools, the agent's memory (SOUL.md / MEMORY.md) — and <b>everything in the vault</b> — all stored secrets. The sandbox starts over fresh. This can't be undone.</p>
     <form id="reset-form">
       <label class="field"><span>Your password</span>
         <input id="reset-password" type="password" autocomplete="current-password" required>
@@ -4090,7 +4090,7 @@ async function resetEverythingModal() {
       // The server wiped every chat and made a fresh one — open it.
       await loadConversationsQuiet();
       if (out && out.conversation_id) await switchConversation(out.conversation_id);
-      toast('Chat and sandbox reset');
+      toast('Everything reset');
     } catch (ex) {
       err.textContent = ex.message || 'Reset failed.';
       err.hidden = false;
