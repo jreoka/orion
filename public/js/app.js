@@ -2636,7 +2636,8 @@ async function vaultModal() {
 }
 
 async function switchConversation(id) {
-  if (id === S.activeId || S.switching) return;
+  if (id === S.activeId) { closeSidebarDrawer(); return; }
+  if (S.switching) return;
   S.switching = true;
   saveDraft();
   closeConvMenu();
