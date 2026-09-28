@@ -537,6 +537,7 @@ button.avatar.lg:hover { opacity: .85; }
     position: fixed; top: 0; bottom: 0; left: 0; z-index: 95;
     transform: translateX(-102%); transition: transform .22s var(--ease);
     box-shadow: 8px 0 32px rgba(28, 24, 19, .12);
+    touch-action: pan-y;
   }
   #sidebar.open { transform: none; }
 }

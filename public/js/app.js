@@ -2703,19 +2703,23 @@ function wireSidebarSwipe() {
   const sb = $('#sidebar');
   if (!sb || sb.dataset.swipeWired) return;
   sb.dataset.swipeWired = '1';
-  let startX = 0, curX = 0, dragging = false, pid = 0;
+  let startX = 0, startY = 0, curX = 0, dragging = false, pid = 0, swipeX = false;
   sb.addEventListener('pointerdown', (e) => {
     if (!sb.classList.contains('open') || !window.matchMedia('(max-width: 760px)').matches) return;
     if (e.pointerType === 'mouse') return;
-    dragging = true; pid = e.pointerId; startX = curX = e.clientX;
-    sb.style.transition = 'none';
-    try { sb.setPointerCapture(pid); } catch {}
+    dragging = true; swipeX = false; pid = e.pointerId;
+    startX = curX = e.clientX; startY = e.clientY;
   });
   sb.addEventListener('pointermove', (e) => {
     if (!dragging || e.pointerId !== pid) return;
     curX = e.clientX;
-    const dx = Math.min(0, curX - startX);
-    sb.style.transform = `translateX(${dx}px)`;
+    const dx = curX - startX, dy = e.clientY - startY;
+    if (!swipeX && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      swipeX = true;
+      sb.style.transition = 'none';
+      try { sb.setPointerCapture(pid); } catch {}
+    }
+    if (swipeX) sb.style.transform = `translateX(${Math.min(0, dx)}px)`;
   });
   const end = (e) => {
     if (!dragging || (e.pointerId !== undefined && e.pointerId !== pid)) return;
@@ -2723,7 +2727,7 @@ function wireSidebarSwipe() {
     sb.style.transition = '';
     const dx = curX - startX;
     const w = sb.getBoundingClientRect().width || 272;
-    if (dx < -w * 0.4) closeSidebarDrawer();
+    if (swipeX && dx < -w * 0.25) closeSidebarDrawer();
     else sb.style.transform = '';
   };
   sb.addEventListener('pointerup', end);
