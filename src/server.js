@@ -74,6 +74,7 @@ import {
   saveSubscription,
   deleteSubscription,
   listSubscriptions,
+  notifyUser,
 } from './push.js';
 import {
   getWeeklyUsage,
@@ -1017,6 +1018,14 @@ app.post('/api/push/subscribe', requireAuth, asyncRoute(async (req, res) => {
 app.delete('/api/push/unsubscribe', requireAuth, asyncRoute(async (req, res) => {
   deleteSubscription(req.user.id, req.body?.endpoint);
   res.json({ ok: true });
+}));
+
+app.post('/api/push/test', requireAuth, asyncRoute(async (req, res) => {
+  const r = await notifyUser(req.user.id, {
+    title: 'Orion test notification',
+    body: 'If you got this, push notifications are working.',
+  });
+  res.json({ ok: true, sent: r?.sent || 0 });
 }));
 
 // ---- token usage (self) -------------------------------------------------------

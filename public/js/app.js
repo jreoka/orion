@@ -4455,7 +4455,8 @@ async function renderNotificationsTab() {
     </div>
     ${!on && perm === 'denied'
       ? '<p class="muted small">Notifications are blocked for this site — allow them in your browser\u2019s site settings, then enable here.</p>'
-      : ''}`;
+      : ''}
+    ${on ? '<div style="margin-top:12px"><button class="btn" id="notif-test">Send test notification</button></div>' : ''}`;
   $('#notif-toggle').onclick = async () => {
     try {
       if (on) {
@@ -4473,4 +4474,15 @@ async function renderNotificationsTab() {
     }
     renderNotificationsTab();
   };
+  $('#notif-test')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const r = await api('/api/push/test', { method: 'POST' });
+      toast(r.sent ? 'Test notification sent — check your device.' : 'No push subscriptions found for this account.');
+    } catch (err) {
+      toast('Couldn\u2019t send test: ' + err.message, 'error');
+    }
+    btn.disabled = false;
+  });
 }
