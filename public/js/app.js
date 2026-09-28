@@ -827,16 +827,20 @@ async function loadOlder() {
 
 /* ---------- turn rail: one line per user turn, tap to jump ---------- */
 async function loadTurns() {
+  const id = S.activeId;
   S.turns = [];
   renderTurnRail();
-  if (!S.activeId) return;
+  if (!id) return;
   try {
-    const data = await api(`/api/conversations/${S.activeId}/turns`);
-    if (!data || !S.activeId) return;
+    const data = await api(`/api/conversations/${id}/turns`);
+    // Stale response: the user switched chats while the fetch was in flight.
+    // Never paint another chat's turns onto this one.
+    if (!data || S.activeId !== id) return;
     S.turns = data.turns || [];
   } catch {
     /* rail just stays hidden */
   }
+  if (S.activeId !== id) return;
   renderTurnRail();
 }
 
