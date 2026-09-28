@@ -268,6 +268,10 @@ function forwardStream(method, p, headers, body, clientReq, clientRes) {
       delete h['transfer-encoding']; // node de-chunks; re-chunk on the way out
       try {
         clientRes.writeHead(res.statusCode, h);
+        // Flush immediately: long-poll endpoints (/wait) send headers now and
+        // hold the body open; without this the headers sit buffered until the
+        // first body chunk, which never comes.
+        if (typeof clientRes.flushHeaders === 'function') clientRes.flushHeaders();
       } catch {
         fwd.destroy();
         finish();
