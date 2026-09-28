@@ -15,8 +15,23 @@ function fitAppHeight() {
   const app = document.getElementById('app');
   if (app) app.style.height = window.innerHeight + 'px';
 }
+/* iOS Safari: interactive-widget=resizes-content is Chrome-only, so the
+   keyboard overlays the layout viewport and window.innerHeight never
+   shrinks — the composer floats mid-screen above the keyboard. Use the
+   visual viewport instead: when it shrinks, the difference is the keyboard
+   height, applied as a bottom offset so the composer rides above it. */
+function fitForKeyboard() {
+  const app = document.getElementById('app');
+  if (!app || !window.visualViewport) return;
+  const kb = Math.max(0, window.innerHeight - window.visualViewport.height - (window.visualViewport.offsetTop || 0));
+  app.style.paddingBottom = kb > 40 ? kb + 'px' : '';
+  fitAppHeight();
+}
 window.addEventListener('resize', fitAppHeight);
-if (window.visualViewport) window.visualViewport.addEventListener('resize', fitAppHeight);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', fitForKeyboard);
+  window.visualViewport.addEventListener('scroll', fitForKeyboard);
+}
 fitAppHeight();
 
 /* ---------- tiny helpers ---------- */
