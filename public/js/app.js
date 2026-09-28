@@ -42,7 +42,21 @@ function fitForKeyboard() {
 function startKbPoller() {
   stopKbPoller();
   fitForKeyboard();
-  kbPoller = setInterval(fitForKeyboard, 250);
+  kbPoller = setInterval(() => {
+    fitForKeyboard();
+    // Temporary iOS keyboard debug: ?kbdebug=1 shows live viewport values
+    if (new URLSearchParams(location.search).has('kbdebug')) {
+      const vv = window.visualViewport;
+      let d = document.getElementById('kb-debug');
+      if (!d) {
+        d = document.createElement('div');
+        d.id = 'kb-debug';
+        d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#000;color:#0f0;font:11px monospace;padding:4px;pointer-events:none;white-space:pre-wrap;';
+        document.body.appendChild(d);
+      }
+      d.textContent = `innerH=${window.innerHeight} vv.h=${Math.round(vv.height)} vv.top=${Math.round(vv.offsetTop)} app.h=${document.getElementById('app')?.style.height || 'auto'}`;
+    }
+  }, 250);
 }
 function stopKbPoller() {
   if (kbPoller) { clearInterval(kbPoller); kbPoller = null; }
