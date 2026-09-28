@@ -2698,40 +2698,43 @@ function closeSidebarDrawer() {
   if (b) b.hidden = true;
 }
 /* Mobile: swipe the drawer away. A horizontal drag left on the open drawer
-   follows the finger; releasing past 40% (or flicking left) dismisses it. */
+   follows the finger; releasing past 25% dismisses it. Touch events (not
+   pointer capture) so taps and vertical scrolling keep working. */
 function wireSidebarSwipe() {
   const sb = $('#sidebar');
   if (!sb || sb.dataset.swipeWired) return;
   sb.dataset.swipeWired = '1';
-  let startX = 0, startY = 0, curX = 0, dragging = false, pid = 0, swipeX = false;
-  sb.addEventListener('pointerdown', (e) => {
+  let startX = 0, startY = 0, dx = 0, active = false, horizontal = false;
+  sb.addEventListener('touchstart', (e) => {
     if (!sb.classList.contains('open') || !window.matchMedia('(max-width: 760px)').matches) return;
-    if (e.pointerType === 'mouse') return;
-    dragging = true; swipeX = false; pid = e.pointerId;
-    startX = curX = e.clientX; startY = e.clientY;
-  });
-  sb.addEventListener('pointermove', (e) => {
-    if (!dragging || e.pointerId !== pid) return;
-    curX = e.clientX;
-    const dx = curX - startX, dy = e.clientY - startY;
-    if (!swipeX && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      swipeX = true;
+    if (e.touches.length !== 1) return;
+    active = true; horizontal = false; dx = 0;
+    startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+  }, { passive: true });
+  sb.addEventListener('touchmove', (e) => {
+    if (!active || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    if (!horizontal && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      horizontal = true;
       sb.style.transition = 'none';
-      try { sb.setPointerCapture(pid); } catch {}
     }
-    if (swipeX) sb.style.transform = `translateX(${Math.min(0, dx)}px)`;
-  });
-  const end = (e) => {
-    if (!dragging || (e.pointerId !== undefined && e.pointerId !== pid)) return;
-    dragging = false;
+    if (horizontal) {
+      sb.style.transform = `translateX(${Math.min(0, dx)}px)`;
+      if (e.cancelable) e.preventDefault();
+    }
+  }, { passive: false });
+  const end = () => {
+    if (!active) return;
+    active = false;
     sb.style.transition = '';
-    const dx = curX - startX;
     const w = sb.getBoundingClientRect().width || 272;
-    if (swipeX && dx < -w * 0.25) closeSidebarDrawer();
+    if (horizontal && dx < -w * 0.25) closeSidebarDrawer();
     else sb.style.transform = '';
   };
-  sb.addEventListener('pointerup', end);
-  sb.addEventListener('pointercancel', end);
+  sb.addEventListener('touchend', end, { passive: true });
+  sb.addEventListener('touchcancel', end, { passive: true });
 }
 
 let sidebarWired = false;
