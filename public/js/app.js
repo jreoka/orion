@@ -40,7 +40,9 @@ function fitForKeyboard() {
   // Shrink the app to the visible area so the header anchors to the top
   // instead of Safari showing the middle of a full-height page.
   if (kbActive) {
-    app.style.height = vv.height + 'px';
+    // Extend slightly past the visual height to tuck under iOS's keyboard
+    // accessory bar, closing the gap between composer and keyboard.
+    app.style.height = (vv.height + 44) + 'px';
     // Safari pans the visual viewport on focus; pull it back to the top.
     if ((vv.offsetTop || 0) > 1 || window.scrollY > 1) window.scrollTo(0, 0);
   } else app.style.height = '';
