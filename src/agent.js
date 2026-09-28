@@ -1823,8 +1823,9 @@ export async function runAgent({
 export async function runAgentContinuation({
   userId, conversationId, userText, settings,
   shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle,
+  noUsageCharge,
 }) {
-  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle });
+  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle, noUsageCharge });
 }
 
 /**
