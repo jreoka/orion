@@ -89,7 +89,8 @@ self.addEventListener('push', (event) => {
       badge: '/icons/icon-192.png',
       tag: data.tag || (convId ? 'orion-chat-' + convId : 'orion-note'),
       renotify: true,
-      requireInteraction: true, // message/task pings stay visible until dismissed
+      // No requireInteraction: pings behave like normal notifications and
+      // auto-dismiss instead of camping on screen until closed.
       data: { url: data.url || '/' },
     })
   );

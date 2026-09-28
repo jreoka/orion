@@ -141,11 +141,9 @@ export async function notifyUser(userId, { title, body, convId } = {}) {
     try {
       await webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        payload,
-        // High urgency: our pushes are rare and always worth waking the
-        // device for. Without this, FCM may batch/delay delivery for
-        // battery saving and the ping arrives a minute late.
-        { urgency: 'high' }
+        payload
+        // Default (normal) urgency: nothing here is worth waking a
+        // dozing device or camping on screen for.
       );
       sent++;
     } catch (e) {
