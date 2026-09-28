@@ -75,7 +75,8 @@ import {
   deleteSubscription,
   listSubscriptions,
   notifyUser,
-} from './push.js';
+} from './push.js'
+import { ensureDockerProxy } from './docker-proxy.js';;
 import {
   getWeeklyUsage,
   setWeeklyLimit,
@@ -1801,6 +1802,28 @@ const PORT = process.env.PORT || 3000;
 let listener = null;
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   listener = app.listen(PORT, () => console.log(`[orion] listening on :${PORT}`));
+  // Start Docker-proxy sockets for every user that has a sandbox, so the
+  // filtering proxy is listening even before their first agent run after
+  // a server restart (the socket files persist, the listeners don't).
+  try {
+    // Scan for existing sandbox volumes via Docker (push subscriptions
+    // aren't the source of truth for sandboxes).
+    const { default: Docker } = await import('dockerode');
+    const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+    const vols = await docker.listVolumes().catch(() => ({ Volumes: [] }));
+    const seen = new Set();
+    for (const v of vols.Volumes || []) {
+      const m = String(v.Name || '').match(/^orion-u(\d+)-data$/);
+      if (m && !seen.has(m[1])) {
+        seen.add(m[1]);
+        ensureDockerProxy(Number(m[1])).catch((e) =>
+          console.warn('[orion] docker proxy start failed for u' + m[1], e?.message || e)
+        );
+      }
+    }
+  } catch (e) {
+    console.warn('[orion] docker proxy boot scan failed:', e?.message || e);
+  }
 }
 
 // Graceful shutdown: a deploy recreates the container, which used to kill
