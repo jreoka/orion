@@ -33,16 +33,6 @@ function fitForKeyboard() {
   const cw = document.querySelector('.composer-wrap');
   if (!vv || !cw) return;
   const kbH = window.innerHeight - vv.height - (vv.offsetTop || 0);
-  if (new URLSearchParams(location.search).has('kbdebug')) {
-    let d = document.getElementById('kb-debug');
-    if (!d) {
-      d = document.createElement('div');
-      d.id = 'kb-debug';
-      d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#000;color:#0f0;font:11px monospace;padding:4px;pointer-events:none;white-space:pre-wrap;';
-      document.body.appendChild(d);
-    }
-    d.textContent = `innerH=${window.innerHeight} vv.h=${Math.round(vv.height)} kbH=${Math.round(kbH)}`;
-  }
   if (kbH > 40) {
     cw.style.position = 'fixed';
     cw.style.left = '0'; cw.style.right = '0';
@@ -66,8 +56,6 @@ function stopKbPoller() {
     cw.style.position = ''; cw.style.left = ''; cw.style.right = '';
     cw.style.bottom = ''; cw.style.zIndex = ''; cw.style.background = '';
   }
-  const d = document.getElementById('kb-debug');
-  if (d) d.remove();
 }
 window.addEventListener('resize', fitAppHeight);
 if (window.visualViewport) {
