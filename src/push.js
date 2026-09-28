@@ -58,7 +58,7 @@ export function ensureVapidKeys() {
     console.warn('[orion] could not persist VAPID keys:', e?.message || e);
   }
   if (!vapidReady) {
-    webpush.setVapidDetails('mailto:orion@localhost', keys.publicKey, keys.privateKey);
+    webpush.setVapidDetails('mailto:notifications@orion.dill.moe', keys.publicKey, keys.privateKey);
     vapidReady = true;
   }
   return { publicKey: keys.publicKey };
