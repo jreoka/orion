@@ -678,7 +678,7 @@ button.avatar.lg:hover { opacity: .85; }
   background: linear-gradient(120deg, #4f6df5, #c026d3, #4f6df5);
   background-size: 220% 220%;
   -webkit-background-clip: text; background-clip: text; color: transparent;
-  animation: usage-swirl 38s linear infinite, swirl-drift 53s ease-in-out infinite;
+  animation: usage-swirl 38s linear infinite, swirl-drift 53s ease-in-out infinite, blink 1.1s steps(2, start) infinite;
   margin-left: 1px;
 }
 @keyframes blink { 50% { opacity: 0; } }
