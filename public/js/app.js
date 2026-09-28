@@ -2327,7 +2327,9 @@ function convItemEl(c) {
               : done ? '<span class="conv-dot done" aria-label="Run finished"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M5 13l4 4L19 7" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'
               : hasNew ? '<span class="conv-dot" aria-label="New activity"></span>' : ''}
     <button class="conv-menu-btn" aria-label="Chat options" title="Chat options">⋯</button>`;
+  let lpFired = false;
   el.addEventListener('click', (e) => {
+    if (lpFired) { lpFired = false; e.stopPropagation(); e.preventDefault(); return; }
     if (e.target.closest('.conv-menu-btn')) return;
     switchConversation(c.id);
   });
@@ -2338,6 +2340,20 @@ function convItemEl(c) {
     e.stopPropagation();
     openConvMenu(c, e.currentTarget);
   });
+  /* Mobile: long-press a chat to open its options menu. */
+  let lpTimer = null;
+  el.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    lpTimer = setTimeout(() => {
+      lpFired = true;
+      try { navigator.vibrate && navigator.vibrate(10); } catch {}
+      openConvMenu(c, el.querySelector('.conv-menu-btn'));
+    }, 500);
+  }, { passive: true });
+  const lpCancel = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+  el.addEventListener('touchmove', lpCancel, { passive: true });
+  el.addEventListener('touchend', lpCancel, { passive: true });
+  el.addEventListener('touchcancel', lpCancel, { passive: true });
   return el;
 }
 
