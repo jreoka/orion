@@ -3355,6 +3355,18 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
   if (S.runActive) foldLiveWorkLog();
 }
 
+// Paint one streaming token batch. The markdown renderer must never freeze a
+// live stream: on any unexpected failure, fall back to plain text so the words
+// keep flowing.
+function paintTokenContent(contentEl, buf) {
+  try {
+    contentEl.innerHTML = md(buf);
+  } catch (err) {
+    console.warn('[stream] md() threw, using plaintext fallback', err);
+    contentEl.textContent = buf;
+  }
+}
+
 function onBusToken(d) {
   if (!d || d.message_id == null) return;
   markSeen();
@@ -3379,14 +3391,23 @@ function onBusToken(d) {
       foldLiveWorkLog();
     }
   }
-  const contentEl = msgElById(d.message_id)?.querySelector('.content');
-  if (!contentEl) return;
-  contentEl.innerHTML = md(buf);
+  let paintEl = msgElById(d.message_id)?.querySelector('.content');
+  if (!paintEl) {
+    // The row isn't in the DOM (trimmed, folded, or never rendered) — resurrect
+    // it instead of silently dropping tokens. A stream that stops painting
+    // mid-response looks broken even though the data is intact.
+    const fresh = messageEl(msg);
+    $('#messages').appendChild(fresh);
+    trimRenderedTop();
+    paintEl = fresh.querySelector('.content');
+    if (!paintEl) return;
+  }
+  paintTokenContent(paintEl, buf);
   // Exactly one caret: it marks the end of the currently streaming text,
   // sitting after the last word rather than on a line of its own.
   document.querySelectorAll('#messages .caret').forEach((el) => el.classList.remove('caret'));
-  const last = contentEl.lastElementChild;
-  (last && last.tagName === 'P' ? last : contentEl).classList.add('caret');
+  const last = paintEl.lastElementChild;
+  (last && last.tagName === 'P' ? last : paintEl).classList.add('caret');
   keepPlace();
 }
 
