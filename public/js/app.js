@@ -2742,11 +2742,32 @@ function openSidebarDrawer() {
   const b = $('#side-backdrop');
   if (b) b.hidden = false;
 }
-function closeSidebarDrawer() {
+function closeSidebarDrawer(silent) {
   const sb = $('#sidebar');
   if (sb) { sb.classList.remove('open'); sb.style.transform = ''; }
   const b = $('#side-backdrop');
   if (b) b.hidden = true;
+  // Mobile: plant a history entry so the system back button / iOS
+  // swipe-back gesture reopens the drawer instead of leaving the app.
+  if (!silent && window.matchMedia('(max-width: 760px)').matches) {
+    try {
+      if (!history.state || history.state.d !== 1) history.pushState({ d: 1 }, '');
+    } catch {}
+  }
+}
+/* Mobile: back button / swipe-back toggles the drawer. */
+function wireDrawerBackButton() {
+  if (wireDrawerBackButton.done) return;
+  wireDrawerBackButton.done = true;
+  window.addEventListener('popstate', () => {
+    if (!window.matchMedia('(max-width: 760px)').matches) return;
+    const open = $('#sidebar')?.classList.contains('open');
+    if (open) closeSidebarDrawer(true);
+    else {
+      openSidebarDrawer();
+      try { history.pushState({ d: 0 }, ''); } catch {}
+    }
+  });
 }
 /* Mobile: swipe the drawer away. A horizontal drag left on the open drawer
    follows the finger; releasing past 25% dismisses it. Touch events (not
@@ -2806,8 +2827,9 @@ function wireSidebarOnce() {
     else setSidebarCollapsed(!document.body.classList.contains('side-collapsed'));
   });
   $('#compose-btn')?.addEventListener('click', newChat);
-  $('#side-backdrop')?.addEventListener('click', closeSidebarDrawer);
+  $('#side-backdrop')?.addEventListener('click', () => closeSidebarDrawer());
   wireSidebarSwipe();
+  wireDrawerBackButton();
   try {
     if (localStorage.getItem('orion-sidebar-collapsed') === '1') {
       document.body.classList.add('side-collapsed');
