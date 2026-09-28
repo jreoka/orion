@@ -1541,7 +1541,9 @@ async function runToolLoop({
     }
 
     // Weekly token budget: stop before burning another model call.
-    if (isOverLimit(userId)) {
+    // Runs with noUsageCharge (heartbeat) are the system's own overhead —
+    // they don't draw from the quota, so the quota doesn't gate them either.
+    if (!noUsageCharge && isOverLimit(userId)) {
       const note = LIMIT_REACHED_MESSAGE;
       finalText += (finalText ? '\n\n' : '') + note;
       try {
@@ -1595,17 +1597,20 @@ async function runToolLoop({
         throw e;
       }
     }
-    // Attribute this call's tokens to the run's owner (chat, subagent,
-    // task, and heartbeat runs all flow through here). When the provider
-    // omits the usage chunk, usage.js falls back to a chars/4 estimate so
-    // the weekly limit stays enforceable.
+    // Attribute this call's tokens to the run's owner (chat, subagent, and
+    // task runs all flow through here). Heartbeat runs pass noUsageCharge —
+    // the system's background check is its own overhead, not the user's.
+    // When the provider omits the usage chunk, usage.js falls back to a
+    // chars/4 estimate so the weekly limit stays enforceable.
     let completionChars = 0;
     try {
       completionChars = (content || '').length + JSON.stringify(toolCalls || []).length;
     } catch {
       /* ignore */
     }
-    recordUsage(userId, usage, { promptChars: estimatePromptChars(convo), completionChars });
+    if (!noUsageCharge) {
+      recordUsage(userId, usage, { promptChars: estimatePromptChars(convo), completionChars });
+    }
 
     const assistantMsg = { role: 'assistant', content: content || '' };
     if (toolCalls.length) assistantMsg.tool_calls = toolCalls;
@@ -1794,6 +1799,7 @@ async function runToolLoop({
 export async function runAgent({
   userId, conversationId, userText, settings,
   shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle,
+  noUsageCharge, // system-initiated runs (heartbeat) neither count toward nor are gated by the weekly quota
 }) {
   const now = Date.now();
   const info = db
@@ -1805,7 +1811,7 @@ export async function runAgent({
     type: 'message',
     message: { id: userMsgId, role: 'user', content: userText, created_at: now },
   });
-  const r = await runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle });
+  const r = await runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle, noUsageCharge });
   return { ...r, userMsgId };
 }
 
@@ -1873,6 +1879,7 @@ export async function runAgentLoop({
   shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit,
   onExecStart, onExecEnd, // optional: track the in-flight sandbox exec (Stop support)
   noAutoTitle, // system-injected prompts (heartbeat, tasks) must never title a chat
+  noUsageCharge, // system-initiated runs (heartbeat) neither count toward nor are gated by the weekly quota
 }) {
   const deadlineAt = null; // parent runs have no wall-clock cap
   // Default replay cap: the whole conversation is unbounded and callers
@@ -2004,7 +2011,9 @@ export async function runAgentLoop({
 
   // Weekly token budget already spent: don't start the model at all — leave
   // a clear assistant message so the user knows what happened.
-  if (isOverLimit(userId)) {
+  // (noUsageCharge runs — the heartbeat — skip this: the system's own
+  // background check isn't gated by the user's quota.)
+  if (!noUsageCharge && isOverLimit(userId)) {
     const now = Date.now();
     const info = db
       .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')

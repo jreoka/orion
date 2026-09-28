@@ -146,6 +146,7 @@ export async function runHeartbeatFor(userId) {
       systemExtra: HEARTBEAT_SYSTEM_EXTRA,
       historyLimit: 20,
       noAutoTitle: true, // the injected check-in prompt must never title a chat
+      noUsageCharge: true, // the heartbeat is system overhead, not the user's spend
       onExecStart: (execId) => trackExecStart(convId, userId, execId),
       onExecEnd: (execId) => trackExecEnd(convId, execId),
     });
