@@ -12,6 +12,8 @@
    window.innerHeight and re-pin on every resize (rotation, toolbar
    show/hide, keyboard). */
 function fitAppHeight() {
+  // Don't fight the keyboard poller — it owns the height while typing.
+  if (kbPoller) return;
   const app = document.getElementById('app');
   if (app) app.style.height = window.innerHeight + 'px';
 }
