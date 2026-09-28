@@ -12,6 +12,7 @@ import path from 'node:path';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { ensureDockerProxy, proxySockPath, proxySockHostPath } from './docker-proxy.js';
+import { clearUserVault } from './vault.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -437,6 +438,13 @@ export async function removeSandbox(userId) {
 // Stop + remove container and volume, then start over fresh.
 export async function sandboxReset(userId) {
   await removeSandbox(userId);
+  // A fresh sandbox must not inherit old secrets: wipe the user's vault
+  // too (items + pending requests). The global vault key is untouched.
+  try {
+    clearUserVault(userId);
+  } catch (e) {
+    console.warn('[orion] sandbox reset: vault wipe failed:', e?.message || e);
+  }
   return ensureSandbox(userId);
 }
 

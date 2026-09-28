@@ -134,6 +134,19 @@ export function deleteVaultItem(userId, id) {
   return info.changes > 0;
 }
 
+/**
+ * Wipe a user's entire vault (all stored items) and expire their pending
+ * requests. Used by sandbox reset — a fresh sandbox shouldn't inherit old
+ * secrets, and a stale request iframe must not re-populate the vault
+ * right after the wipe. The global vault key is untouched (rotating it
+ * would invalidate every other user's items on this box).
+ */
+export function clearUserVault(userId) {
+  const items = db.prepare('DELETE FROM vault_items WHERE user_id = ?').run(userId);
+  db.prepare(`UPDATE vault_requests SET status = 'expired' WHERE user_id = ? AND status = 'pending'`).run(userId);
+  return items.changes;
+}
+
 /** Server-side only: resolve one handle to its plaintext value. */
 export function getVaultSecret(userId, id) {
   const row = db
