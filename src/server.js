@@ -1805,6 +1805,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   // Start Docker-proxy sockets for every user that has a sandbox, so the
   // filtering proxy is listening even before their first agent run after
   // a server restart (the socket files persist, the listeners don't).
+  console.log('[orion] starting docker proxies for existing sandboxes...');
   try {
     // Scan for existing sandbox volumes via Docker (push subscriptions
     // aren't the source of truth for sandboxes).
@@ -1812,12 +1813,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const docker = new Docker({ socketPath: '/var/run/docker.sock' });
     const vols = await docker.listVolumes().catch(() => ({ Volumes: [] }));
     const seen = new Set();
+    console.log('[orion] docker proxy scan found volumes:', (vols.Volumes || []).map((v) => v.Name).join(','));
     for (const v of vols.Volumes || []) {
       const m = String(v.Name || '').match(/^orion-u(\d+)-data$/);
       if (m && !seen.has(m[1])) {
         seen.add(m[1]);
-        ensureDockerProxy(Number(m[1])).catch((e) =>
-          console.warn('[orion] docker proxy start failed for u' + m[1], e?.message || e)
+        console.log('[orion] starting docker proxy for u' + m[1]);
+        ensureDockerProxy(Number(m[1])).then(
+          () => console.log('[orion] docker proxy listening for u' + m[1]),
+          (e) => console.warn('[orion] docker proxy start failed for u' + m[1], e?.message || e)
         );
       }
     }
