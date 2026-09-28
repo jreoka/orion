@@ -132,12 +132,16 @@ export async function ensureSandbox(userId) {
     // never use privileged mode, host-path mounts, or other users'
     // containers. See src/docker-proxy.js. The raw host socket never enters
     // the sandbox.
-    // Bind source must be the HOST path (Docker resolves binds on the host).
-    const proxySockHost = proxySockHostPath(userId);
+    // Mount the proxy DIRECTORY (not the socket file): bind-mounts of a
+    // directory follow path resolution, so when the proxy recreates its
+    // socket after a server restart, the sandbox sees the new socket.
+    // A direct file mount would pin the old (dead) inode.
+    // DOCKER_HOST tells the in-sandbox `docker` CLI which socket to use.
+    const proxyHostDir = proxySockHostPath(userId).replace(/\/u\d+\.sock$/, '');
     const baseHostConfig = {
       Memory: 2 * 1024 ** 3, // 2 GB
       NanoCpus: 1_000_000_000, // 1 CPU
-      Binds: [`${vname}:${WORKDIR}`, `${proxySockHost}:${SOCK}`],
+      Binds: [`${vname}:${WORKDIR}`, `${proxyHostDir}:/docker-proxy:ro`],
       PidsLimit: 256,
       CapDrop: ['ALL'],
       SecurityOpt: ['no-new-privileges:true'],
@@ -154,6 +158,7 @@ export async function ensureSandbox(userId) {
         Image: SANDBOX_IMAGE,
         Cmd: ['sleep', 'infinity'],
         Tty: false,
+        Env: [`DOCKER_HOST=unix:///docker-proxy/u${Number(userId)}.sock`],
         HostConfig,
       });
     let container;
@@ -184,9 +189,9 @@ export async function ensureSandbox(userId) {
   try {
     const info = await container.inspect();
     const binds = info?.HostConfig?.Binds || [];
-    // The docker.sock bind must be the per-user filtering proxy — a bind of
-    // the raw host socket (pre-proxy containers) forces a recreate.
-    const expectSock = proxySockHostPath(userId);
+    // The proxy directory must be mounted (not the raw host socket) —
+    // a stale file-mount or raw socket forces a recreate.
+    const expectSock = proxySockHostPath(userId).replace(/\/u\d+\.sock$/, '');
     const needsRecreate =
       !binds.some((b) => String(b).split(':')[0] === expectSock) ||
       info?.HostConfig?.Init !== true;
