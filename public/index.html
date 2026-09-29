@@ -187,7 +187,13 @@
           <h1>Administration</h1>
         </header>
 
-        <div class="card">
+        <nav class="auth-tabs admin-tabs" id="admin-tabs">
+          <button type="button" class="auth-tab active" data-atab="provider">AI provider</button>
+          <button type="button" class="auth-tab" data-atab="limits">Limits</button>
+          <button type="button" class="auth-tab" data-atab="users">Users</button>
+        </nav>
+
+        <div class="card" id="admin-card-provider">
           <h2>AI provider</h2>
           <p class="muted small">One model and key for everyone. Users never see the key.</p>
           <form id="provider-form">
@@ -220,7 +226,7 @@
           </form>
         </div>
 
-        <div class="card">
+        <div class="card" id="admin-card-limits" hidden>
           <h2>Limits &amp; login captcha</h2>
           <p class="muted small">The allowance every new account starts with, and the Cloudflare Turnstile captcha shown on the sign-in / sign-up screen.</p>
           <form id="limits-form">
@@ -246,7 +252,7 @@
           </form>
         </div>
 
-        <div class="card">
+        <div class="card" id="admin-card-users" hidden>
           <h2>Users</h2>
           <div class="table-wrap">
             <table class="users-table">

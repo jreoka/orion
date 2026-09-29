@@ -3898,6 +3898,27 @@ async function renderAdmin() {
   await Promise.all([loadProviderSettings(), loadAdminUsers()]);
   wireProviderFormOnce();
   wireLimitsFormOnce();
+  wireAdminTabsOnce();
+}
+
+/* Admin tabs: provider / limits / users each get their own page. */
+let adminTabsWired = false;
+function wireAdminTabsOnce() {
+  if (adminTabsWired) return;
+  adminTabsWired = true;
+  const tabs = document.querySelectorAll('#admin-tabs .auth-tab');
+  const cards = {
+    provider: $('#admin-card-provider'),
+    limits: $('#admin-card-limits'),
+    users: $('#admin-card-users'),
+  };
+  tabs.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.atab;
+      tabs.forEach(b => b.classList.toggle('active', b === btn));
+      Object.entries(cards).forEach(([k, card]) => { card.hidden = k !== key; });
+    });
+  });
 }
 
 async function loadProviderSettings() {
