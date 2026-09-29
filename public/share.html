@@ -68,10 +68,12 @@
     background: rgba(250, 247, 240, .32); color: #fff; font-size: 20px; font-weight: 700;
     display: flex; align-items: center; justify-content: center; line-height: 1; padding: 0 0 2px; }
   #lb-close:hover { background: rgba(250, 247, 240, .45); }
-  .chip { display: inline-flex; align-items: center; gap: 8px; font-family: var(--sans); font-size: 13.5px; color: var(--accent);
+  .chip { display: inline-flex; align-items: center; gap: 8px; font-family: var(--sans); font-size: 13.5px; color: var(--ink-2);
     border: 1px solid var(--hairline); border-radius: 999px; padding: 8px 14px; text-decoration: none; margin: .25em .35em .25em 0; }
   .chip svg { display: block; flex-shrink: 0; }
   .chip:hover { border-color: var(--ink-3); }
+  /* Your own bubbles: chips inherit the bubble text color, like the main chat. */
+  .m-user .chip { color: inherit; }
   .worklog { border: 1px solid var(--hairline); border-radius: 12px; background: var(--lift);
     padding: 4px 18px; margin: .2em 0; font-family: var(--sans); }
   .worklog > summary { list-style: none; display: flex; align-items: baseline; gap: 8px; cursor: pointer;
@@ -82,11 +84,12 @@
   .worklog .wl-body { display: flex; flex-direction: column; gap: 20px; padding: 2px 0 14px; }
   /* Per-message copy button, mirroring the main chat's hover/hold affordance
      (copy only — no react or reply on the read-only share page). */
-  .m-copyrow { display: flex; height: 0; overflow: visible; transition: height .18s ease; }
+  .m-user, .m-assistant { -webkit-touch-callout: none; } /* no native iOS Copy bubble on long-press */
+  .m-copyrow { display: flex; height: 0; overflow: visible; transition: height .18s ease, margin-top .18s ease; }
   .m-copyrow.ur { justify-content: flex-end; }
   .msg-copy {
     display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
-    width: 32px; height: 32px; padding: 0; margin-top: 8px;
+    width: 32px; height: 32px; padding: 0; margin-top: 6px;
     border-radius: 50%; border: 1px solid var(--hairline);
     background: var(--lift); color: var(--ink-2); cursor: pointer;
     box-shadow: 0 2px 6px rgba(28, 24, 19, .18);
@@ -96,12 +99,12 @@
   .msg-copy:hover { color: var(--ink); border-color: var(--ink-3); }
   @media (hover: hover) {
     .m-user:hover + .m-copyrow, .m-assistant:hover + .m-copyrow,
-    .m-copyrow:hover, .m-copyrow.show { height: 42px; }
+    .m-copyrow:hover, .m-copyrow.show { height: 38px; margin-top: -18px; }
     .m-user:hover + .m-copyrow .msg-copy, .m-assistant:hover + .m-copyrow .msg-copy,
     .m-copyrow:hover .msg-copy, .m-copyrow.show .msg-copy { opacity: 1; pointer-events: auto; }
   }
   @media (hover: none) {
-    .m-copyrow.show { height: 42px; }
+    .m-copyrow.show { height: 38px; margin-top: -18px; }
     .m-copyrow.show .msg-copy { opacity: 1; pointer-events: auto; }
   }
   .err { text-align: center; padding: 80px 20px; color: var(--ink-2); }
@@ -238,6 +241,7 @@
     if (!msg) return;
     pressTimer = setTimeout(() => {
       pressTimer = null;
+      try { navigator.vibrate && navigator.vibrate(10); } catch (e) { /* ignore */ }
       root.querySelectorAll('.m-copyrow.show').forEach((r) => r.classList.remove('show'));
       const row = msg.nextElementSibling;
       if (row && row.classList.contains('m-copyrow')) row.classList.add('show');
