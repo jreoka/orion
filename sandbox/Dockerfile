@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # `agent` user can import them without pip install.
 RUN pip3 install --no-cache-dir --break-system-packages \
         numpy scipy \
-        torch --index-url https://download.pytorch.org/whl/cpu \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        torch \
     && python3 -c "import numpy, torch; print('numpy', numpy.__version__, '| torch', torch.__version__)"
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
