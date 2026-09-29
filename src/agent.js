@@ -697,9 +697,12 @@ const EXEC_DANGER_PATTERNS = [
   { re: /\brm\b[^;|&]*--no-preserve-root|\brm\s+(-[a-z]*r[a-z]*|--recursive)\b[^;|&]*\/\s*(;|$)/i, reason: 'recursive delete of filesystem root' },
   { re: /\bmkfs(\.\w+)?\s+\/dev\//i, reason: 'filesystem format of a block device' },
   { re: /\bdd\s+[^;|&]*\bof=\/dev\//i, reason: 'raw write to a block device' },
-  { re: /\b(xmrig|minergate|cpuminer|cgminer|bfgminer|ethminer|nbminer|t-rex)\b/i, reason: 'crypto miner reference' },
+  { re: /\b(xmrig|minergate|cpuminer|cgminer|bfgminer|ethminer|nbminer|t-rex|phoenixminer|lolminer|srbminer|wildrig|nanominer)\b/i, reason: 'crypto miner reference' },
   { re: /--donate-level/i, reason: 'miner flag' },
+  { re: /\bstratum\+tcp:\/\//i, reason: 'mining pool connection' },
   { re: /curl.+\|\s*(bash|sh)\s*$/im, reason: 'piped remote script execution' },
+  { re: /\b(nmap|masscan|zmap|hping3)\b/i, reason: 'network scanning tool' },
+  { re: /\b(hydra|john|hashcat|medusa|ncrack)\b/i, reason: 'password cracking tool' },
 ];
 
 export function screenExecCommand(command) {
