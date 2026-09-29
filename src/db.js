@@ -114,6 +114,10 @@ addColumn('conversations', 'task_id', 'INTEGER');
 // find runs that were in flight when the server went down and resume them.
 addColumn('conversations', 'run_state', "TEXT NOT NULL DEFAULT 'idle'");
 addColumn('messages', 'kind', "TEXT NOT NULL DEFAULT 'message'");
+// Archiving: archived chats leave the sidebar but stay fully stored —
+// viewable/searchable/deletable from the archive view, restorable via unarchive.
+addColumn('conversations', 'archived', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('conversations', 'archived_at', 'INTEGER');
 // Phase 3: abuse lock + weekly token limits.
 // NOTE: weekly_token_limit is deliberately NULLABLE — NULL means unlimited
 // (see setWeeklyLimit in usage.js). It must never be NOT NULL.

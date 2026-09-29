@@ -483,7 +483,7 @@ function conversationPayload(conv, limit = 80) {
       : false
     : false;
   return {
-    conversation: { id: conv.id, title: conv.title, kind: conv.kind, task_id: conv.task_id, created_at: conv.created_at, updated_at: conv.updated_at },
+    conversation: { id: conv.id, title: conv.title, kind: conv.kind, task_id: conv.task_id, created_at: conv.created_at, updated_at: conv.updated_at, archived: !!conv.archived, archived_at: conv.archived_at || null },
     messages,
     hasMoreOlder,
     running: isRunLocked(conv.id),
@@ -576,7 +576,24 @@ app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
 
 app.get('/api/conversations', requireAuth, (req, res) => {
   const rows = db
-    .prepare("SELECT id, title, kind, task_id, created_at, updated_at FROM conversations WHERE user_id = ? AND kind != 'heartbeat' ORDER BY updated_at DESC")
+    .prepare("SELECT id, title, kind, task_id, created_at, updated_at FROM conversations WHERE user_id = ? AND kind != 'heartbeat' AND archived = 0 ORDER BY updated_at DESC")
+    .all(req.user.id)
+    .map((c) => ({ ...c, running: isRunLocked(c.id) }));
+  res.json(rows);
+});
+
+// Archived chats: hidden from the sidebar, listed here newest-archived-first
+// with a message count for the archive view. (Registered before /:id so
+// "archived" isn't swallowed as an id.)
+app.get('/api/conversations/archived', requireAuth, (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT c.id, c.title, c.kind, c.task_id, c.created_at, c.updated_at, c.archived_at,
+         (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.role != 'tool') AS message_count
+       FROM conversations c
+       WHERE c.user_id = ? AND c.kind != 'heartbeat' AND c.archived = 1
+       ORDER BY c.archived_at DESC`
+    )
     .all(req.user.id)
     .map((c) => ({ ...c, running: isRunLocked(c.id) }));
   res.json(rows);
@@ -588,6 +605,9 @@ app.get('/api/conversations', requireAuth, (req, res) => {
 app.get('/api/conversations/search', requireAuth, (req, res) => {
   const q = (req.query.q || '').trim().slice(0, 120);
   if (q.length < 2) return res.json([]);
+  // archived=1 scopes the search to archived chats (the archive view's
+  // search box); default searches active chats only.
+  const archivedOnly = req.query.archived === '1';
   const like = `%${q.replace(/[\\%_]/g, (m) => '\\' + m)}%`;
   const rows = db
     .prepare(
@@ -598,6 +618,7 @@ app.get('/api/conversations/search', requireAuth, (req, res) => {
        FROM conversations c
        WHERE c.user_id = ?
          AND c.kind != 'heartbeat'
+         AND c.archived = ${archivedOnly ? 1 : 0}
          AND (c.title LIKE ? ESCAPE '\\' OR EXISTS (
            SELECT 1 FROM messages m2
            WHERE m2.conversation_id = c.id AND m2.content LIKE ? ESCAPE '\\'))
@@ -616,6 +637,7 @@ app.post('/api/conversations', requireAuth, (req, res) => {
       `SELECT c.id, c.title, c.kind, c.created_at, c.updated_at FROM conversations c
        WHERE c.user_id = ?
          AND c.kind = 'chat'
+         AND c.archived = 0
          AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id)
        ORDER BY c.updated_at DESC LIMIT 1`
     )
@@ -646,6 +668,44 @@ app.patch('/api/conversations/:id', requireAuth, asyncRoute(async (req, res) => 
   publishToUser(req.user.id, { type: 'conversations_changed' }); // renamed elsewhere: refresh sidebars
   res.json({ ok: true, title });
 }));
+
+// ---- archiving --------------------------------------------------------------
+// Archived chats leave the sidebar but stay fully stored: viewable from the
+// archive view, searchable there, restorable via unarchive, deletable
+// individually or all at once. Archiving never stops an in-flight run —
+// the chat simply hides; the run finishes and its results wait in the archive.
+
+// Delete ALL archived chats (with messages, attachments, files, shares).
+// Registered before /:id so "archived" isn't swallowed as an id.
+app.delete('/api/conversations/archived', requireAuth, (req, res) => {
+  const rows = db
+    .prepare("SELECT id FROM conversations WHERE user_id = ? AND kind != 'heartbeat' AND archived = 1")
+    .all(req.user.id);
+  for (const r of rows) {
+    deleteConversation(r.id);
+    publishToUser(req.user.id, { type: 'conversation_deleted', conversation_id: r.id });
+  }
+  publishToUser(req.user.id, { type: 'conversations_changed' });
+  res.json({ ok: true, deleted: rows.length });
+});
+
+app.post('/api/conversations/:id/archive', requireAuth, (req, res) => {
+  const conv = getConv(req.params.id, req.user.id);
+  if (!conv) return res.status(404).json({ error: 'Not found' });
+  if (conv.kind === 'heartbeat' || conv.archived) return res.json({ ok: true, archived: !!conv.archived });
+  db.prepare('UPDATE conversations SET archived = 1, archived_at = ? WHERE id = ?').run(Date.now(), conv.id);
+  publishToUser(req.user.id, { type: 'conversations_changed' }); // drop the row on other devices
+  res.json({ ok: true, archived: true });
+});
+
+app.post('/api/conversations/:id/unarchive', requireAuth, (req, res) => {
+  const conv = getConv(req.params.id, req.user.id);
+  if (!conv) return res.status(404).json({ error: 'Not found' });
+  if (!conv.archived) return res.json({ ok: true, archived: false });
+  db.prepare('UPDATE conversations SET archived = 0, archived_at = NULL, updated_at = ? WHERE id = ?').run(Date.now(), conv.id);
+  publishToUser(req.user.id, { type: 'conversations_changed' }); // restore the row on other devices
+  res.json({ ok: true, archived: false });
+});
 
 // ---- deletion helpers --------------------------------------------------------
 // Uploads live at files/uploads/<userId>/<uuid> and avatars at

@@ -126,6 +126,7 @@ const S = {
   switching: false,   // a conversation switch is in flight
   messages: [],        // [{id, role, content, attachments}]
   runActive: false,    // an agent run is in flight for the open conversation
+  activeArchived: false, // the open conversation is archived (read-only banner, composer hidden)
   evt: null,           // EventSource for the open conversation's event bus
   userEvt: null,       // EventSource for the per-user event bus (usage updates)
   userEvtPoll: null,   // safety-net interval re-syncing the conversation list
@@ -2537,12 +2538,13 @@ function openConvMenu(conv, anchor) {
   menu.innerHTML = `
     <button data-act="share">Share</button>
     <button data-act="rename">Rename</button>
+    <button data-act="archive">Archive</button>
     <button data-act="delete" class="danger">Delete</button>`;
   document.body.appendChild(menu);
   const r = anchor.getBoundingClientRect();
   menu.style.position = 'fixed';
   menu.style.zIndex = 120;
-  menu.style.top = Math.min(window.innerHeight - 130, r.bottom + 6) + 'px';
+  menu.style.top = Math.min(window.innerHeight - 150, r.bottom + 6) + 'px';
   menu.style.left = Math.max(8, Math.min(window.innerWidth - 220, r.left - 170)) + 'px';
   menu.style.right = 'auto';
   menu.addEventListener('click', (e) => {
@@ -2551,6 +2553,7 @@ function openConvMenu(conv, anchor) {
     closeConvMenu();
     if (act === 'rename') renameChatModal(conv);
     else if (act === 'share') shareChatModal(conv);
+    else if (act === 'archive') archiveChat(conv);
     else if (act === 'delete') deleteChatModal(conv);
   });
   setTimeout(() => document.addEventListener('click', closeConvMenu, { once: true }), 0);
@@ -2614,6 +2617,7 @@ function deleteChatModal(conv) {
       delete S.pendingByConv[conv.id];
       toast('Chat deleted');
       await loadConversationsQuiet();
+      if (!$('#archive-overlay')?.hidden) loadArchiveList($('#archive-input')?.value || '');
       if (conv.id === S.activeId) {
         const next = S.conversations[0];
         if (next) await switchConversation(next.id);
@@ -2623,9 +2627,11 @@ function deleteChatModal(conv) {
           closeEventStream();
           setRunActive(false); // no stream left to deliver run_ended; clear Stop now
           S.activeId = null;
+          S.activeArchived = false;
           try { localStorage.removeItem('orion-active-chat'); } catch {}
           setMessages({ messages: [], hasMoreOlder: false });
           renderMessages();
+          paintArchivedState();
           renderAttachTray();
           updateComposer();
         }
@@ -2635,6 +2641,194 @@ function deleteChatModal(conv) {
 }
 
 function shareUrlFor(token) { return `${location.origin}/s/${token}`; }
+
+// ---- archiving ---------------------------------------------------------------
+// Archived chats leave the sidebar but stay fully stored. Archiving never
+// stops an in-flight run — the chat just hides; results wait in the archive.
+async function archiveChat(conv) {
+  try {
+    await api(`/api/conversations/${conv.id}/archive`, { method: 'POST' });
+    toast('Chat archived');
+    await loadConversationsQuiet();
+    if (conv.id === S.activeId) {
+      const next = S.conversations[0];
+      if (next) await switchConversation(next.id);
+      else {
+        // Last chat archived: land on the empty state, like delete.
+        closeEventStream();
+        setRunActive(false);
+        S.activeId = null;
+        S.activeArchived = false;
+        try { localStorage.removeItem('orion-active-chat'); } catch {}
+        setMessages({ messages: [], hasMoreOlder: false });
+        renderMessages();
+        paintArchivedState();
+        renderAttachTray();
+        updateComposer();
+      }
+    }
+  } catch (ex) { toast(ex.message || 'Archive failed', 'error'); }
+}
+
+async function unarchiveChat(id) {
+  try {
+    await api(`/api/conversations/${id}/unarchive`, { method: 'POST' });
+    toast('Chat unarchived');
+    await loadConversationsQuiet();
+    return true;
+  } catch (ex) { toast(ex.message || 'Unarchive failed', 'error'); return false; }
+}
+
+// Read-only banner + hidden composer while the open chat is archived.
+function paintArchivedState() {
+  const archived = !!S.activeArchived;
+  const banner = $('#archived-banner');
+  if (banner) banner.hidden = !archived;
+  const wrap = document.querySelector('.composer-wrap');
+  if (wrap) wrap.hidden = archived;
+}
+
+// ---- archive overlay (floating window) ---------------------------------------
+let archiveRows = [];
+let archiveTimer = null;
+
+function openArchive() {
+  closeSidebarDrawer();
+  const ov = $('#archive-overlay');
+  if (!ov) return;
+  ov.hidden = false;
+  const input = $('#archive-input');
+  if (input) { input.value = ''; setTimeout(() => input.focus(), 0); }
+  loadArchiveList('');
+}
+
+function closeArchive() {
+  const ov = $('#archive-overlay');
+  if (ov) ov.hidden = true;
+  clearTimeout(archiveTimer);
+  $('#archive-input')?.blur();
+}
+
+async function loadArchiveList(q) {
+  q = (q || '').trim();
+  const box = $('#archive-results');
+  try {
+    archiveRows = q.length >= 2
+      ? await api('/api/conversations/search?q=' + encodeURIComponent(q) + '&archived=1')
+      : await api('/api/conversations/archived');
+    if (!Array.isArray(archiveRows)) archiveRows = [];
+  } catch {
+    archiveRows = [];
+  }
+  paintArchiveList(q);
+}
+
+function archiveMeta(r) {
+  const parts = [];
+  if (typeof r.message_count === 'number') parts.push(r.message_count + (r.message_count === 1 ? ' message' : ' messages'));
+  const t = r.archived_at || r.updated_at;
+  if (t) parts.push('archived ' + timeAgo(t));
+  return parts.join(' · ');
+}
+
+function paintArchiveList(q) {
+  const box = $('#archive-results');
+  if (!box) return;
+  if (!archiveRows.length) {
+    box.innerHTML = '<div class="search-hint">' +
+      (q && q.length >= 2 ? 'No archived chats match.' : 'No archived chats yet.') + '</div>';
+    return;
+  }
+  box.innerHTML = '';
+  archiveRows.forEach((r) => {
+    const row = document.createElement('div');
+    row.className = 'arch-item';
+    row.setAttribute('role', 'option');
+    row.innerHTML =
+      '<button class="arch-open">' +
+        '<div class="s-title">' + highlightMatch(r.title || 'New chat', q) + '</div>' +
+        (r.snippet ? '<div class="s-snippet">' + highlightMatch(r.snippet, q) + '</div>' : '') +
+        '<div class="s-meta">' + esc(archiveMeta(r)) + '</div>' +
+      '</button>' +
+      '<div class="arch-actions">' +
+        '<button class="icon-btn arch-unarchive" aria-label="Unarchive" title="Unarchive">' +
+          '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 4v10m0 0l-4-4m4 4l4-4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v4.5h16V15" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>' +
+        '</button>' +
+        '<button class="icon-btn danger arch-delete" aria-label="Delete" title="Delete">' +
+          '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2m-8 0l1 13h8l1-13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+        '</button>' +
+      '</div>';
+    row.querySelector('.arch-open').addEventListener('click', () => {
+      closeArchive();
+      switchConversation(r.id);
+    });
+    row.querySelector('.arch-unarchive').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (await unarchiveChat(r.id)) loadArchiveList($('#archive-input')?.value || '');
+    });
+    row.querySelector('.arch-delete').addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteChatModal({ id: r.id, title: r.title });
+    });
+    box.appendChild(row);
+  });
+}
+
+function clearArchiveModal() {
+  const n = archiveRows.length;
+  const bd = openModal(`
+    <h3>Delete all archived chats?</h3>
+    <p class="muted">This permanently removes ${n} archived chat${n === 1 ? '' : 's'} and all of their messages. This can't be undone.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn" data-x="cancel">Cancel</button>
+      <button type="button" class="btn danger-ghost" id="arch-clear-confirm">Delete all</button>
+    </div>`);
+  bd.querySelector('[data-x=cancel]').onclick = closeModal;
+  bd.querySelector('#arch-clear-confirm').onclick = async () => {
+    try {
+      const res = await api('/api/conversations/archived', { method: 'DELETE' });
+      closeModal();
+      toast(`Cleared ${res.deleted || 0} archived chat${(res.deleted || 0) === 1 ? '' : 's'}`);
+      await loadConversationsQuiet();
+      loadArchiveList($('#archive-input')?.value || '');
+    } catch (ex) { toast(ex.message || 'Clear failed', 'error'); }
+  };
+}
+
+function wireArchiveOnce() {
+  if (wireArchiveOnce.done) return;
+  wireArchiveOnce.done = true;
+  $('#archive-btn')?.addEventListener('click', openArchive);
+  $('#archive-close')?.addEventListener('click', closeArchive);
+  $('#archive-overlay')?.addEventListener('mousedown', (e) => {
+    if (e.target.id === 'archive-overlay') closeArchive();
+  });
+  $('#archive-clear')?.addEventListener('click', () => {
+    if (archiveRows.length) clearArchiveModal();
+    else toast('Nothing to clear');
+  });
+  const input = $('#archive-input');
+  if (input) {
+    input.addEventListener('input', () => {
+      clearTimeout(archiveTimer);
+      archiveTimer = setTimeout(() => loadArchiveList(input.value), 200);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeArchive();
+    });
+  }
+  $('#archived-unarchive')?.addEventListener('click', async () => {
+    if (!S.activeId) return;
+    if (await unarchiveChat(S.activeId)) {
+      S.activeArchived = false;
+      paintArchivedState();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    const ov = $('#archive-overlay');
+    if (e.key === 'Escape' && ov && !ov.hidden) closeArchive();
+  });
+}
 
 async function shareChatModal(conv) {
   const bd = openModal(`
@@ -2829,6 +3023,8 @@ async function switchConversation(id) {
     if (data.running) S.runByConv[id] = true;
     else delete S.runByConv[id];
     setMessages(data);
+    S.activeArchived = !!data.conversation?.archived;
+    paintArchivedState();
     S.lastSeenAt[id] = Date.now();
     // Opening the chat dismisses its "run finished" check.
     if (S.doneByConv[id]) { delete S.doneByConv[id]; saveDoneFlags(); }
@@ -2945,6 +3141,7 @@ function wireSidebarOnce() {
   $('#new-chat-btn')?.addEventListener('click', newChat);
   $('#search-btn')?.addEventListener('click', openSearch);
   wireSearchOnce();
+  wireArchiveOnce();
   $('#menu-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
     if (window.matchMedia('(max-width: 760px)').matches) openSidebarDrawer();
@@ -3017,6 +3214,8 @@ async function renderChat() {
         const data = await api(`/api/conversations/${openId}`);
         S.activeId = openId;
         setMessages(data);
+        S.activeArchived = !!data.conversation?.archived;
+        paintArchivedState();
         // Seed both flags from the fresh payload: update notes rendered
         // below need S.runActive for their live-run marker, and the fold
         // pass must skip the in-flight run. The SSE hello corrects it
@@ -3024,6 +3223,8 @@ async function renderChat() {
         if (data.running) { S.runActive = true; S.runByConv[S.activeId] = true; }
       } else {
         S.activeId = null;
+        S.activeArchived = false;
+        paintArchivedState();
         setMessages({ messages: [], hasMoreOlder: false });
       }
     } catch {
@@ -3422,6 +3623,8 @@ async function onConversationDeleted(rawId) {
       if (next) await switchConversation(next.id);
       else {
         setMessages({ messages: [], hasMoreOlder: false });
+        S.activeArchived = false;
+        paintArchivedState();
         renderMessages();
         renderAttachTray();
         updateComposer();

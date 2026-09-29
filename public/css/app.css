@@ -515,6 +515,72 @@ button.avatar.lg:hover { opacity: .85; }
 @media (max-width: 640px) {
   #search-overlay { padding: 8vh 12px 12px; }
 }
+
+/* ---------- archive ---------- */
+.archive-btn {
+  display: flex; align-items: center; gap: 10px;
+  margin: 4px 8px 8px; padding: 10px 12px;
+  border: 1px solid var(--hairline); border-radius: 12px;
+  background: none; color: var(--ink-2); font: inherit; font-size: 13.5px;
+  cursor: pointer; text-align: left; flex-shrink: 0;
+}
+.archive-btn:hover { background: var(--paper-2); color: var(--ink); }
+.archive-btn svg { flex-shrink: 0; }
+#archive-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(28, 24, 19, .38);
+  display: flex; justify-content: center; align-items: flex-start;
+  padding: 12vh 16px 16px;
+}
+#archive-overlay[hidden] { display: none; }
+#archive-modal {
+  width: 100%; max-width: 600px; max-height: 70vh;
+  display: flex; flex-direction: column;
+  background: var(--lift);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  box-shadow: 0 24px 70px rgba(30, 25, 18, .28);
+  overflow: hidden;
+  animation: pop .16s var(--ease);
+}
+.archive-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px 4px;
+}
+.archive-head h3 { margin: 0; font-size: 17px; }
+.archive-head-actions { display: flex; align-items: center; gap: 8px; }
+#archive-results { overflow-y: auto; padding: 6px; }
+.arch-item {
+  display: flex; align-items: center; gap: 4px;
+  border-radius: 10px; padding: 4px 6px;
+}
+.arch-item:hover { background: var(--paper-2); }
+.arch-open {
+  flex: 1; min-width: 0; text-align: left; cursor: pointer;
+  border: none; background: none; border-radius: 8px;
+  padding: 8px 6px; color: var(--ink); font: inherit;
+}
+.arch-open .s-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arch-open .s-snippet { font-size: 13px; color: var(--ink-2); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.arch-open .s-meta { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; }
+.arch-open mark { background: none; color: var(--accent); font-weight: 700; }
+.arch-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.arch-actions .icon-btn { width: 34px; height: 34px; color: var(--ink-3); }
+.arch-actions .icon-btn:hover { color: var(--ink); background: var(--paper-3, rgba(0,0,0,.05)); }
+.arch-actions .icon-btn.danger:hover { color: var(--danger); }
+/* Read-only banner shown while the open chat is archived. */
+.archived-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 10px 16px 0; padding: 10px 14px;
+  border: 1px solid var(--hairline); border-radius: 12px;
+  background: var(--paper-2); color: var(--ink-2);
+  font-family: var(--sans); font-size: 13px;
+}
+.archived-banner[hidden] { display: none; }
+.composer-wrap[hidden] { display: none; }
+@media (max-width: 640px) {
+  #archive-overlay { padding: 8vh 12px 12px; }
+}
 #side-backdrop {
   position: fixed; inset: 0; background: rgba(28, 24, 19, .35); z-index: 90;
 }

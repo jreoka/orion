@@ -95,6 +95,10 @@
           </div>
         </div>
         <div id="conv-list" class="conv-list" role="list"></div>
+        <button id="archive-btn" class="archive-btn" aria-label="Archived chats" title="Archived chats">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 9v10.5h14V9M10 13h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Archived chats</span>
+        </button>
         <div id="usage-box" class="usage-box" hidden>
           <div class="usage-head">
             <span class="usage-label">Weekly usage</span>
@@ -137,6 +141,10 @@
           <button id="push-nudge-dismiss" class="icon-btn" aria-label="Dismiss">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
           </button>
+        </div>
+        <div id="archived-banner" class="archived-banner" hidden>
+          <span>This chat is archived — it's read-only until you unarchive it.</span>
+          <button id="archived-unarchive" class="btn small">Unarchive</button>
         </div>
         <div id="messages" class="messages" aria-live="polite"></div>
         <div id="turn-rail" hidden aria-hidden="true"><div class="rail-track"></div></div>
@@ -370,6 +378,25 @@
         <kbd>esc</kbd>
       </div>
       <div id="search-results" role="listbox" aria-label="Search results"></div>
+    </div>
+  </div>
+
+  <!-- Archived chats (floating window) -->
+  <div id="archive-overlay" hidden>
+    <div id="archive-modal" role="dialog" aria-modal="true" aria-label="Archived chats">
+      <div class="archive-head">
+        <h3>Archived chats</h3>
+        <div class="archive-head-actions">
+          <button id="archive-clear" class="btn danger-ghost small">Clear all</button>
+          <button id="archive-close" class="icon-btn" aria-label="Close">✕</button>
+        </div>
+      </div>
+      <div class="search-bar">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" fill="none"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="archive-input" type="text" placeholder="Search archived chats…" autocomplete="off" spellcheck="false" aria-label="Search archived chats">
+        <kbd>esc</kbd>
+      </div>
+      <div id="archive-results" role="listbox" aria-label="Archived chats"></div>
     </div>
   </div>
 
