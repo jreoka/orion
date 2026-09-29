@@ -134,6 +134,13 @@ export function deleteVaultItem(userId, id) {
   return info.changes > 0;
 }
 
+export function renameVaultItem(userId, id, label) {
+  const clean = String(label || '').trim().slice(0, 120);
+  if (!clean) return false;
+  const info = db.prepare('UPDATE vault_items SET label = ? WHERE id = ? AND user_id = ?').run(clean, String(id), userId);
+  return info.changes > 0;
+}
+
 /**
  * Wipe a user's entire vault (all stored items) and expire their pending
  * requests. Used by sandbox reset — a fresh sandbox shouldn't inherit old

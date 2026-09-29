@@ -52,6 +52,7 @@ import {
   fulfillVaultRequest,
   listVaultItems,
   deleteVaultItem,
+  renameVaultItem,
   pruneExpiredRequests,
 } from './vault.js';
 import { runConversation, startRunIfIdle, abortRun, recoverStrandedRuns, setShuttingDown } from './runs.js';
@@ -1442,6 +1443,11 @@ app.get('/api/vault/items', requireAuth, (req, res) => {
 
 app.delete('/api/vault/items/:id', requireAuth, (req, res) => {
   if (!deleteVaultItem(req.user.id, req.params.id)) throw httpError(404, 'Vault item not found');
+  res.json({ ok: true });
+});
+
+app.patch('/api/vault/items/:id', requireAuth, (req, res) => {
+  if (!renameVaultItem(req.user.id, req.params.id, req.body?.label)) throw httpError(404, 'Vault item not found');
   res.json({ ok: true });
 });
 

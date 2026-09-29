@@ -31,6 +31,7 @@ import {
   createVaultRequest,
   listVaultItems,
   deleteVaultItem,
+  renameVaultItem,
   resolveVaultEnv,
   redactSecrets,
 } from './vault.js';
@@ -67,7 +68,7 @@ Your tools:
 - schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in the main chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
   - Waiting on the user to do something OUTSIDE chat (OAuth device approval, clicking a confirmation link, etc.): never tell them to reply "done" or send a message to resume you. Schedule a one-shot task that polls for completion — its prompt must say: if complete, finish the work and tell the user; if not, reschedule itself (schedule_task again) until it succeeds or the window expires, then report the outcome either way. The task's output lands in the chat and notifies them on its own.
 
-- vault_request / vault_list / vault_delete: the encrypted vault. NEVER ask the user to paste secrets (API keys, tokens, passwords) into chat — anything typed in chat is visible to the underlying AI model. When you need a credential, call vault_request with a label and a short hint; it shows the user a secure in-chat form whose contents go straight into the encrypted vault in the VM. You never see the value — only a "vault:<id>" handle. Use it through exec's env param ({"SOME_KEY": "vault:<id>"}): the value is injected server-side and scrubbed from all command output, so it never enters your context. Never echo, print, or write a vault value anywhere (no echo $KEY, no writing it to files, no putting it in task prompts).
+- vault_request / vault_list / vault_delete / vault_rename: the encrypted vault. NEVER ask the user to paste secrets (API keys, tokens, passwords) into chat — anything typed in chat is visible to the underlying AI model. When you need a credential, call vault_request with a label and a short hint; it shows the user a secure in-chat form whose contents go straight into the encrypted vault in the VM. You never see the value — only a "vault:<id>" handle. Use it through exec's env param ({"SOME_KEY": "vault:<id>"}): the value is injected server-side and scrubbed from all command output, so it never enters your context. Never echo, print, or write a vault value anywhere (no echo $KEY, no writing it to files, no putting it in task prompts).
 
 Guidelines:
 - Work quietly: never narrate your plan, progress, or tool steps in chat text. No "I'll look that up…", no "Let me try a different approach…", no "That didn't work, trying…". The user already sees live activity indicators while you work, and everything you write becomes a chat message they have to read. Just do the work silently with your tools.
@@ -458,6 +459,21 @@ export const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'vault_rename',
+      description: 'Rename a vault secret\'s label by its id (see vault_list). Use to keep labels accurate when you learn what a secret is for.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The vault item id' },
+          label: { type: 'string', description: 'The new label' },
+        },
+        required: ['id', 'label'],
+      },
+    },
+  },
 ];
 
 // Parent-only: durable memory lives in the sandbox volume and only the
@@ -623,6 +639,7 @@ function summarizeTool(name, args) {
     case 'vault_request': return 'Preparing a secure form…';
     case 'vault_list': return 'Checking the vault…';
     case 'vault_delete': return 'Updating the vault…';
+    case 'vault_rename': return 'Renaming vault entry…';
     case 'remember': return 'Saving a memory…';
     case 'todo_write': {
       const todos = execCtx?.todos;
@@ -1521,6 +1538,14 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       if (!vid) throw new Error('vault_delete: id is required');
       if (!deleteVaultItem(userId, vid)) throw new Error('vault item not found');
       return { text: 'Vault item deleted.' };
+    }
+    case 'vault_rename': {
+      const vid = String(args.id ?? '').trim();
+      const label = String(args.label ?? '').trim();
+      if (!vid) throw new Error('vault_rename: id is required');
+      if (!label) throw new Error('vault_rename: label is required');
+      if (!renameVaultItem(userId, vid, label)) throw new Error('vault item not found');
+      return { text: `Vault item renamed to "${label}".` };
     }
     case 'remember': {
       const text = String(args.text ?? '').trim().slice(0, 2000);
