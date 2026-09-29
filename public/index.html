@@ -114,7 +114,6 @@
             </button>
             <div id="user-menu" class="menu" hidden role="menu">
               <button data-act="settings" role="menuitem">Settings</button>
-              <button data-act="password" role="menuitem">Change password</button>
               <button data-act="shared" role="menuitem">Shared chats</button>
               <button data-act="vault" role="menuitem">Vault</button>
               <button data-act="admin" role="menuitem" id="menu-admin" hidden>Admin panel</button>
@@ -310,6 +309,8 @@
           </div>
 
           <div class="settings-panel" id="set-panel-security">
+            <h3 class="set-h">Password</h3>
+            <div><button class="btn" id="change-password-btn">Change password</button></div>
             <h3 class="set-h">Two-factor authentication</h3>
             <div id="twofa-box"><p class="muted">Loading…</p></div>
             <h3 class="set-h">Passkeys</h3>

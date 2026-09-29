@@ -2158,7 +2158,6 @@ function wireUserMenu() {
       const ub = $('#usage-box'); if (ub) ub.hidden = true;
       go('login');
     } else if (act === 'settings') go('settings');
-    else if (act === 'password') changePasswordModal();
     else if (act === 'shared') sharedChatsModal();
     else if (act === 'vault') vaultModal();
     else if (act === 'admin') go('admin');
@@ -4382,6 +4381,7 @@ function wireSettings() {
   });
   wireSessionsTab();
   wireProfileCard();
+  $('#change-password-btn').onclick = changePasswordModal;
   $('#reset-everything').onclick = resetEverythingModal;
   $('#delete-account').onclick = deleteAccountModal;
   $('#delete-all-chats').onclick = deleteAllChatsModal;
