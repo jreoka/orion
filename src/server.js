@@ -321,7 +321,7 @@ app.post('/api/auth/2fa/setup', requireAuth, asyncRoute(async (req, res) => {
     throw httpError(401, 'Incorrect password');
   }
   // The secret is returned ONCE here; afterwards only the encrypted secret is stored.
-  res.json(beginTotpSetup(req.user.id));
+  res.json(await beginTotpSetup(req.user.id));
 }));
 
 app.post('/api/auth/2fa/confirm', requireAuth, asyncRoute(async (req, res) => {
