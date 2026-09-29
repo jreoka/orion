@@ -804,6 +804,40 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
       `UPDATE attachments SET message_id = ?, staged = 0
        WHERE id IN (${ph}) AND staged = 1 AND user_id = ?`
     ).run(messageId, ...attachmentIds, req.user.id);
+    // Copy claimed files into the agent's sandbox workspace so it can
+    // read/edit them with its file tools. The agent's workspace is a Docker
+    // volume; without this copy, the agent sees the filename in history
+    // but the file isn't on disk anywhere it can reach.
+    try {
+      const claimed = db
+        .prepare('SELECT filename, path FROM attachments WHERE message_id = ? AND staged = 0')
+        .all(messageId);
+      const volDir = `/var/lib/docker/volumes/orion-u${req.user.id}-data/_data`;
+      if (claimed.length && fs.existsSync(volDir)) {
+        for (const c of claimed) {
+          const src = path.resolve(DATA_DIR, c.path);
+          const base = path.resolve(DATA_DIR) + path.sep;
+          if (!src.startsWith(base)) continue; // path traversal guard
+          const safeName = path.basename(c.filename || 'file').slice(0, 255) || 'file';
+          const dest = path.join(volDir, safeName);
+          // Don't overwrite an existing workspace file with the same name —
+          // suffix it so the user's work isn't clobbered.
+          let finalDest = dest;
+          let n = 1;
+          while (fs.existsSync(finalDest)) {
+            const ext = path.extname(safeName);
+            const stem = path.basename(safeName, ext);
+            finalDest = path.join(volDir, `${stem}_${n}${ext}`);
+            if (++n > 100) break;
+          }
+          try {
+            fs.copyFileSync(src, finalDest);
+            // The sandbox runs as a non-root user; make sure it can read it.
+            try { fs.chmodSync(finalDest, 0o644); } catch { /* best effort */ }
+          } catch { /* copy failure shouldn't block the message */ }
+        }
+      }
+    } catch { /* attachment copy must never block the message */ }
   }
   const attachments = db
     .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
