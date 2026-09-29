@@ -1356,6 +1356,13 @@ export async function loadHistory(conversationId, limit) {
         /* corrupted row: treat as plain text */
       }
     }
+    // Strip empty assistant turns with no tool calls — they carry zero
+    // information and poison the context. A history full of empty replies
+    // (from crashed runs or recovery loops) teaches the model that
+    // silence is acceptable, and it stops trying.
+    if (m.role === 'assistant' && !(m.content || '').trim() && !(m.tool_calls || []).length) {
+      continue;
+    }
     if (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') out.push(m);
   }
   return out;
