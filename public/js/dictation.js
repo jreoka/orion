@@ -13,7 +13,12 @@
   const notify = (msg, kind) => { if (typeof toast === 'function') toast(msg, kind); };
 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+  const isAndroid = /Android/i.test(navigator.userAgent || '');
+  // On Android the recognizer and a getUserMedia stream fight over the mic:
+  // the recognizer hears silence, times out with no-speech, and restarts in
+  // a loop (the repeated chime) with zero text. So on Android the recognizer
+  // gets exclusive mic access — no live waveform, just a pulse.
+  if (!SR) {
     if (micBtn) micBtn.hidden = true; // unsupported browser: no button at all
     return;
   }
@@ -62,7 +67,7 @@
   }
 
   function drawWave(now) {
-    if (!dictating) return;
+    if (!dictating || !analyser) return;
     rafId = requestAnimationFrame(drawWave);
     if (now - lastWaveDraw < 1000 / WAVE_FPS) return;
     lastWaveDraw = now;
@@ -107,40 +112,45 @@
 
   async function start() {
     if (dictating) return;
-    let s;
-    try {
-      s = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (e) {
-      notify('Microphone blocked — allow mic access to dictate.', 'error');
-      return;
-    }
-    stream = s;
-    try {
-      ink = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || ink;
-    } catch (e) { /* keep default */ }
-    const AC = window.AudioContext || window.webkitAudioContext;
-    audioCtx = new AC();
-    const src = audioCtx.createMediaStreamSource(stream);
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.55;
-    freq = new Uint8Array(analyser.frequencyBinCount);
-    src.connect(analyser);
-    // Spread the voice range (~80Hz–12kHz) logarithmically across the bars.
-    // Linear bins waste nearly every bar on high frequencies where voice
-    // has no energy — that's why only the first couple bars moved before.
-    {
-      const binHz = audioCtx.sampleRate / analyser.fftSize;
-      const F_MIN = 80, F_MAX = 12000, RATIO = F_MAX / F_MIN;
-      const top = freq.length - 1;
-      barBins = [];
-      for (let i = 0; i < BARS; i++) {
-        const b0 = Math.max(0, Math.floor((F_MIN * Math.pow(RATIO, i / BARS)) / binHz));
-        const b1 = Math.min(top, Math.ceil((F_MIN * Math.pow(RATIO, (i + 1) / BARS)) / binHz));
-        barBins.push([b0, Math.max(b0, b1)]);
+    const wantWave = !isAndroid && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+    let s = null;
+    if (wantWave) {
+      try {
+        s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        // Waveform mic failed — dictation can still work without it.
+        s = null;
       }
     }
-    if (audioCtx.state === 'suspended') { try { await audioCtx.resume(); } catch (e) {} }
+    stream = s;
+    if (stream) {
+      try {
+        ink = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || ink;
+      } catch (e) { /* keep default */ }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC();
+      const src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.55;
+      freq = new Uint8Array(analyser.frequencyBinCount);
+      src.connect(analyser);
+      // Spread the voice range (~80Hz–12kHz) logarithmically across the bars.
+      // Linear bins waste nearly every bar on high frequencies where voice
+      // has no energy — that's why only the first couple bars moved before.
+      {
+        const binHz = audioCtx.sampleRate / analyser.fftSize;
+        const F_MIN = 80, F_MAX = 12000, RATIO = F_MAX / F_MIN;
+        const top = freq.length - 1;
+        barBins = [];
+        for (let i = 0; i < BARS; i++) {
+          const b0 = Math.max(0, Math.floor((F_MIN * Math.pow(RATIO, i / BARS)) / binHz));
+          const b1 = Math.min(top, Math.ceil((F_MIN * Math.pow(RATIO, (i + 1) / BARS)) / binHz));
+          barBins.push([b0, Math.max(b0, b1)]);
+        }
+      }
+      if (audioCtx.state === 'suspended') { try { await audioCtx.resume(); } catch (e) {} }
+    }
 
     // Dictation appends to whatever draft is already there.
     baseText = input().value;
@@ -210,13 +220,16 @@
     micBtn.setAttribute('aria-label', 'Stop dictation');
     micBtn.setAttribute('title', 'Stop dictation');
     bar.hidden = false;
-    sizeCanvas();
+    bar.classList.toggle('no-wave', !analyser);
+    if (analyser) {
+      sizeCanvas();
+      shown = new Float32Array(BARS);
+      lastWaveDraw = 0;
+      rafId = requestAnimationFrame(drawWave);
+    }
     startTs = Date.now();
     tick();
     timerId = setInterval(tick, 250);
-    shown = new Float32Array(BARS);
-    lastWaveDraw = 0;
-    rafId = requestAnimationFrame(drawWave);
     try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) {}
   }
 
@@ -239,6 +252,7 @@
     freq = null;
     barBins = null;
     bar.hidden = true;
+    bar.classList.remove('no-wave');
     micBtn.classList.remove('recording');
     micBtn.setAttribute('aria-label', 'Dictate');
     micBtn.setAttribute('title', 'Dictate');
@@ -249,5 +263,5 @@
   micBtn.addEventListener('click', () => (dictating ? stop() : start()));
   // Sending ends dictation first so the final words land in the message.
   composer.addEventListener('submit', () => { if (dictating) stop(); });
-  window.addEventListener('resize', () => { if (dictating) sizeCanvas(); });
+  window.addEventListener('resize', () => { if (dictating && analyser) sizeCanvas(); });
 })();
