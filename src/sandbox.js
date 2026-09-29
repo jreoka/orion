@@ -120,12 +120,11 @@ export async function ensureSandbox(userId) {
   const createFresh = async () => {
     // Hardening: a PID cap (fork-bomb ceiling), no Linux capabilities, and
     // no-new-privileges so a setuid binary inside can't escalate.
-    // No CapAdd entries: the image's CMD and every exec run as the
-    // non-root `agent` user (see sandbox/Dockerfile `USER agent`), and
-    // capabilities only grant privileges to privileged processes — a
-    // non-root workload has no use for any of them. Chromium already runs
-    // with --no-sandbox (sandbox/orion-browser.js), so dropping caps and
-    // no-new-privileges doesn't affect the browser tools.
+    // The sandbox runs as ROOT inside the container (user request for a fully
+    // capable agent), but the container itself is the security boundary:
+    // all caps dropped, no privileged mode, no host networking, and Docker
+    // access goes through a per-user FILTERING proxy (not the raw socket).
+    // Root in here cannot escape to the host or other users.
     //
     // Docker access: a per-user FILTERING proxy socket is bind-mounted at
     // the usual docker.sock path, so `docker` works inside the sandbox but
