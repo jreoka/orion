@@ -50,6 +50,7 @@ Your tools:
 - web_fetch: fetch a URL and get its readable text back. Use it for docs, articles, API responses — anything on the web.
 - web_search: search the web — clean titles, URLs, and snippets. Never curl search engines, APIs, or HTML pages with exec to research something — that is what this tool is for.
 - browser_shot: take a real screenshot of a URL with headless Chromium and attach it to your reply so the user can see it. You receive the screenshot as vision too — actually look at it and describe or verify what it genuinely shows. Use it when the user wants to SEE a page, or to verify how a page you built looks. Prefer this over launching Chromium yourself. If you must launch Chromium manually via exec (e.g. for CDP remote debugging), ALWAYS include --no-sandbox --disable-dev-shm-usage flags — the sandbox container cannot use Chrome's sandbox, and it will fail to start without them.
+- browser_act: drive the browser interactively — goto, click, fill, press keys, wait, scroll, read text. Use for anything needing interaction: logins, searches, forms, multi-step flows. Chain steps in one call; selectors are CSS.
 - send_image: attach an image file from your workspace to your reply so the user sees it inline in chat. When the user asks for an image ("send me a picture of ..."), download or generate it with exec, then send_image it — don't just describe it or drop links. You receive it as vision too: actually look at it and verify it shows what you claim before sending.
 - send_file: attach any other file from your workspace (a script, a text file, a PDF, a zip, ...) to your reply so the user can download it. Write or fetch the file with exec first, then send_file it — don't paste long files as chat text when the user asked for a file. And be proactive: when the user attached a file for you to work on and you modified it, send the updated file back when you finish. The deliverable of "fix this script" is the script — never make them ask for it back.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
@@ -203,6 +204,39 @@ export const TOOLS = [
           full_page: { type: 'boolean', description: 'Capture the full scrollable page (default false)' },
           show_user: { type: 'boolean', description: 'Attach the screenshot to your reply so the user sees it. Only when the user asked to see it (default false).' },
         },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_act',
+      description:
+        'Drive a real headless Chromium browser: navigate, click, fill forms, press keys, scroll, read page text. Use for sites that need interaction (logins, searches, multi-step flows) — anything web_fetch / browser_shot cannot do. Steps run in order against one page. Selectors are CSS (e.g. "input[name=q]", "button[type=submit]"). Returns each step\'s result; text steps return page content. If a site blocks automation, try a different source.',
+      parameters: {
+        type: 'object',
+        properties: {
+          steps: {
+            type: 'array',
+            description: 'Actions to perform in order',
+            items: {
+              type: 'object',
+              properties: {
+                action: { type: 'string', enum: ['goto', 'click', 'fill', 'press', 'wait', 'scroll', 'text', 'shot', 'url'] },
+                url: { type: 'string', description: 'For goto: the URL' },
+                selector: { type: 'string', description: 'For click/fill/wait: CSS selector' },
+                text: { type: 'string', description: 'For fill: text to enter' },
+                key: { type: 'string', description: 'For press: key name (Enter, Tab, Escape, ...)' },
+                ms: { type: 'number', description: 'For wait: milliseconds (max 15000)' },
+                y: { type: 'number', description: 'For scroll: vertical pixels' },
+                path: { type: 'string', description: 'For shot: workspace path to save PNG' },
+                full: { type: 'boolean', description: 'For shot: full page' },
+              },
+              required: ['action'],
+            },
+          },
+        },
+        required: ['steps'],
       },
     },
   },
@@ -513,6 +547,7 @@ function summarizeTool(name, args) {
     case 'web_fetch': return `Reading ${domain(args.url)}…`;
     case 'web_search': return 'Searching the web…';
     case 'browser_shot': return `Looking at ${domain(args.url)}…`;
+    case 'browser_act': return 'Driving the browser…';
     case 'send_image': return 'Sending an image…';
     case 'delegate': return 'Working on a subtask…';
     case 'send_update': return null; // the update line speaks for itself
@@ -1074,6 +1109,60 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
         imagePath: fullPath,
         tmpImage: !showUser,
       };
+    }
+    case 'browser_act': {
+      const steps = Array.isArray(args.steps) ? args.steps : [];
+      if (!steps.length) throw new Error('browser_act: steps array is required');
+      if (steps.length > 20) throw new Error('browser_act: max 20 steps per call');
+      // SSRF guard: check every goto URL.
+      for (const s of steps) {
+        if (s.action === 'goto') {
+          if (!validUrl(s.url)) throw new Error(`browser_act: refusing non-http(s) URL: ${s.url}`);
+          await checkFetchTarget(s.url);
+        }
+        // Confine screenshot outputs to the workspace.
+        if (s.action === 'shot' && s.path) {
+          const p = String(s.path);
+          if (p.includes('..') || path.isAbsolute(p) && !p.startsWith('/home/agent/workspace'))
+            throw new Error('browser_act: shot path must be inside the workspace');
+        }
+      }
+      const scriptPath = `/home/agent/workspace/.shots/act-${crypto.randomUUID()}.json`;
+      const scriptJson = JSON.stringify(steps.map((s) => {
+        const o = { action: s.action };
+        if (s.url) o.url = s.url;
+        if (s.selector) o.selector = s.selector;
+        if (s.text != null) o.text = String(s.text).slice(0, 5000);
+        if (s.key) o.key = s.key;
+        if (typeof s.ms === 'number') o.ms = s.ms;
+        if (typeof s.y === 'number') o.y = s.y;
+        if (s.path) o.path = s.path.startsWith('/') ? s.path : `/home/agent/workspace/${s.path}`;
+        if (s.full) o.full = true;
+        return o;
+      }));
+      const { output, exitCode } = await sandboxExec(
+        userId,
+        `mkdir -p /home/agent/workspace/.shots && cat > "$ORION_SCRIPT" <<'ORION_EOF'\n${scriptJson}\nORION_EOF\norion-browser interact "$ORION_SCRIPT"; rm -f "$ORION_SCRIPT"`,
+        { env: [`ORION_SCRIPT=${scriptPath}`], timeout: 120 }
+      );
+      if (exitCode === 3)
+        throw new Error('browser_act: the site is blocking automated browsing (bot protection) — try a different source instead.');
+      if (exitCode !== 0) throw new Error(`browser_act failed: ${output.trim().slice(0, 800)}`);
+      let results;
+      try { results = JSON.parse(output); }
+      catch { throw new Error(`browser_act: bad output: ${output.trim().slice(0, 300)}`); }
+      // Summarize for the model.
+      const lines = results.map((r, i) => {
+        const s = steps[i];
+        if (r.ok) {
+          if (s.action === 'text') return `step ${i + 1} text: ${String(r.text || '').slice(0, 3000)}`;
+          if (s.action === 'url') return `step ${i + 1}: ${r.url} — ${r.title || ''}`;
+          if (s.action === 'goto') return `step ${i + 1}: went to ${r.url}`;
+          return `step ${i + 1} ${s.action}: ok`;
+        }
+        return `step ${i + 1} ${s.action}: FAILED — ${r.error || 'unknown'}`;
+      });
+      return { text: lines.join('\n') };
     }
     case 'send_image': {
       const rel = String(args.path || '').trim();

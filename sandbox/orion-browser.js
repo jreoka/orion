@@ -4,6 +4,13 @@
 //
 //   orion-browser text <url>                 print readable page text to stdout
 //   orion-browser shot <url> <out.png> [--full]   save a screenshot
+//   orion-browser interact <script.json>      run a JSON action script, print results
+//
+// interact script: [{action, ...}] — actions:
+//   {action:"goto", url}  {action:"click", selector}  {action:"fill", selector, text}
+//   {action:"press", key}  {action:"wait", ms|selector}  {action:"scroll", y}
+//   {action:"text"} → page text  {action:"shot", path} → screenshot
+// Prints a JSON array of step results to stdout.
 //
 // Exit codes: 0 ok, 1 error, 3 blocked by the site's bot protection.
 //
@@ -35,10 +42,106 @@ class BlockedError extends Error {
   }
 }
 
+// Interactive mode: run a JSON action script against a live page.
+// Each step returns {ok, ...} — text/shot steps include their output.
+async function interact(scriptPath) {
+  const fs = require('fs');
+  let steps;
+  try {
+    steps = JSON.parse(fs.readFileSync(scriptPath, 'utf8'));
+  } catch (e) {
+    console.error('orion-browser: bad script JSON: ' + e.message);
+    process.exit(2);
+  }
+  if (!Array.isArray(steps)) { console.error('orion-browser: script must be a JSON array'); process.exit(2); }
+
+  const browser = await chromium.launch({
+    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled'],
+  });
+  const results = [];
+  try {
+    const context = await browser.newContext({
+      userAgent: DESKTOP_UA,
+      viewport: { width: 1280, height: 800 },
+      locale: 'en-US',
+      timezoneId: 'America/New_York',
+    });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      window.chrome = window.chrome || { runtime: {} };
+    });
+    const page = await context.newPage();
+    const checkBlocked = async () => {
+      let title = '';
+      try { title = await page.title(); } catch {}
+      if (BLOCKED_TITLE_RE.test(title)) throw new BlockedError(`challenge page: "${title.slice(0, 80)}"`);
+    };
+
+    for (let i = 0; i < steps.length; i++) {
+      const s = steps[i] || {};
+      try {
+        switch (s.action) {
+          case 'goto':
+            await page.goto(s.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await page.waitForTimeout(1200);
+            await checkBlocked();
+            results.push({ ok: true, url: page.url(), title: await page.title() });
+            break;
+          case 'click':
+            await page.click(s.selector, { timeout: 10000 });
+            await page.waitForTimeout(800);
+            results.push({ ok: true });
+            break;
+          case 'fill':
+            await page.fill(s.selector, String(s.text ?? ''), { timeout: 10000 });
+            results.push({ ok: true });
+            break;
+          case 'press':
+            await page.keyboard.press(String(s.key || 'Enter'));
+            await page.waitForTimeout(800);
+            results.push({ ok: true });
+            break;
+          case 'wait':
+            if (typeof s.ms === 'number') await page.waitForTimeout(Math.min(s.ms, 15000));
+            else if (s.selector) await page.waitForSelector(s.selector, { timeout: 15000 });
+            results.push({ ok: true });
+            break;
+          case 'scroll':
+            await page.evaluate((y) => window.scrollBy(0, y || 600), s.y);
+            await page.waitForTimeout(500);
+            results.push({ ok: true });
+            break;
+          case 'text': {
+            const t = await page.evaluate(() => (document.body ? document.body.innerText : ''));
+            results.push({ ok: true, text: String(t || '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 15000) });
+            break;
+          }
+          case 'shot':
+            await page.screenshot({ path: s.path, fullPage: !!s.full });
+            results.push({ ok: true, path: s.path });
+            break;
+          case 'url':
+            results.push({ ok: true, url: page.url(), title: await page.title() });
+            break;
+          default:
+            results.push({ ok: false, error: `unknown action: ${s.action}` });
+        }
+      } catch (e) {
+        if (e instanceof BlockedError) throw e;
+        results.push({ ok: false, error: String((e && e.message) || e).slice(0, 300) });
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+  process.stdout.write(JSON.stringify(results, null, 1));
+}
+
 async function main() {
   const [, , cmd, url, outPath] = process.argv;
+  if (cmd === 'interact') return interact(url); // url = script.json path
   if (!cmd || !url || !['text', 'shot'].includes(cmd) || (cmd === 'shot' && !outPath)) {
-    console.error('usage: orion-browser text <url> | orion-browser shot <url> <out.png> [--full]');
+    console.error('usage: orion-browser text <url> | orion-browser shot <url> <out.png> [--full] | orion-browser interact <script.json>');
     process.exit(2);
   }
 
