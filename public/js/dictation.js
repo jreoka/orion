@@ -153,10 +153,12 @@
     rec.continuous = !/Android/i.test(navigator.userAgent);
     rec.interimResults = true;
     rec.lang = navigator.language || 'en-US';
-    let lastStart = 0;
-    let errStreak = 0;
+    let lastError = '';
+    let instantDeaths = 0;
+    let turnStart = 0;
+    const markTurnStart = () => { turnStart = Date.now(); };
     rec.onresult = (e) => {
-      errStreak = 0; // results are flowing — clear any error streak
+      instantDeaths = 0; // results are flowing — the service is alive
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
@@ -166,37 +168,39 @@
       setInput(baseText + finalText + interim);
     };
     rec.onerror = (e) => {
+      lastError = e.error || 'unknown';
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         notify('Microphone blocked — allow mic access to dictate.', 'error');
         stop();
-        return;
       }
-      // 'no-speech', 'aborted', 'network' just end the turn; onend restarts.
-      // But a streak of errors with zero results means the speech service
-      // itself is broken (common on Android) — tell the user instead of
-      // silently showing a moving waveform with no text.
-      errStreak++;
-      if (errStreak >= 3 && !finalText) {
-        notify('Speech recognition isn\'t working on this device right now.', 'error');
-        stop();
-      }
+      // Other errors ('no-speech', 'aborted', 'network', …) just end the
+      // turn; onend decides whether to restart or give up.
     };
     // Chrome ends recognition after a pause even in continuous mode —
     // restart it so dictation keeps going until the user stops it.
+    // But if the service dies instantly and repeatedly (dies <1s after
+    // start, no results), it's broken — stop and say why instead of
+    // leaving a zombie waveform with no text.
     rec.onend = () => {
-      if (dictating && rec) {
-        // Throttle restarts: a hot onend/onerror loop means the service is
-        // failing, not pausing — don't spin forever.
-        const now = Date.now();
-        if (now - lastStart < 400) return;
-        lastStart = now;
-        try { rec.start(); } catch (e) { /* already running */ }
+      if (!dictating || !rec) return;
+      const livedMs = Date.now() - turnStart;
+      if (livedMs < 1000 && !finalText) {
+        instantDeaths++;
+        if (instantDeaths >= 3) {
+          notify(`Dictation failed (${lastError || 'speech service unavailable'}).`, 'error');
+          stop();
+          return;
+        }
+      } else {
+        instantDeaths = 0;
       }
+      try { rec.start(); markTurnStart(); } catch (e) { /* already running */ }
     };
 
     dictating = true;
     try {
       rec.start();
+      markTurnStart();
     } catch (e) {
       stop();
       return;
