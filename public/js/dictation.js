@@ -1,48 +1,28 @@
 /* Dictation: mic button in the composer, Web Speech API for transcription,
-   and a quantized live soundwave strip while recording. Self-contained —
-   no globals, no top-level collisions with the other public/js modules. */
+   and a pulsing dot + timer while recording. Self-contained — no globals,
+   no top-level collisions with the other public/js modules. */
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
   const micBtn = $('mic-btn');
   const bar = $('dictation-bar');
-  const wave = $('dictation-wave');
   const timeEl = $('dictation-time');
   const composer = $('composer');
   const input = () => $('composer-input');
   const notify = (msg, kind) => { if (typeof toast === 'function') toast(msg, kind); };
 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const isAndroid = /Android/i.test(navigator.userAgent || '');
-  // On Android the recognizer and a getUserMedia stream fight over the mic:
-  // the recognizer hears silence, times out with no-speech, and restarts in
-  // a loop (the repeated chime) with zero text. So on Android the recognizer
-  // gets exclusive mic access — no live waveform, just a pulse.
   if (!SR) {
     if (micBtn) micBtn.hidden = true; // unsupported browser: no button at all
     return;
   }
 
-  const BARS = 32;   // chunky discrete bars — the digital look
-  const WAVE_FPS = 30; // fluid motion; the bars are quantized, not the animation
-  const ATTACK = 0.6;  // per-tick ease when rising — snappy but smooth
-  const RELEASE = 0.2; // per-tick ease when falling — gentle tail
-
   let dictating = false;
   let rec = null;
-  let stream = null;
-  let audioCtx = null;
-  let analyser = null;
-  let freq = null;
-  let barBins = null; // per-bar [firstBin, lastBin], log-spaced over voice range
-  let rafId = 0;
-  let lastWaveDraw = 0;
-  let shown = new Float32Array(BARS); // eased 0..1 bar levels
   let timerId = 0;
   let startTs = 0;
   let baseText = '';
   let finalText = '';
-  let ink = '#1c1813';
 
   function setInput(v) {
     const el = input();
@@ -59,98 +39,8 @@
 
   function tick() { timeEl.textContent = fmt(Date.now() - startTs); }
 
-  function sizeCanvas() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const r = wave.getBoundingClientRect();
-    wave.width = Math.max(1, Math.round(r.width * dpr));
-    wave.height = Math.max(1, Math.round(r.height * dpr));
-  }
-
-  function drawWave(now) {
-    if (!dictating || !analyser) return;
-    rafId = requestAnimationFrame(drawWave);
-    if (now - lastWaveDraw < 1000 / WAVE_FPS) return;
-    lastWaveDraw = now;
-    analyser.getByteFrequencyData(freq);
-    for (let i = 0; i < BARS; i++) {
-      const bb = barBins[i];
-      let v = 0;
-      for (let b = bb[0]; b <= bb[1]; b++) if (freq[b] > v) v = freq[b];
-      const target = Math.min(1, (v / 255) * 1.35); // slight gain for quiet mics
-      // Ease toward the target: quick to rise, gentle to fall. Heights stay
-      // fluid — the chunkiness comes from the discrete bars, not stepped
-      // snapping between levels (that snapping was the glitchy look).
-      const k = target > shown[i] ? ATTACK : RELEASE;
-      shown[i] += (target - shown[i]) * k;
-      if (shown[i] < 0.004 && target < 0.004) shown[i] = 0; // settle to rest
-    }
-    const ctx = wave.getContext('2d');
-    const W = wave.width, H = wave.height;
-    ctx.clearRect(0, 0, W, H);
-    const slot = W / BARS;
-    const gap = Math.max(1, Math.round(slot * 0.28));
-    const bw = slot - gap;
-    ctx.fillStyle = ink;
-    for (let i = 0; i < BARS; i++) {
-      const q = shown[i];
-      const h = q * H;
-      if (h < 1) continue;
-      const x = i * slot + gap / 2;
-      const y = (H - h) / 2;
-      ctx.globalAlpha = 0.3 + 0.7 * q;
-      const r = Math.min(bw / 2, 3);
-      if (ctx.roundRect) {
-        ctx.beginPath();
-        ctx.roundRect(x, y, bw, h, r);
-        ctx.fill();
-      } else {
-        ctx.fillRect(x, y, bw, h);
-      }
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  async function start() {
+  function start() {
     if (dictating) return;
-    const wantWave = !isAndroid && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
-    let s = null;
-    if (wantWave) {
-      try {
-        s = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (e) {
-        // Waveform mic failed — dictation can still work without it.
-        s = null;
-      }
-    }
-    stream = s;
-    if (stream) {
-      try {
-        ink = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || ink;
-      } catch (e) { /* keep default */ }
-      const AC = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new AC();
-      const src = audioCtx.createMediaStreamSource(stream);
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.55;
-      freq = new Uint8Array(analyser.frequencyBinCount);
-      src.connect(analyser);
-      // Spread the voice range (~80Hz–12kHz) logarithmically across the bars.
-      // Linear bins waste nearly every bar on high frequencies where voice
-      // has no energy — that's why only the first couple bars moved before.
-      {
-        const binHz = audioCtx.sampleRate / analyser.fftSize;
-        const F_MIN = 80, F_MAX = 12000, RATIO = F_MAX / F_MIN;
-        const top = freq.length - 1;
-        barBins = [];
-        for (let i = 0; i < BARS; i++) {
-          const b0 = Math.max(0, Math.floor((F_MIN * Math.pow(RATIO, i / BARS)) / binHz));
-          const b1 = Math.min(top, Math.ceil((F_MIN * Math.pow(RATIO, (i + 1) / BARS)) / binHz));
-          barBins.push([b0, Math.max(b0, b1)]);
-        }
-      }
-      if (audioCtx.state === 'suspended') { try { await audioCtx.resume(); } catch (e) {} }
-    }
 
     // Dictation appends to whatever draft is already there.
     baseText = input().value;
@@ -160,7 +50,7 @@
     rec = new SR();
     // Android Chrome drops recognition results when continuous=true —
     // use single-utterance mode there and restart onend instead.
-    rec.continuous = !/Android/i.test(navigator.userAgent);
+    rec.continuous = !/Android/i.test(navigator.userAgent || '');
     rec.interimResults = true;
     rec.lang = navigator.language || 'en-US';
     let lastError = '';
@@ -190,7 +80,7 @@
     // restart it so dictation keeps going until the user stops it.
     // But if the service dies instantly and repeatedly (dies <1s after
     // start, no results), it's broken — stop and say why instead of
-    // leaving a zombie waveform with no text.
+    // leaving a dead indicator with no text.
     rec.onend = () => {
       if (!dictating || !rec) return;
       const livedMs = Date.now() - turnStart;
@@ -220,13 +110,6 @@
     micBtn.setAttribute('aria-label', 'Stop dictation');
     micBtn.setAttribute('title', 'Stop dictation');
     bar.hidden = false;
-    bar.classList.toggle('no-wave', !analyser);
-    if (analyser) {
-      sizeCanvas();
-      shown = new Float32Array(BARS);
-      lastWaveDraw = 0;
-      rafId = requestAnimationFrame(drawWave);
-    }
     startTs = Date.now();
     tick();
     timerId = setInterval(tick, 250);
@@ -238,21 +121,8 @@
     dictating = false;
     try { if (rec) rec.stop(); } catch (e) {}
     rec = null;
-    cancelAnimationFrame(rafId);
     clearInterval(timerId);
-    if (stream) {
-      try { stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
-      stream = null;
-    }
-    if (audioCtx) {
-      try { audioCtx.close(); } catch (e) {}
-      audioCtx = null;
-    }
-    analyser = null;
-    freq = null;
-    barBins = null;
     bar.hidden = true;
-    bar.classList.remove('no-wave');
     micBtn.classList.remove('recording');
     micBtn.setAttribute('aria-label', 'Dictate');
     micBtn.setAttribute('title', 'Dictate');
@@ -263,5 +133,4 @@
   micBtn.addEventListener('click', () => (dictating ? stop() : start()));
   // Sending ends dictation first so the final words land in the message.
   composer.addEventListener('submit', () => { if (dictating) stop(); });
-  window.addEventListener('resize', () => { if (dictating && analyser) sizeCanvas(); });
 })();

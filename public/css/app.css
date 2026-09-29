@@ -909,12 +909,9 @@ button.avatar.lg:hover { opacity: .85; }
   padding: 6px 14px 6px 16px; margin-bottom: 8px;
 }
 .dictation-bar[hidden] { display: none !important; }
-#dictation-wave { flex: 1 1 auto; min-width: 0; height: 46px; display: block; }
-/* No live waveform (e.g. Android, where the recognizer needs exclusive mic
-   access): a pulsing dot holds the bar's place instead. */
-.dictation-bar.no-wave #dictation-wave { display: none; }
-.dictation-bar.no-wave::before {
-  content: ''; flex: 0 0 auto;
+/* Pulsing red dot while dictating. */
+.dictation-dot {
+  flex: 0 0 auto;
   width: 10px; height: 10px; border-radius: 50%;
   background: var(--danger); align-self: center;
   animation: dict-pulse 1.4s ease-in-out infinite;
