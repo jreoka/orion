@@ -6,20 +6,15 @@ FROM mcr.microsoft.com/playwright:v1.49.0-noble
 # there): just the scripting basics, plus the Docker CLI so the agent can
 # use the host's Docker daemon (socket is mounted at run time; the daemon
 # itself runs on the host, not in here).
+#
+# Python: pip is available; the agent installs what it needs with
+# `pip install --user` (no root). Keep the base image lean — don't pre-install
+# heavy stacks like torch/numpy here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv git curl jq docker.io \
     && rm -rf /var/lib/apt/lists/* \
     && npm i -g playwright@1.49.0 \
     && docker --version
-
-# Python data-science stack: the agent does real ML work (torch, numpy, scipy).
-# CPU-only torch keeps the image lean. Installed system-wide so the non-root
-# `agent` user can import them without pip install.
-RUN pip3 install --no-cache-dir --break-system-packages \
-        numpy scipy \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        torch \
-    && python3 -c "import numpy, torch; print('numpy', numpy.__version__, '| torch', torch.__version__)"
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules
