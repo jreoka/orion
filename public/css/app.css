@@ -1072,7 +1072,7 @@ button.avatar.lg:hover { opacity: .85; }
    Reactions
    ============================================================ */
 .rx-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 0; }
-.rx-row:has(.rx-chip) { margin-top: 8px; }
+.rx-row:has(.rx-chip) { margin-top: 8px; margin-bottom: 6px; }
 /* Reactions on your own message float beneath the bubble instead of
    stretching it taller — same placement as the hover buttons, with room
    reserved so the chips never overlap the next message. */
