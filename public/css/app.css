@@ -1193,7 +1193,7 @@ button.avatar.lg:hover { opacity: .85; }
 @media (hover: hover) {
   /* Reserve room below the message for the floating buttons so they never
      touch the next message. Grouped run messages hide their button row. */
-  .msg.assistant:has(.rx-row:not(:has(.rx-chip))) { margin-bottom: 12px; }
+  .msg.assistant:has(.rx-row:not(:has(.rx-chip))) { margin-bottom: 44px; }
   .msg.assistant:has(+ .msg.assistant) { margin-bottom: 0; }
 }
 /* Hover-capable: the user message's floating copy/+ row sits fully below the
@@ -1201,7 +1201,7 @@ button.avatar.lg:hover { opacity: .85; }
    without clipping either message. The extra bottom margin reserves exactly
    enough room. Touch keeps its 40px reservation. */
 @media (hover: hover) {
-  .msg.user:not(:has(.rx-chip)) { margin-bottom: 12px; }
+  .msg.user:not(:has(.rx-chip)) { margin-bottom: 44px; }
   .msg.user .rx-row:not(:has(.rx-chip)) {
     top: 100%; margin: 6px 0 0; right: 10px;
   }
