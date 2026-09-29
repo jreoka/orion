@@ -71,16 +71,17 @@ a { color: var(--accent); }
 .orion-mark.lg { justify-content: center; }
 .orion-mark.lg svg { width: 44px; height: 44px; }
 .orion-mark.xl svg { width: 64px; height: 64px; }
-/* ---------- logo flow — the ribbons slide diagonally through the mark ----------
-   Eight traced copies of the two ribbons (main + followers + leaders) glide
-   as a seamless loop; the SVG viewport clips them to the icon square. */
+/* ---------- logo drift — the ribbons gently slide along their diagonal axis ----------
+   Subtle ±14px oscillation; the SVG viewport clips them to the icon square. */
 .logo-glyph { display: inline-flex; overflow: hidden; }
 .logo-glyph svg { display: block; width: 100%; height: 100%; overflow: hidden; }
-.logo-flow { animation: logo-flow 16s linear infinite; }
-@keyframes logo-flow { to { transform: translate(410.1px, 410.1px); } }
+.logo-drift { animation: logo-drift 7s ease-in-out infinite alternate; }
+@keyframes logo-drift {
+  from { transform: translate(-14px, -14px); }
+  to { transform: translate(14px, 14px); }
+}
 @media (prefers-reduced-motion: reduce) {
-  .logo-flow { animation: none; }
-  .logo-flow path[transform] { display: none; }
+  .logo-drift { animation: none; }
 }
 .wordmark { font-weight: 700; font-size: 17px; letter-spacing: -.02em; }
 .wordmark.sm { font-size: 15px; }
@@ -1594,7 +1595,6 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
     transition-duration: .01ms !important;
   }
   .starfield::before { display: none; }
-  .orion-mark svg .logo-flow { animation: none; }
 }
 
 /* ============================================================
