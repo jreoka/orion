@@ -589,7 +589,7 @@ app.get('/api/conversations/archived', requireAuth, (req, res) => {
   const rows = db
     .prepare(
       `SELECT c.id, c.title, c.kind, c.task_id, c.created_at, c.updated_at, c.archived_at,
-         (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.role != 'tool' AND m.kind != 'update') AS message_count
+         (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.role != 'tool' AND m.kind != 'update' AND TRIM(COALESCE(m.content, '')) != '') AS message_count
        FROM conversations c
        WHERE c.user_id = ? AND c.kind != 'heartbeat' AND c.archived = 1
        ORDER BY c.archived_at DESC`
