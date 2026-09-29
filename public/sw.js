@@ -41,7 +41,11 @@ self.addEventListener('fetch', (event) => {
   // Vault secret forms are single-use: a cached copy could render a dead form.
   if (url.pathname.startsWith('/vault/')) return;
   // Never cache-bust the query string off cache lookups for versioned assets.
-  if (NETWORK_FIRST.has(url.pathname)) {
+  // Share pages are HTML that changes per deploy — always try the network
+  // first like the app shell, so reloading a link never renders stale markup.
+  // (Each /share/<token> URL caches separately; without this the service
+  // worker would keep serving the old page for a revisited link.)
+  if (NETWORK_FIRST.has(url.pathname) || url.pathname.startsWith('/share/')) {
     event.respondWith(
       fetch(event.request).then((res) => {
         if (res && res.ok) {

@@ -54,8 +54,10 @@
   .m-assistant tbody tr:nth-child(even) td { background: rgba(46,63,184,.05); }
   [data-theme="dark"] .m-assistant tbody tr:nth-child(even) td { background: rgba(139,155,255,.06); }
   .m-assistant img.msg-img { max-width: 320px; width: 100%; border-radius: 12px; margin: .5em 0; display: block;
-    cursor: zoom-in; }
-  .m-user img.msg-img { max-width: 220px; width: 100%; border-radius: 8px; margin-top: .4em; display: block; cursor: zoom-in; }
+    cursor: zoom-in; border: 1px solid var(--hairline); transition: transform .15s; }
+  .m-user img.msg-img { max-width: 220px; width: 100%; border-radius: 8px; margin-top: .4em; display: block; cursor: zoom-in;
+    border: 1px solid var(--hairline); transition: transform .15s; }
+  .m-assistant img.msg-img:hover, .m-user img.msg-img:hover { transform: scale(1.015); }
   .m-user.no-text img.msg-img { margin-top: 0; }
   #lb { position: fixed; inset: 0; z-index: 100; background: rgba(10, 8, 6, .88);
     display: none; align-items: center; justify-content: center; cursor: zoom-out; padding: 24px; }
@@ -66,8 +68,18 @@
     background: rgba(250, 247, 240, .32); color: #fff; font-size: 20px; font-weight: 700;
     display: flex; align-items: center; justify-content: center; line-height: 1; padding: 0 0 2px; }
   #lb-close:hover { background: rgba(250, 247, 240, .45); }
-  .chip { display: inline-block; font-family: var(--sans); font-size: 13.5px; color: var(--ink-2);
-    border: 1px solid var(--hairline); border-radius: 999px; padding: 6px 14px; text-decoration: none; margin: .25em .35em .25em 0; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; font-family: var(--sans); font-size: 13.5px; color: var(--ink-2);
+    border: 1px solid var(--hairline); border-radius: 999px; padding: 8px 14px; text-decoration: none; margin: .25em .35em .25em 0; }
+  .chip svg { display: block; flex-shrink: 0; }
+  .chip:hover { border-color: var(--ink-3); }
+  .worklog { border: 1px solid var(--hairline); border-radius: 12px; background: var(--lift);
+    padding: 4px 18px; margin: .2em 0; font-family: var(--sans); }
+  .worklog > summary { list-style: none; display: flex; align-items: baseline; gap: 8px; cursor: pointer;
+    color: var(--ink-3); font-size: 13px; padding: 10px 0; }
+  .worklog > summary::-webkit-details-marker { display: none; }
+  .worklog > summary::before { content: '›'; display: inline-block; transition: transform .18s; opacity: .7; }
+  .worklog[open] > summary::before { transform: rotate(90deg); }
+  .worklog .wl-body { display: flex; flex-direction: column; gap: 20px; padding: 2px 0 14px; }
   .err { text-align: center; padding: 80px 20px; color: var(--ink-2); }
   .err h1 { font-size: 22px; }
   footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--hairline);
@@ -107,10 +119,48 @@
 
   function isImageFile(name) { return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name || ''); }
 
+  // Same SVG paperclip the regular chat uses — never the emoji.
+  const SVG_CLIP = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 7.5 6.8 12.2a2.1 2.1 0 0 1-3-3l5.7-5.7a3.5 3.5 0 0 1 5 5l-5.7 5.7a4.9 4.9 0 0 1-7-7l5.2-5.2"/></svg>';
+
   function attachmentHtml(a) {
     return isImageFile(a.filename)
       ? `<img class="msg-img" src="${esc(a.url)}" alt="${esc(a.filename)}" loading="lazy">`
-      : `<a class="chip" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">📎 ${esc(a.filename || 'file')}</a>`;
+      : `<a class="chip" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" download="${esc(a.filename || 'file')}">${SVG_CLIP}<span>${esc(a.filename || 'file')}</span></a>`;
+  }
+
+  // Mirror the regular chat's work-log folding: within each run (assistant
+  // blocks between user messages), every assistant block except the final
+  // answer folds into an expandable Work log tray. Blocks with images stay
+  // visible, like in the regular view.
+  function foldWorkLogs() {
+    const box = root.querySelector('.msg');
+    if (!box) return;
+    const kids = [...box.children];
+    const segs = [];
+    let cur = [];
+    for (const el of kids) {
+      if (el.classList.contains('m-user') && cur.length) { segs.push(cur); cur = []; }
+      cur.push(el);
+    }
+    if (cur.length) segs.push(cur);
+    for (const seg of segs) {
+      const as = seg.filter((el) => el.classList.contains('m-assistant'));
+      let finalIdx = -1;
+      as.forEach((el, i) => { if (el.hasAttribute('data-hastext')) finalIdx = i; });
+      if (finalIdx < 0) continue; // no textual answer to keep — leave the segment alone
+      const group = as.filter((el, i) => i !== finalIdx && !el.querySelector('img.msg-img'));
+      if (!group.length) continue;
+      const n = group.length;
+      const details = document.createElement('details');
+      details.className = 'worklog';
+      details.innerHTML =
+        '<summary><span class="wl-name">Work log</span>' +
+        `<span class="wl-count">${n} ${n === 1 ? 'entry' : 'entries'}</span></summary>` +
+        '<div class="wl-body"></div>';
+      const body = details.querySelector('.wl-body');
+      group[0].before(details);
+      for (const el of group) body.appendChild(el);
+    }
   }
 
   document.getElementById('theme-toggle').addEventListener('click', () => {
@@ -156,12 +206,13 @@
         if (m.role === 'user') {
           html += `<div class="m-user${hasText ? '' : ' no-text'}">${hasText ? md(m.content) : ''}` + atts.map(attachmentHtml).join('') + '</div>';
         } else {
-          html += '<div class="m-assistant">' + (hasText ? md(m.content) : '') +
+          html += `<div class="m-assistant"${hasText ? ' data-hastext="1"' : ''}>` + (hasText ? md(m.content) : '') +
             atts.map(attachmentHtml).join('') + '</div>';
         }
       }
       html += '</div><footer>Shared from Orion — read-only.</footer>';
       root.innerHTML = html;
+      foldWorkLogs();
       wireCopyButtons(root);
     })
     .catch((e) => {
