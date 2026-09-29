@@ -66,30 +66,21 @@ a { color: var(--accent); }
    Logo — Orion's belt, in ink
    ============================================================ */
 .orion-mark { display: flex; align-items: center; gap: 11px; }
-.orion-mark img { display: block; }
-.orion-mark.sm img { width: 26px; height: 26px; }
+.orion-mark svg { display: block; }
+.orion-mark.sm svg { width: 26px; height: 26px; }
 .orion-mark.lg { justify-content: center; }
-.orion-mark.lg img { width: 44px; height: 44px; }
-.orion-mark.xl img { width: 64px; height: 64px; }
-/* ---------- logo sheen — light rotating in place inside the mark ----------
-   The glyph itself stays perfectly still; a soft highlight orbits within it,
-   masked to the mark's exact shape. Continuous rotation, never a sweep. */
-@property --sheen-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
-.logo-glyph { position: relative; display: inline-flex; }
-.logo-glyph::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
-  -webkit-mask-image: url(/logo-mark.png?v=5926458);
-  mask-image: url(/logo-mark.png?v=5926458);
-  -webkit-mask-size: contain; mask-size: contain;
-  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
-  -webkit-mask-position: center; mask-position: center;
-  background: conic-gradient(from var(--sheen-angle),
-    transparent 0deg, rgba(255,255,255,.30) 55deg, transparent 115deg);
-  animation: sheen-spin 9s linear infinite;
-}
-@keyframes sheen-spin { to { --sheen-angle: 360deg; } }
+.orion-mark.lg svg { width: 44px; height: 44px; }
+.orion-mark.xl svg { width: 64px; height: 64px; }
+/* ---------- logo flow — the ribbons slide diagonally through the mark ----------
+   Eight traced copies of the two ribbons (main + followers + leaders) glide
+   as a seamless loop; the SVG viewport clips them to the icon square. */
+.logo-glyph { display: inline-flex; overflow: hidden; }
+.logo-glyph svg { display: block; width: 100%; height: 100%; }
+.logo-flow { animation: logo-flow 16s linear infinite; }
+@keyframes logo-flow { to { transform: translate(410.1px, 410.1px); } }
 @media (prefers-reduced-motion: reduce) {
-  .logo-glyph::after { animation: none; opacity: 0; }
+  .logo-flow { animation: none; }
+  .logo-flow path[transform] { display: none; }
 }
 .wordmark { font-weight: 700; font-size: 17px; letter-spacing: -.02em; }
 .wordmark.sm { font-size: 15px; }
@@ -342,7 +333,7 @@ button.avatar.lg:hover { opacity: .85; }
   border-bottom: 1px solid var(--hairline);
 }
 .side-head .orion-mark { display: flex; align-items: center; gap: 8px; }
-.side-head .orion-mark img { width: 22px; height: 22px; }
+.side-head .orion-mark svg { width: 22px; height: 22px; }
 /* Search + new-chat stay glued together at the right edge. */
 .side-actions { display: flex; align-items: center; gap: 2px; }
 .conv-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
@@ -1603,7 +1594,7 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
     transition-duration: .01ms !important;
   }
   .starfield::before { display: none; }
-  .orion-mark svg .orbit { animation: none; }
+  .orion-mark svg .logo-flow { animation: none; }
 }
 
 /* ============================================================
