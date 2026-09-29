@@ -1778,45 +1778,9 @@ async function runToolLoop({
     if (stopReason) break;
   }
 
-  if (!finalText.trim() && !isChild && stopReason !== 'aborted') {
-    // Never leave the user staring at silence — own the miss in one line.
-    // Skipped when the turn already produced something visible (e.g. a
-    // sent image with no accompanying text): the row has attachments.
-    let visible = false;
-    try {
-      const aid = getAssistantId?.();
-      if (aid) {
-        visible = !!db
-          .prepare('SELECT 1 FROM attachments WHERE message_id = ? LIMIT 1')
-          .get(aid);
-      }
-    } catch {
-      /* a lookup failure must not kill the loop */
-    }
-    if (!visible) {
-      // If the run did real tool work, tell the user what was actually done
-      // instead of just saying "I got stuck" — the work happened, the model
-      // just never wrote the summary. List the tools used so the user has
-      // something concrete.
-      const worked = Object.keys(toolCounts).length > 0;
-      let msg;
-      if (worked) {
-        const parts = Object.entries(toolCounts).map(([t, n]) => `${t}×${n}`);
-        msg =
-          `I did the work (${parts.join(', ')}) but couldn't write up the summary — ` +
-          `say "summarize what you did" and I'll report back on the changes.`;
-      } else {
-        msg =
-          'I got stuck on that one and couldn\'t finish — say "try again" and I\'ll take another run at it.';
-      }
-      try {
-        onNote(msg);
-      } catch {
-        /* persistence must not kill the loop */
-      }
-      finalText = msg;
-    }
-  }
+  // If the run ends with no text and no tools, that's a model failure —
+  // not something the agent should pretend to have said. Leave finalText
+  // empty; the caller surfaces it as an error, not as the agent speaking.
 
   return { finalText, steps, toolCounts, stopReason };
 }
@@ -2137,6 +2101,13 @@ export async function runAgentLoop({
       status = 'stopped';
       const row = db.prepare('SELECT content FROM messages WHERE id = ?').get(assistantId);
       appendStoppedNote(row?.content || '');
+    }
+
+    // The model failed to produce any output after all recovery attempts.
+    // Surface it as an error, not as the agent speaking — the agent should
+    // never pretend "I got stuck, say try again".
+    if (!finalText.trim() && status === 'done') {
+      throw new Error('The AI model returned no output after multiple attempts.');
     }
 
     return { finalText, status };
