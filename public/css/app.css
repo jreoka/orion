@@ -1066,21 +1066,25 @@ button.avatar.lg:hover { opacity: .85; }
   position: absolute; top: 100%; right: 4px; margin: 6px 0 0;
   flex-wrap: nowrap; /* one line — never a wrapped column in a narrow bubble */
 }
-/* Assistant hover buttons (+ / copy) live in the empty space below-left of
-   the message instead of right-aligned — there they'd hang 10px over the
-   next message's top edge (38px of buttons in a 28px gap). Left matches
-   where the reaction chips appear once you react. */
+/* Assistant hover buttons (+ / copy) sit inside the message's bottom edge
+   on hover-capable devices — 32px buttons can't fit in the 28px gap without
+   clipping the next message. Left matches where reaction chips appear. */
 .msg.assistant .rx-row:not(:has(.rx-chip)) {
   right: auto;
   left: 0;
 }
-/* Hover-capable: the user message's floating copy/+ row straddles the
-   bubble's bottom edge instead of hanging fully below it — 38px of buttons
-   in a 28px message gap would otherwise nearly touch the next message's
-   text. Touch keeps the below-bubble row with its reserved 40px. */
+@media (hover: hover) {
+  .msg.assistant .rx-row:not(:has(.rx-chip)) {
+    top: auto; bottom: 6px; margin: 0;
+  }
+}
+/* Hover-capable: the user message's floating copy/+ row sits inside the
+   bubble's bottom edge (overlapping its padding) instead of hanging below —
+   32px buttons can't fit in the 28px message gap without clipping the
+   next message. Touch keeps the below-bubble row with its reserved 40px. */
 @media (hover: hover) {
   .msg.user .rx-row:not(:has(.rx-chip)) {
-    top: 100%; margin: -18px 0 0; right: 10px;
+    top: auto; bottom: 6px; margin: 0; right: 10px;
   }
 }
 .rx-chip {
