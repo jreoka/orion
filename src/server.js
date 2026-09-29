@@ -805,36 +805,54 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
        WHERE id IN (${ph}) AND staged = 1 AND user_id = ?`
     ).run(messageId, ...attachmentIds, req.user.id);
     // Copy claimed files into the agent's sandbox workspace so it can
-    // read/edit them with its file tools. The agent's workspace is a Docker
-    // volume; without this copy, the agent sees the filename in history
-    // but the file isn't on disk anywhere it can reach.
+    // read/edit them with its file tools. The agent runs in a separate
+    // container (orion-u<id>); we use `docker cp` via the mounted Docker
+    // socket since the sandbox volume isn't mounted here.
     try {
       const claimed = db
         .prepare('SELECT filename, path FROM attachments WHERE message_id = ? AND staged = 0')
         .all(messageId);
-      const volDir = `/var/lib/docker/volumes/orion-u${req.user.id}-data/_data`;
-      if (claimed.length && fs.existsSync(volDir)) {
-        for (const c of claimed) {
-          const src = path.resolve(DATA_DIR, c.path);
-          const base = path.resolve(DATA_DIR) + path.sep;
-          if (!src.startsWith(base)) continue; // path traversal guard
-          const safeName = path.basename(c.filename || 'file').slice(0, 255) || 'file';
-          const dest = path.join(volDir, safeName);
-          // Don't overwrite an existing workspace file with the same name —
-          // suffix it so the user's work isn't clobbered.
-          let finalDest = dest;
-          let n = 1;
-          while (fs.existsSync(finalDest)) {
-            const ext = path.extname(safeName);
-            const stem = path.basename(safeName, ext);
-            finalDest = path.join(volDir, `${stem}_${n}${ext}`);
-            if (++n > 100) break;
+      if (claimed.length) {
+        const { execFileSync } = await import('node:child_process');
+        const container = `orion-u${req.user.id}`;
+        // Verify the sandbox container exists before trying to copy.
+        let exists = false;
+        try {
+          execFileSync('docker', ['inspect', container], { stdio: 'ignore' });
+          exists = true;
+        } catch { /* no sandbox yet — agent will see content via history */ }
+        if (exists) {
+          const dataRoot = path.resolve(DATA_DIR) + path.sep;
+          for (const c of claimed) {
+            const src = path.resolve(DATA_DIR, c.path);
+            if (!src.startsWith(dataRoot)) continue; // path traversal guard
+            if (!fs.existsSync(src)) continue;
+            const safeName = path.basename(c.filename || 'file').slice(0, 255) || 'file';
+            try {
+              // docker cp to the sandbox workspace. De-duplicate by checking
+              // existing files first via docker exec.
+              let destName = safeName;
+              let n = 1;
+              try {
+                const ls = execFileSync(
+                  'docker', ['exec', container, 'ls', '/home/agent/workspace'],
+                  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+                );
+                const existing = new Set(ls.split('\n').map(s => s.trim()));
+                while (existing.has(destName) && n <= 100) {
+                  const ext = path.extname(safeName);
+                  const stem = path.basename(safeName, ext);
+                  destName = `${stem}_${n}${ext}`;
+                  n++;
+                }
+              } catch { /* ls failed — use original name */ }
+              execFileSync(
+                'docker',
+                ['cp', src, `${container}:/home/agent/workspace/${destName}`],
+                { stdio: 'ignore' }
+              );
+            } catch { /* copy failure shouldn't block the message */ }
           }
-          try {
-            fs.copyFileSync(src, finalDest);
-            // The sandbox runs as a non-root user; make sure it can read it.
-            try { fs.chmodSync(finalDest, 0o644); } catch { /* best effort */ }
-          } catch { /* copy failure shouldn't block the message */ }
         }
       }
     } catch { /* attachment copy must never block the message */ }
