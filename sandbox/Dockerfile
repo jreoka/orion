@@ -11,10 +11,17 @@ FROM mcr.microsoft.com/playwright:v1.49.0-noble
 # `pip install --user` (no root). Keep the base image lean — don't pre-install
 # heavy stacks like torch/numpy here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-venv git curl jq docker.io \
+        python3 python3-pip python3-venv git curl jq docker.io sudo \
     && rm -rf /var/lib/apt/lists/* \
     && npm i -g playwright@1.49.0 \
     && docker --version
+
+# The agent runs as non-root `agent`, but needs to install system packages.
+# Give it passwordless sudo ONLY for apt-get/apt — not full root. The
+# container's no-new-privileges:true prevents setuid escapes, so this is safe.
+RUN echo "agent ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt" > /etc/sudoers.d/agent-apt \
+    && chmod 0440 /etc/sudoers.d/agent-apt \
+    && visudo -c
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules
