@@ -45,8 +45,8 @@ const STUCK_REPEATS = 3; // identical consecutive tool calls before we stop
 export const SYSTEM_PROMPT = `You are Orion, a helpful AI assistant with your own Linux computer — a Docker VM whose home directory is /home/agent/workspace. You also have a real headless Chromium browser inside that VM.
 
 Your tools:
-- exec: run any shell command in the VM (install packages with apt-get, run python/node scripts, curl APIs, process files, …). Prefer non-interactive commands; long jobs should finish within the timeout you set.
-- read_file / write_file / list_files: work with files in /home/agent/workspace (paths are confined there). There is NO "edit" tool — to change a file, use write_file with the complete new content, or exec with sed/perl/python for surgical edits. Never call a tool named "edit". Files the user attaches to their messages are copied into your workspace automatically — look for them by name with list_files or read_file; if the user says "the file I attached" and you don't see it, list the workspace root.
+- exec: run any shell command in the VM (run python/node scripts, curl APIs, process files, …). You are NOT root — apt-get won't work. For Python, numpy/scipy/torch (CPU) are pre-installed system-wide; for other packages use pip install --user. Prefer non-interactive commands; long jobs should finish within the timeout you set.
+- read_file / write_file / list_files / edit_file: work with files in /home/agent/workspace (paths are confined there). For targeted changes, prefer edit_file (search-and-replace with exact old_text) over rewriting the whole file with write_file. Files the user attaches to their messages are copied into your workspace automatically — look for them by name with list_files or read_file; if the user says "the file I attached" and you don't see it, list the workspace root.
 - web_fetch: fetch a URL and get its readable text back. Use it for docs, articles, API responses — anything on the web.
 - web_search: search the web — clean titles, URLs, and snippets. Never curl search engines, APIs, or HTML pages with exec to research something — that is what this tool is for.
 - browser_shot: take a real screenshot of a URL with headless Chromium and attach it to your reply so the user can see it. You receive the screenshot as vision too — actually look at it and describe or verify what it genuinely shows. Use it when the user wants to SEE a page, or to verify how a page you built looks. Prefer this over launching Chromium yourself. If you must launch Chromium manually via exec (e.g. for CDP remote debugging), ALWAYS include --no-sandbox --disable-dev-shm-usage flags — the sandbox container cannot use Chrome's sandbox, and it will fail to start without them.
@@ -130,6 +130,23 @@ export const TOOLS = [
           content: { type: 'string', description: 'The full file content' },
         },
         required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_file',
+      description:
+        'Surgically edit a text file in /home/agent/workspace via search-and-replace. Provide old_text (exact match, including whitespace) and new_text. Fails if old_text is not found or matches multiple times — then read the file and be more specific. Use this for targeted changes instead of rewriting the whole file with write_file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute path or path relative to the workspace' },
+          old_text: { type: 'string', description: 'Exact text to find (must match once)' },
+          new_text: { type: 'string', description: 'Replacement text' },
+        },
+        required: ['path', 'old_text', 'new_text'],
       },
     },
   },
@@ -373,6 +390,33 @@ const MEMORY_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'todo_write',
+      description:
+        'Track a multi-step task with a todo list. Use this when a task has 3+ steps or spans many tool calls — it keeps you on track and shows the user progress. Each item: content (short), status (pending/in_progress/completed), activeForm (present-tense description for the working indicator). Call with the full updated list each time.',
+      parameters: {
+        type: 'object',
+        properties: {
+          todos: {
+            type: 'array',
+            description: 'The full todo list',
+            items: {
+              type: 'object',
+              properties: {
+                content: { type: 'string', description: 'Short description of the step' },
+                status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+                activeForm: { type: 'string', description: 'Present-tense description, e.g. "Fixing the thumbnail ladder"' },
+              },
+              required: ['content', 'status'],
+            },
+          },
+        },
+        required: ['todos'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'soul_note',
       description:
         'Append a dated note to the "Evolving" section of SOUL.md — who you are. Use only when something real about your identity or working style has changed (a durable preference you discovered, a way of working you adopted). Tell the user when you do this. Never rewrite the base soul without the user explicitly agreeing.',
@@ -463,6 +507,7 @@ function summarizeTool(name, args) {
     case 'exec': return describeCommand(str(args.command));
     case 'read_file': { const f = base(args.path); return f ? `Reading ${f}…` : 'Reading a file…'; }
     case 'write_file': { const f = base(args.path); return f ? `Writing ${f}…` : 'Writing a file…'; }
+    case 'edit_file': { const f = base(args.path); return f ? `Editing ${f}…` : 'Editing a file…'; }
     case 'list_files': { const f = base(args.path); return f ? `Looking through ${f}…` : 'Looking through files…'; }
     case 'web_fetch': return `Reading ${domain(args.url)}…`;
     case 'web_search': return 'Searching the web…';
@@ -483,6 +528,11 @@ function summarizeTool(name, args) {
     case 'vault_list': return 'Checking the vault…';
     case 'vault_delete': return 'Updating the vault…';
     case 'remember': return 'Saving a memory…';
+    case 'todo_write': {
+      const todos = execCtx?.todos;
+      const current = Array.isArray(todos) ? todos.find((t) => t.status === 'in_progress') : null;
+      return current ? current.activeForm || current.content : 'Updating task list…';
+    }
     case 'soul_note': return 'Updating notes…';
     default: return 'Working…';
   }
@@ -941,6 +991,19 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       const { bytes, path: p } = await sandboxWriteFile(userId, args.path, args.content);
       return { text: `Wrote ${bytes} bytes to ${p}` };
     }
+    case 'edit_file': {
+      if (typeof args.old_text !== 'string' || !args.old_text)
+        throw new Error('edit_file: old_text must be a non-empty string');
+      const { content, path: p } = await sandboxReadFile(userId, args.path);
+      const idx = content.indexOf(args.old_text);
+      if (idx === -1)
+        throw new Error(`edit_file: old_text not found in ${p} — read the file and copy the exact text including whitespace`);
+      if (content.indexOf(args.old_text, idx + 1) !== -1)
+        throw new Error(`edit_file: old_text matches multiple times in ${p} — include more surrounding context to make it unique`);
+      const updated = content.slice(0, idx) + (args.new_text || '') + content.slice(idx + args.old_text.length);
+      const { bytes } = await sandboxWriteFile(userId, args.path, updated);
+      return { text: `Edited ${p} (${bytes} bytes)` };
+    }
     case 'list_files': {
       return { text: await sandboxListFiles(userId, args.path || '.') };
     }
@@ -1218,6 +1281,25 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       const date = new Date().toISOString().slice(0, 10);
       await appendIdentityFile(userId, 'MEMORY.md', `- ${date}: ${text}`);
       return { text: 'Noted — saved to your persistent memory.' };
+    }
+    case 'todo_write': {
+      const todos = Array.isArray(args.todos) ? args.todos : [];
+      if (!todos.length) throw new Error('todo_write: todos array is required');
+      // Validate and normalize.
+      const normalized = todos.slice(0, 20).map((t, i) => ({
+        content: String(t.content || `Step ${i + 1}`).slice(0, 200),
+        status: ['pending', 'in_progress', 'completed'].includes(t.status) ? t.status : 'pending',
+        activeForm: String(t.activeForm || t.content || '').slice(0, 200),
+      }));
+      // Store in the run context so it persists across turns in this run.
+      if (execCtx) execCtx.todos = normalized;
+      const pending = normalized.filter((t) => t.status === 'pending').length;
+      const done = normalized.filter((t) => t.status === 'completed').length;
+      const current = normalized.find((t) => t.status === 'in_progress');
+      let summary = `Todo list updated: ${done}/${normalized.length} done`;
+      if (current) summary += ` — now: ${current.activeForm || current.content}`;
+      else if (pending) summary += ` — ${pending} pending`;
+      return { text: summary };
     }
     case 'soul_note': {
       const text = String(args.text ?? '').trim().slice(0, 2000);
