@@ -448,7 +448,7 @@ export const TOOLS = [
     type: 'function',
     function: {
       name: 'vault_delete',
-      description: 'Permanently delete a secret from the vault by its id (see vault_list). Confirm with the user first.',
+      description: 'Permanently delete a secret from the vault by its id (see vault_list). Use when a secret is stale, revoked, or the user asked to remove it.',
       parameters: {
         type: 'object',
         properties: {
