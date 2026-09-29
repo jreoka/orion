@@ -4,6 +4,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { TOTP, Secret } from 'otpauth';
+import QRCode from 'qrcode';
 import { db } from './db.js';
 import { httpError } from './auth.js';
 import { encryptSecret, decryptSecret } from './vault.js';
@@ -39,14 +40,15 @@ function getUserRow(userId) {
 }
 
 /** Start 2FA setup: returns a fresh secret + otpauth URL; stores it pending. */
-export function beginTotpSetup(userId) {
+export async function beginTotpSetup(userId) {
   const user = getUserRow(userId);
   if (user.totp_enabled) throw httpError(400, '2FA is already enabled');
   const secret = new Secret({ size: 20 });
   const secretBase32 = secret.base32;
   const url = makeTotp(secretBase32, user.username).toString();
+  const qrDataUrl = await QRCode.toDataURL(url, { width: 220, margin: 1 });
   db.prepare('UPDATE users SET totp_pending_secret = ? WHERE id = ?').run(encryptSecret(secretBase32), userId);
-  return { secret: secretBase32, otpauth_url: url };
+  return { secret: secretBase32, otpauth_url: url, qr_data_url: qrDataUrl };
 }
 
 function randomBackupCodes(n = 10) {

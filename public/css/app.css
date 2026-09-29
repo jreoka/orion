@@ -1505,6 +1505,8 @@ button.avatar.lg:hover { opacity: .85; }
 }
 .badge.ok { background: var(--success-soft); border-color: transparent; color: var(--success); }
 .secret-row { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+.twofa-qr { margin: 12px 0; }
+.twofa-qr img { border-radius: 8px; background: #fff; display: block; }
 .secret {
   display: inline-block; padding: 10px 14px;
   background: var(--paper-2);

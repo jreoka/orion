@@ -4584,6 +4584,7 @@ function render2faBox() {
     <button id="twofa-setup-btn" class="btn">Set up 2FA</button></div>
     <div id="twofa-setup" hidden>
       <p class="muted">Scan this with your authenticator app, then enter a code to confirm.</p>
+      <div class="twofa-qr"><img id="twofa-qr-img" alt="2FA setup QR code" width="220" height="220"></div>
       <div class="secret-row"><code id="twofa-secret" class="secret"></code><button id="twofa-copy" class="btn small">Copy</button></div>
       <form id="twofa-confirm-form" class="row-form">
         <input id="twofa-confirm-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="6-digit code" class="input">
@@ -4609,6 +4610,7 @@ function render2faBox() {
     try {
       const d = await api('/api/auth/2fa/setup', { method: 'POST', body: { password: pw } });
       $('#twofa-secret').textContent = d.secret || '';
+      if (d.qr_data_url) $('#twofa-qr-img').src = d.qr_data_url;
       $('#twofa-copy').onclick = async () => {
         try { await navigator.clipboard.writeText(d.secret || ''); toast('Copied'); }
         catch { toast('Copy failed — long-press the code'); }
@@ -4620,9 +4622,11 @@ function render2faBox() {
         errEl.hidden = true;
         try {
           const r = await api('/api/auth/2fa/confirm', { method: 'POST', body: { code } });
-          showBackupCodes(r.backup_codes || []);
+          // Re-render first (it rebuilds the box), THEN show the codes —
+          // otherwise the re-render wipes the just-shown backup codes.
           _twofaStatus = await api('/api/auth/2fa/status');
           render2faBox();
+          showBackupCodes(r.backup_codes || []);
         } catch (err) { errEl.textContent = err.message; errEl.hidden = false; }
       };
     } catch (err) {
