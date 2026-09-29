@@ -1460,9 +1460,10 @@ button.avatar.lg:hover { opacity: .85; }
 #lightbox img { max-width: 94vw; max-height: 92vh; border-radius: 12px; }
 #lightbox-close {
   position: absolute; top: calc(16px + env(safe-area-inset-top)); right: 16px;
-  background: rgba(250, 247, 240, .14); color: var(--paper); width: 44px; height: 44px;
+  background: rgba(250, 247, 240, .32); color: #fff; width: 44px; height: 44px;
+  font-size: 20px; font-weight: 700; border-radius: 50%;
 }
-#lightbox-close:hover { background: rgba(250, 247, 240, .24); color: var(--paper); }
+#lightbox-close:hover { background: rgba(250, 247, 240, .45); color: #fff; }
 
 /* ============================================================
    Settings
