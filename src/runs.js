@@ -205,6 +205,7 @@ export async function runConversation(
       userId,
       conversationId: id,
       userText,
+      attachmentNames: opts.attachmentNames,
       settings: globalSettings(),
       shouldAbort: () => isStopRequested(id),
       // Lets the agent distinguish a deploy/crash abort (the run will be

@@ -963,7 +963,15 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
 
   // A run is already active — the message stays queued; the in-flight run
   // chains a follow-up when it finishes. Never 409: sending mid-run is fine.
-  if (!startRunIfIdle(conv.id, req.user.id, content, { trigger: 'user-message', hasAttachments: attachmentIds.length > 0 })) {
+  let attachmentNames = [];
+  if (attachmentIds.length) {
+    try {
+      const ph = attachmentIds.map(() => '?').join(',');
+      attachmentNames = db.prepare(`SELECT filename FROM attachments WHERE id IN (${ph})`)
+        .all(...attachmentIds).map(r => r.filename).filter(Boolean);
+    } catch { /* titling is best-effort */ }
+  }
+  if (!startRunIfIdle(conv.id, req.user.id, content, { trigger: 'user-message', hasAttachments: attachmentIds.length > 0, attachmentNames })) {
     publish(conv.id, { type: 'queued' });
     return res.json({ message, queued: true });
   }

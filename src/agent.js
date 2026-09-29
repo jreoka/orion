@@ -2179,9 +2179,9 @@ export async function runAgent({
 export async function runAgentContinuation({
   userId, conversationId, userText, settings,
   shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle,
-  noUsageCharge,
+  noUsageCharge, attachmentNames,
 }) {
-  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle, noUsageCharge });
+  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle, noUsageCharge, attachmentNames });
 }
 
 /**
@@ -2243,15 +2243,19 @@ export async function autoCaptureMemories({ userId, conversationId, settings }) 
   }
 }
 
-export async function generateChatTitle({ userId, conversationId, settings, userText, finalText }) {  const fallback = () => {
-    const t = String(userText || '').slice(0, 40);
-    return (String(userText || '').length > 40 ? t + '…' : t) || 'New chat';
+export async function generateChatTitle({ userId, conversationId, settings, userText, attachmentNames, finalText }) {
+  const attLabel = Array.isArray(attachmentNames) && attachmentNames.length
+    ? `[shared ${attachmentNames.length === 1 ? 'a file' : attachmentNames.length + ' files'}: ${attachmentNames.join(', ')}]`
+    : '';
+  const fallback = () => {
+    const t = String(userText || attLabel || '').slice(0, 40);
+    return (String(userText || attLabel || '').length > 40 ? t + '…' : t) || 'New chat';
   };
   let title = '';
   try {
     const { base_url: baseUrl, api_key: apiKey, model } = settings || {};
     if (!apiKey) throw new Error('no llm configured');
-    const u = String(userText || '').replace(/\s+/g, ' ').slice(0, 400);
+    const u = String(userText || attLabel || '').replace(/\s+/g, ' ').slice(0, 400);
     const a = String(finalText || '').replace(/\s+/g, ' ').slice(0, 400);
     const { content, usage } = await streamChatCompletion({
       baseUrl,
@@ -2286,6 +2290,7 @@ export async function runAgentLoop({
   onExecStart, onExecEnd, // optional: track the in-flight sandbox exec (Stop support)
   noAutoTitle, // system-injected prompts (heartbeat, tasks) must never title a chat
   noUsageCharge, // system-initiated runs (heartbeat) neither count toward nor are gated by the weekly quota
+  attachmentNames, // filenames of attachments on the triggering message (for titling photo-only messages)
 }) {
   const deadlineAt = null; // parent runs have no wall-clock cap
   // Default replay cap: the whole conversation is unbounded and callers
@@ -2333,11 +2338,12 @@ export async function runAgentLoop({
   // chats titled "Check in…" / "Task: …".
   {
     const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId);
-    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && userText && !noAutoTitle && !isOverLimit(userId)) {
+    const titleTrigger = userText || (Array.isArray(attachmentNames) && attachmentNames.length ? attachmentNames.join(', ') : '');
+    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && titleTrigger && !noAutoTitle && !isOverLimit(userId)) {
       // Fire-and-forget: the title is published on the bus when it lands,
       // so the run isn't held up by a second model call. Failures fall
       // back to the old first-words slice inside generateChatTitle.
-      generateChatTitle({ userId, conversationId, settings, userText, finalText: '' }).catch(() => {});
+      generateChatTitle({ userId, conversationId, settings, userText, attachmentNames, finalText: '' }).catch(() => {});
     }
   }
   // Assistant message IDs created during this run, in turn order. At run end
