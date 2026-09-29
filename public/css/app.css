@@ -71,6 +71,26 @@ a { color: var(--accent); }
 .orion-mark.lg { justify-content: center; }
 .orion-mark.lg img { width: 44px; height: 44px; }
 .orion-mark.xl img { width: 64px; height: 64px; }
+/* ---------- logo sheen — light rotating in place inside the mark ----------
+   The glyph itself stays perfectly still; a soft highlight orbits within it,
+   masked to the mark's exact shape. Continuous rotation, never a sweep. */
+@property --sheen-angle { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+.logo-glyph { position: relative; display: inline-flex; }
+.logo-glyph::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  -webkit-mask-image: url(/logo-mark.png?v=5926458);
+  mask-image: url(/logo-mark.png?v=5926458);
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  background: conic-gradient(from var(--sheen-angle),
+    transparent 0deg, rgba(255,255,255,.30) 55deg, transparent 115deg);
+  animation: sheen-spin 9s linear infinite;
+}
+@keyframes sheen-spin { to { --sheen-angle: 360deg; } }
+@media (prefers-reduced-motion: reduce) {
+  .logo-glyph::after { animation: none; opacity: 0; }
+}
 .wordmark { font-weight: 700; font-size: 17px; letter-spacing: -.02em; }
 .wordmark.sm { font-size: 15px; }
 
