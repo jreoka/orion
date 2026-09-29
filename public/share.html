@@ -1,124 +1,42 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="share-page">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#faf7f0">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%277%27%20fill%3D%27%23171310%27%2F%3E%3Ccircle%20cx%3D%279.5%27%20cy%3D%2721.5%27%20r%3D%272.7%27%20fill%3D%27%23beb7a8%27%2F%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%273.3%27%20fill%3D%27%236974bc%27%2F%3E%3Ccircle%20cx%3D%2722.5%27%20cy%3D%2710.5%27%20r%3D%272.7%27%20fill%3D%27%23beb7a8%27%2F%3E%3C%2Fsvg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%277%27%20fill%3D%27%23171310%27%2F%3E%3Ccircle%20cx%3D%279.5%27%20cy%3D%2721.5%27%20r%3D%272.7%27%20fill%3D%27%23beb7a8%27%2F%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%273.3%27%20fill%3D%27%236974bc%27%2F%3E%3Ccircle%20cx%3D%2722.5%27%20cy%3D%2710.5%27%20r%3D%272.7%27%20fill%3D%27%23beb7a8%27%2F%3E%3C%2Fsvg%3E">
 <title>Shared chat · Orion</title>
+<!-- The real app stylesheet: message layout, chips, work logs, lightbox and
+     copy buttons all stay in sync with the main chat automatically. -->
+<link rel="stylesheet" href="/css/app.css?v=fff38d8">
 <style>
-  :root {
-    --paper: #faf7f0; --lift: #fffdf8; --ink: #1c1813; --ink-2: #57503f;
-    --ink-3: #8d8474; --hairline: rgba(28,24,19,.13); --accent: #2e3fb8;
-    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
-    --sans: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  }
-  * { box-sizing: border-box; }
-  [data-theme="dark"] {
-    color-scheme: dark;
-    --paper: #171310; --lift: #1e1a14; --ink: #ece4d3; --ink-2: #b0a48c;
-    --ink-3: #776d5b; --hairline: rgba(236,228,211,.14); --accent: #8b9bff;
-  }
-  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--serif); }
-  .wrap { max-width: 720px; margin: 0 auto; padding: 48px 20px 80px; }
-  header { border-bottom: 1px solid var(--hairline); padding-bottom: 20px; margin-bottom: 28px; }
-  .kicker { font-family: var(--sans); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px; }
-  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 8px; font-weight: 600; }
-  .meta { font-family: var(--sans); font-size: 13px; color: var(--ink-3); }
-  .msg { display: flex; flex-direction: column; gap: 26px; }
-  .m-user { align-self: flex-end; max-width: 88%; background: var(--ink); color: var(--paper);
-    border-radius: 18px 18px 4px 18px; padding: 10px 16px; font-size: 16px; }
-  .m-user p { margin: 0; }
-  .m-user p + p { margin-top: .5em; }
-  .m-assistant { font-size: 17.5px; line-height: 1.65; }
-  .m-assistant h1, .m-assistant h2, .m-assistant h3 { line-height: 1.3; margin: 1.1em 0 .4em; }
-  .m-assistant h1 { font-size: 24px; } .m-assistant h2 { font-size: 21px; } .m-assistant h3 { font-size: 18px; }
-  .m-assistant p { margin: .7em 0; }
-  .m-assistant ul, .m-assistant ol { margin: .7em 0; padding-left: 1.4em; }
-  .m-assistant li { margin: .3em 0; }
-  .m-assistant code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86em;
-    background: rgba(28,24,19,.06); padding: .1em .35em; border-radius: 5px; }
-  .m-assistant pre { background: var(--lift); border: 1px solid var(--hairline); border-radius: 10px;
-    padding: 14px 16px; overflow-x: auto; font-size: 14px; line-height: 1.55; }
-  .m-assistant pre code { background: none; padding: 0; }
-  .m-assistant a { color: var(--accent); }
-  .m-assistant blockquote { border-left: 2px solid var(--hairline); margin: .8em 0; padding: .1em 0 .1em 1em; color: var(--ink-2); }
-  .m-assistant .tbl-wrap { margin: .8em 0; overflow-x: auto; border: 1px solid var(--hairline); border-radius: 10px; }
-  .m-assistant table { width: 100%; border-collapse: collapse; font-size: 15px; line-height: 1.5; font-family: var(--sans); }
-  .m-assistant th, .m-assistant td { border-bottom: 1px solid var(--hairline); padding: 8px 12px;
-    vertical-align: top; overflow-wrap: anywhere; text-align: left; }
-  .m-assistant tbody tr:last-child td { border-bottom: 0; }
-  .m-assistant thead th { font-family: var(--serif); font-weight: 700; background: rgba(28,24,19,.045);
-    white-space: nowrap; }
-  [data-theme="dark"] .m-assistant thead th { background: rgba(236,228,211,.06); }
-  .m-assistant tbody tr:nth-child(even) td { background: rgba(46,63,184,.05); }
-  [data-theme="dark"] .m-assistant tbody tr:nth-child(even) td { background: rgba(139,155,255,.06); }
-  .m-assistant img.msg-img { max-width: 320px; width: 100%; border-radius: 12px; margin: .5em 0; display: block;
-    cursor: zoom-in; border: 1px solid var(--hairline); transition: transform .15s; }
-  .m-user img.msg-img { max-width: 220px; width: 100%; border-radius: 8px; margin-top: .4em; display: block; cursor: zoom-in;
-    border: 1px solid var(--hairline); transition: transform .15s; }
-  .m-assistant img.msg-img:hover, .m-user img.msg-img:hover { transform: scale(1.015); }
-  .m-user.no-text img.msg-img { margin-top: 0; }
-  #lb { position: fixed; inset: 0; z-index: 100; background: rgba(10, 8, 6, .88);
-    display: none; align-items: center; justify-content: center; cursor: zoom-out; padding: 24px; }
-  #lb.open { display: flex; }
-  #lb img { max-width: 100%; max-height: 100%; border-radius: 10px; object-fit: contain; }
-  #lb-close { position: absolute; top: calc(16px + env(safe-area-inset-top)); right: 16px;
-    width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
-    background: rgba(250, 247, 240, .32); color: #fff; font-size: 20px; font-weight: 700;
-    display: flex; align-items: center; justify-content: center; line-height: 1; padding: 0 0 2px; }
-  #lb-close:hover { background: rgba(250, 247, 240, .45); }
-  .chip { display: inline-flex; align-items: center; gap: 8px; font-family: var(--sans); font-size: 13.5px; color: var(--ink-2);
-    border: 1px solid var(--hairline); border-radius: 999px; padding: 8px 14px; text-decoration: none; margin: .25em .35em .25em 0; }
-  .chip svg { display: block; flex-shrink: 0; }
-  .chip:hover { border-color: var(--ink-3); }
-  /* Your own bubbles: chips inherit the bubble text color, like the main chat. */
-  .m-user .chip { color: inherit; }
-  .worklog { border: 1px solid var(--hairline); border-radius: 12px; background: var(--lift);
-    padding: 4px 18px; margin: .2em 0; font-family: var(--sans); }
-  .worklog > summary { list-style: none; display: flex; align-items: baseline; gap: 8px; cursor: pointer;
-    color: var(--ink-3); font-size: 13px; padding: 10px 0; }
-  .worklog > summary::-webkit-details-marker { display: none; }
-  .worklog > summary::before { content: '›'; display: inline-block; transition: transform .18s; opacity: .7; }
-  .worklog[open] > summary::before { transform: rotate(90deg); }
-  .worklog .wl-body { display: flex; flex-direction: column; gap: 20px; padding: 2px 0 14px; }
-  /* Per-message copy button, mirroring the main chat's hover/hold affordance
-     (copy only — no react or reply on the read-only share page). */
-  .m-user, .m-assistant { -webkit-touch-callout: none; } /* no native iOS Copy bubble on long-press */
-  .m-copyrow { display: flex; height: 0; overflow: visible; transition: height .18s ease, margin-top .18s ease; }
-  .m-copyrow.ur { justify-content: flex-end; }
-  .msg-copy {
-    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
-    width: 32px; height: 32px; padding: 0; margin-top: 6px;
-    border-radius: 50%; border: 1px solid var(--hairline);
-    background: var(--lift); color: var(--ink-2); cursor: pointer;
-    box-shadow: 0 2px 6px rgba(28, 24, 19, .18);
-    opacity: 0; pointer-events: none; transition: opacity .15s;
-  }
-  .msg-copy svg { display: block; }
-  .msg-copy:hover { color: var(--ink); border-color: var(--ink-3); }
-  @media (hover: hover) {
-    .m-user:hover + .m-copyrow, .m-assistant:hover + .m-copyrow,
-    .m-copyrow:hover, .m-copyrow.show { height: 38px; margin-top: -18px; }
-    .m-user:hover + .m-copyrow .msg-copy, .m-assistant:hover + .m-copyrow .msg-copy,
-    .m-copyrow:hover .msg-copy, .m-copyrow.show .msg-copy { opacity: 1; pointer-events: auto; }
-  }
-  @media (hover: none) {
-    .m-copyrow.show { height: 38px; margin-top: -18px; }
-    .m-copyrow.show .msg-copy { opacity: 1; pointer-events: auto; }
-  }
-  .err { text-align: center; padding: 80px 20px; color: var(--ink-2); }
-  .err h1 { font-size: 22px; }
-  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--hairline);
-    font-family: var(--sans); font-size: 12.5px; color: var(--ink-3); }
-  #theme-toggle { position: fixed; top: 14px; right: 14px; width: 40px; height: 40px; border-radius: 50%;
-    border: 1px solid var(--hairline); background: var(--lift); color: var(--ink-2); cursor: pointer;
-    display: flex; align-items: center; justify-content: center; z-index: 10; }
-  #theme-toggle:hover { color: var(--ink); }
-  #theme-toggle svg { width: 19px; height: 19px; }
-  #theme-toggle .moon { display: none; }
-  [data-theme="dark"] #theme-toggle .sun { display: none; }
-  [data-theme="dark"] #theme-toggle .moon { display: block; }
+  /* Share-page shell only — everything below is page chrome (header, footer,
+     theme toggle, page scrolling). Message styling comes from app.css. */
+  html.share-page, html.share-page body { height: auto; min-height: 100%; overflow: visible; }
+  html.share-page body { display: block; }
+  .share-head { max-width: 720px; margin: 0 auto; padding: 48px 26px 0; }
+  .share-kicker { font-family: var(--sans); font-size: 12px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px; }
+  .share-title { font-size: 30px; line-height: 1.25; margin: 0 0 8px; font-weight: 600; }
+  .share-meta { font-family: var(--sans); font-size: 13px; color: var(--ink-3); }
+  .messages.share-list { overflow: visible; flex: none; padding-bottom: 8px; }
+  .share-foot { max-width: 720px; margin: 56px auto 0; padding: 18px 26px 80px;
+    border-top: 1px solid var(--hairline); font-family: var(--sans);
+    font-size: 12.5px; color: var(--ink-3); }
+  .share-err { text-align: center; padding: 80px 20px; color: var(--ink-2); }
+  .share-err h1 { font-size: 22px; }
+  /* Read-only page: the rx-copy button is the copy affordance. Suppress the
+     native iOS long-press Copy bubble so it doesn't double up. */
+  .share-page .msg { -webkit-touch-callout: none; }
+  #share-theme { position: fixed; top: 14px; right: 14px; width: 40px; height: 40px;
+    border-radius: 50%; border: 1px solid var(--hairline); background: var(--lift);
+    color: var(--ink-2); cursor: pointer; display: flex; align-items: center;
+    justify-content: center; z-index: 10; }
+  #share-theme:hover { color: var(--ink); }
+  #share-theme svg { width: 19px; height: 19px; }
+  #share-theme .moon { display: none; }
+  [data-theme="dark"] #share-theme .sun { display: none; }
+  [data-theme="dark"] #share-theme .moon { display: block; }
 </style>
 <script>
   // Apply the saved theme before first paint so the page never flashes.
@@ -132,181 +50,139 @@
 </script>
 </head>
 <body>
-<button id="theme-toggle" aria-label="Toggle dark mode">
+<button id="share-theme" aria-label="Toggle dark mode">
   <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
   <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
 </button>
-<div class="wrap" id="root"><div class="err"><p>Loading…</p></div></div>
-<div id="lb" role="dialog" aria-label="Image viewer"><img alt=""><button id="lb-close" aria-label="Close">✕</button></div>
-<script src="/js/markdown.js"></script>
+<div class="share-head" id="share-head" hidden>
+  <div class="share-kicker">Shared chat</div>
+  <h1 class="share-title" id="share-title"></h1>
+  <div class="share-meta" id="share-meta"></div>
+</div>
+<div class="messages share-list" id="share-messages"></div>
+<div class="share-foot" id="share-foot" hidden>Shared from Orion — read-only.</div>
+<div id="toasts" aria-live="polite"></div>
+<div id="lightbox" hidden>
+  <img id="lightbox-img" alt="">
+  <button id="lightbox-close" class="icon-btn" aria-label="Close">✕</button>
+</div>
+<script src="/js/markdown.js?v=2a82c31"></script>
+<script src="/js/render.js?v=RENDER_HASH"></script>
 <script>
 (function () {
-  const token = location.pathname.split('/').pop();
-  const root = document.getElementById('root');
+  'use strict';
+  var token = location.pathname.split('/').pop();
+  var list = document.getElementById('share-messages');
+  var byId = new Map();
+  var SHARE_OPTS = { copyOnly: true }; // read-only: copy button only, no reply/react
 
-  function isImageFile(name) { return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name || ''); }
-
-  // Same SVG paperclip the regular chat uses — never the emoji.
-  const SVG_CLIP = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 7.5 6.8 12.2a2.1 2.1 0 0 1-3-3l5.7-5.7a3.5 3.5 0 0 1 5 5l-5.7 5.7a4.9 4.9 0 0 1-7-7l5.2-5.2"/></svg>';
-
-  function attachmentHtml(a) {
-    return isImageFile(a.filename)
-      ? `<img class="msg-img" src="${esc(a.url)}" alt="${esc(a.filename)}" loading="lazy">`
-      : `<a class="chip" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" download="${esc(a.filename || 'file')}">${SVG_CLIP}<span>${esc(a.filename || 'file')}</span></a>`;
+  function toast(msg, kind) {
+    var el = document.createElement('div');
+    el.className = 'toast ' + (kind || '');
+    el.textContent = msg;
+    document.getElementById('toasts').appendChild(el);
+    setTimeout(function () { el.classList.add('out'); setTimeout(function () { el.remove(); }, 300); }, 2600);
   }
 
-  // Same copy glyph the main chat's message row uses.
-  const COPY_SVG = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5v5A1.5 1.5 0 0 0 4 10h1.5"/></svg>';
-  const CHECK_SVG = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4.5"/></svg>';
-  const copyRowHtml = (ur) =>
-    `<div class="m-copyrow${ur ? ' ur' : ''}"><button class="msg-copy" data-copybtn aria-label="Copy message" title="Copy">${COPY_SVG}</button></div>`;
-
-  async function copyTextPlain(t) {
-    try { await navigator.clipboard.writeText(t); return true; }
-    catch {
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch (e) {
       try {
-        const ta = document.createElement('textarea');
-        ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
         document.body.appendChild(ta); ta.select();
-        const ok = document.execCommand('copy'); ta.remove();
+        var ok = document.execCommand('copy'); ta.remove();
         return ok;
-      } catch { return false; }
+      } catch (e2) { return false; }
     }
   }
 
-  // Mirror the regular chat's work-log folding: within each run (assistant
-  // blocks between user messages), every assistant block except the final
-  // answer folds into an expandable Work log tray. Blocks with images stay
-  // visible, like in the regular view.
-  function foldWorkLogs() {
-    const box = root.querySelector('.msg');
-    if (!box) return;
-    const kids = [...box.children];
-    const segs = [];
-    let cur = [];
-    for (const el of kids) {
-      if (el.classList.contains('m-user') && cur.length) { segs.push(cur); cur = []; }
-      cur.push(el);
-    }
-    if (cur.length) segs.push(cur);
-    for (const seg of segs) {
-      const as = seg.filter((el) => el.classList.contains('m-assistant'));
-      let finalIdx = -1;
-      as.forEach((el, i) => { if (el.hasAttribute('data-hastext')) finalIdx = i; });
-      if (finalIdx < 0) continue; // no textual answer to keep — leave the segment alone
-      const group = as.filter((el, i) => i !== finalIdx && !el.querySelector('img.msg-img'));
-      if (!group.length) continue;
-      const n = group.length;
-      const details = document.createElement('details');
-      details.className = 'worklog';
-      details.innerHTML =
-        '<summary><span class="wl-name">Work log</span>' +
-        `<span class="wl-count">${n} ${n === 1 ? 'entry' : 'entries'}</span></summary>` +
-        '<div class="wl-body"></div>';
-      const body = details.querySelector('.wl-body');
-      group[0].before(details);
-      for (const el of group) {
-        // A message's copy row (if present) travels with it.
-        const row = el.nextElementSibling;
-        body.appendChild(el);
-        if (row && row.classList.contains('m-copyrow')) body.appendChild(row);
-      }
-    }
+  function shareMessageEl(m) {
+    var wrap = document.createElement('div');
+    wrap.className = 'msg ' + (m.role === 'user' ? 'user' : 'assistant');
+    wrap.dataset.mid = m.id || '';
+    if (m.run_start) wrap.dataset.runStart = '1';
+    wrap.innerHTML = m.role === 'user' ? userBubbleHtml(m, SHARE_OPTS) : assistantBodyHtml(m, SHARE_OPTS);
+    return wrap;
   }
 
-  root.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-copybtn]');
-    // Tap-away hides any long-press-revealed copy row.
-    if (!btn) {
-      root.querySelectorAll('.m-copyrow.show').forEach((r) => r.classList.remove('show'));
+  // Lightbox — same structure as the main chat.
+  var lb = document.getElementById('lightbox');
+  var lbImg = document.getElementById('lightbox-img');
+  function closeLb() { lb.hidden = true; lbImg.removeAttribute('src'); }
+  document.getElementById('lightbox-close').addEventListener('click', closeLb);
+  lb.addEventListener('click', function (e) { if (e.target === lb) closeLb(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !lb.hidden) closeLb(); });
+
+  list.addEventListener('click', function (e) {
+    var copyBtn = e.target.closest('[data-copy]');
+    if (copyBtn) {
+      // Mirror the main chat: copy the raw markdown source.
+      var mid = copyBtn.closest('.msg') && copyBtn.closest('.msg').dataset.mid;
+      var m = byId.get(String(mid));
+      copyText(m ? m.content || '' : '').then(function (ok) {
+        toast(ok ? 'Copied' : 'Copy failed', ok ? '' : 'error');
+      });
       return;
     }
-    const msg = btn.closest('.m-copyrow')?.previousElementSibling;
-    const text = msg ? msg.innerText.trim() : '';
-    if (!text) return;
-    copyTextPlain(text).then((ok) => {
-      if (!ok) return;
-      btn.innerHTML = CHECK_SVG;
-      setTimeout(() => { btn.innerHTML = COPY_SVG; }, 1200);
-    });
+    var img = e.target.closest('.msg-img');
+    if (img) {
+      lbImg.src = img.currentSrc || img.src;
+      lbImg.alt = img.alt || '';
+      lb.hidden = false;
+      return;
+    }
+    var quote = e.target.closest('[data-quote]');
+    if (quote) {
+      // Same jump + highlight ring as the main chat's jumpToMessage.
+      var el = list.querySelector('.msg[data-mid="' + CSS.escape(String(quote.dataset.quote)) + '"]');
+      if (!el) { toast('Original message is not loaded', 'error'); return; }
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.remove('quote-flash');
+      void el.offsetWidth;
+      el.classList.add('quote-flash');
+    }
   });
 
-  // Touch: long-press a message to reveal its copy button, mirroring the
-  // main chat's hold-to-reveal message actions. Native text selection is
-  // left alone — the button is just an extra affordance.
-  let pressTimer = null;
-  root.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 1 || e.target.closest('[data-copybtn]')) return;
-    const msg = e.target.closest('.m-user, .m-assistant');
-    if (!msg) return;
-    pressTimer = setTimeout(() => {
-      pressTimer = null;
-      try { navigator.vibrate && navigator.vibrate(10); } catch (e) { /* ignore */ }
-      root.querySelectorAll('.m-copyrow.show').forEach((r) => r.classList.remove('show'));
-      const row = msg.nextElementSibling;
-      if (row && row.classList.contains('m-copyrow')) row.classList.add('show');
-    }, 450);
-  }, { passive: true });
-  const cancelPress = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
-  root.addEventListener('touchmove', cancelPress, { passive: true });
-  root.addEventListener('touchend', cancelPress);
-  root.addEventListener('touchcancel', cancelPress);
-
-  document.getElementById('theme-toggle').addEventListener('click', () => {
-    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.getElementById('share-theme').addEventListener('click', function () {
+    var next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = next;
     try { localStorage.setItem('orion-share-theme', next); } catch (e) { /* ignore */ }
   });
 
-  // Lightbox: tap any image to view it full-screen, tap or Esc to close.
-  const lb = document.getElementById('lb');
-  const lbImg = lb.querySelector('img');
-  const closeLb = () => { lb.classList.remove('open'); lbImg.removeAttribute('src'); };
-  root.addEventListener('click', (e) => {
-    const img = e.target.closest('img.msg-img');
-    if (!img) return;
-    lbImg.src = img.currentSrc || img.src;
-    lbImg.alt = img.alt || '';
-    lb.classList.add('open');
-  });
-  lb.addEventListener('click', closeLb);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && lb.classList.contains('open')) closeLb();
-  });
-
+  list.innerHTML = '<div class="share-err"><p>Loading…</p></div>';
   fetch('/api/share/' + encodeURIComponent(token))
-    .then(async (r) => {
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Not found');
+    .then(function (r) {
+      if (!r.ok) throw new Error('gone');
       return r.json();
     })
-    .then((data) => {
+    .then(function (data) {
       document.title = (data.title || 'Shared chat') + ' · Orion';
-      const date = data.created_at
-        ? new Date(data.created_at * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+      document.getElementById('share-title').textContent = data.title || 'Untitled chat';
+      document.getElementById('share-meta').textContent = data.created_at
+        ? 'Shared ' + new Date(data.created_at * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
         : '';
-      let html = `<header><div class="kicker">Shared chat</div><h1>${esc(data.title || 'Untitled chat')}</h1>` +
-        (date ? `<div class="meta">Shared ${esc(date)}</div>` : '') + '</header><div class="msg">';
-      for (const m of data.messages) {
-        const hasText = m.content && String(m.content).trim().length > 0;
-        const atts = m.attachments || [];
-        // Tool-only turns (image sends, tool calls with no text) carry their
-        // attachments here; turns with neither text nor attachments are noise.
+      document.getElementById('share-head').hidden = false;
+      document.getElementById('share-foot').hidden = false;
+      list.innerHTML = '';
+      var frag = document.createDocumentFragment();
+      for (var m of data.messages) {
+        var hasText = m.content && String(m.content).trim().length > 0;
+        var atts = m.attachments || [];
+        // Tool-only turns carry their attachments here; turns with neither
+        // text nor attachments are noise.
         if (!hasText && !atts.length) continue;
-        if (m.role === 'user') {
-          html += `<div class="m-user${hasText ? '' : ' no-text'}">${hasText ? md(m.content) : ''}` + atts.map(attachmentHtml).join('') + '</div>' + copyRowHtml(true);
-        } else {
-          html += `<div class="m-assistant"${hasText ? ' data-hastext="1"' : ''}>` + (hasText ? md(m.content) : '') +
-            atts.map(attachmentHtml).join('') + '</div>' + copyRowHtml(false);
-        }
+        byId.set(String(m.id), m);
+        frag.appendChild(shareMessageEl(m));
       }
-      html += '</div><footer>Shared from Orion — read-only.</footer>';
-      root.innerHTML = html;
-      foldWorkLogs();
-      wireCopyButtons(root);
+      list.appendChild(frag);
+      // Same work-log folding as the main chat. Snapshots are historical, so
+      // every segment folds (no in-flight run to protect).
+      for (var seg of splitRuns([...list.children])) foldRunSegment(seg, new Set());
     })
-    .catch((e) => {
-      root.innerHTML = `<div class="err"><h1>This link doesn't work anymore.</h1>` +
-        `<p>${esc(e.message || 'The chat may have been unshared or deleted.')}</p></div>`;
+    .catch(function () {
+      list.innerHTML = '<div class="share-err"><h1>This link doesn\'t work anymore.</h1>' +
+        '<p>The chat may have been unshared or deleted.</p></div>';
     });
 })();
 </script>

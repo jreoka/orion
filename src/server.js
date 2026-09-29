@@ -1590,23 +1590,33 @@ function serveAttachmentFile(att, res) {
 function buildShareTranscript(conversationId, token) {
   return db
     .prepare(
-      `SELECT id, role, content, kind, created_at FROM messages
+      `SELECT id, role, content, kind, created_at, run_start, reply_to FROM messages
        WHERE conversation_id = ? AND role != 'tool'
          AND (kind IS NULL OR kind = 'message')
        ORDER BY id ASC`
     )
     .all(conversationId)
-    .map((m) => ({
-      ...m,
-      attachments: db
-        .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
-        .all(m.id)
-        .map((a) => ({
-          id: a.id,
-          filename: a.filename,
-          url: `/api/share/${token}/files/${a.id}`,
-        })),
-    }));
+    .map((m) => {
+      const msg = {
+        ...m,
+        attachments: db
+          .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
+          .all(m.id)
+          .map((a) => ({
+            id: a.id,
+            filename: a.filename,
+            url: `/api/share/${token}/files/${a.id}`,
+          })),
+      };
+      // Quote-reply preview, same shape as the main chat's messagePayload.
+      if (m.reply_to) {
+        const ref = db
+          .prepare('SELECT id, role, substr(content, 1, 300) AS excerpt FROM messages WHERE id = ?')
+          .get(m.reply_to);
+        if (ref) msg.reply_to_message = { id: ref.id, role: ref.role, excerpt: ref.excerpt };
+      }
+      return msg;
+    });
 }
 
 function shareSnapshot(token, title, conversationId) {
