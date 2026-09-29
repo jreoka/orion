@@ -3081,11 +3081,15 @@ function wireChat() {
   $('#composer').addEventListener('submit', (e) => {
     e.preventDefault();
     // While a run is active the send button has morphed into the stop
-    // button — clicking it stops the run. Enter still queues a message.
+    // button — clicking it stops the run. Enter still queues a message,
+    // and the queue button beside it queues without stopping.
     hConfirm();
     if (S.runActive) stopStream();
     else sendMessage();
   });
+  // Queue button: visible only mid-run when there's something to send.
+  // Queues the message without touching the in-flight run.
+  $('#queue-btn').addEventListener('click', () => { hConfirm(); sendMessage(); });
 
   // Draft restore happens in renderChat, once the conversation id is known.
   updateComposer();
@@ -3116,16 +3120,23 @@ function updateComposer() {
   const uploading = pendingUploads().some((p) => p.uploading);
   const hasFiles = pendingUploads().some((p) => !p.uploading && p.id != null);
   // While a run is active the single composer button morphs into the stop
-  // button (Enter still queues a message mid-run).
+  // button (Enter still queues a message mid-run). When there's text to
+  // send, a second queue button appears beside it so the message can be
+  // sent without stopping the run — the server holds it queued and chains
+  // a follow-up when the in-flight run finishes.
   const btn = $('#send-btn');
+  const qbtn = $('#queue-btn');
   if (S.runActive) {
     btn.classList.add('is-stop');
     btn.setAttribute('aria-label', 'Stop');
     btn.disabled = false;
+    qbtn.hidden = !(hasText || hasFiles);
+    qbtn.disabled = uploading;
   } else {
     btn.classList.remove('is-stop');
     btn.setAttribute('aria-label', 'Send');
     btn.disabled = uploading || (!hasText && !hasFiles);
+    qbtn.hidden = true;
   }
 }
 
