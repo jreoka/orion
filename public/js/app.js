@@ -4584,7 +4584,7 @@ function render2faBox() {
     <button id="twofa-setup-btn" class="btn">Set up 2FA</button></div>
     <div id="twofa-setup" hidden>
       <p class="muted">Scan this with your authenticator app, then enter a code to confirm.</p>
-      <div class="twofa-qr"><img id="twofa-qr-img" alt="2FA setup QR code" width="220" height="220"></div>
+      <div class="twofa-qr"><div class="qr-loading" id="twofa-qr-loading"><span class="spinner"></span></div><img id="twofa-qr-img" alt="2FA setup QR code" width="220" height="220" hidden></div>
       <div class="secret-row"><code id="twofa-secret" class="secret"></code><button id="twofa-copy" class="btn small">Copy</button></div>
       <form id="twofa-confirm-form" class="row-form">
         <input id="twofa-confirm-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="6-digit code" class="input">
@@ -4607,10 +4607,23 @@ function render2faBox() {
     const wrap = $('#twofa-setup');
     wrap.hidden = false;
     $('#twofa-setup-btn').hidden = true;
+    // Reset QR to loading state for (re)try.
+    $('#twofa-qr-img').hidden = true;
+    $('#twofa-qr-img').removeAttribute('src');
+    const qrLoading = $('#twofa-qr-loading');
+    qrLoading.hidden = false;
+    qrLoading.innerHTML = '<span class="spinner"></span>';
     try {
       const d = await api('/api/auth/2fa/setup', { method: 'POST', body: { password: pw } });
       $('#twofa-secret').textContent = d.secret || '';
-      if (d.qr_data_url) $('#twofa-qr-img').src = d.qr_data_url;
+      const qrImg = $('#twofa-qr-img');
+      if (d.qr_data_url) {
+        qrImg.onload = () => { qrImg.hidden = false; qrLoading.hidden = true; };
+        qrImg.onerror = () => { qrLoading.textContent = 'QR failed to load — use the code below.'; };
+        qrImg.src = d.qr_data_url;
+      } else {
+        qrLoading.textContent = 'QR unavailable — use the code below.';
+      }
       $('#twofa-copy').onclick = async () => {
         try { await navigator.clipboard.writeText(d.secret || ''); toast('Copied'); }
         catch { toast('Copy failed — long-press the code'); }

@@ -1507,6 +1507,18 @@ button.avatar.lg:hover { opacity: .85; }
 .secret-row { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
 .twofa-qr { margin: 12px 0; }
 .twofa-qr img { border-radius: 8px; background: #fff; display: block; }
+.qr-loading {
+  width: 220px; height: 220px; border-radius: 8px;
+  background: var(--paper-2); border: 1px dashed var(--ink-3);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-3); font-size: 13px;
+}
+.spinner {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 3px solid var(--hairline); border-top-color: var(--ink);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .secret {
   display: inline-block; padding: 10px 14px;
   background: var(--paper-2);
