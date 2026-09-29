@@ -1387,7 +1387,7 @@ button.avatar.lg:hover { opacity: .85; }
    Modals, toasts, lightbox
    ============================================================ */
 .modal-backdrop {
-  position: fixed; inset: 0; z-index: 100;
+  position: fixed; inset: 0; z-index: 300;
   background: rgba(28, 24, 19, .45);
   display: flex; align-items: center; justify-content: center;
   padding: 22px;
@@ -1421,7 +1421,7 @@ button.avatar.lg:hover { opacity: .85; }
 
 #toasts {
   position: fixed; bottom: calc(22px + env(safe-area-inset-bottom)); left: 50%;
-  transform: translateX(-50%); z-index: 200;
+  transform: translateX(-50%); z-index: 310;
   display: flex; flex-direction: column; gap: 8px; align-items: center;
   pointer-events: none; width: max-content; max-width: 92vw;
 }
