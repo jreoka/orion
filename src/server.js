@@ -333,6 +333,11 @@ app.post('/api/auth/2fa/disable', requireAuth, asyncRoute(async (req, res) => {
   if (!verifyPassword(req.user.id, req.body?.password)) {
     throw httpError(401, 'Incorrect password');
   }
+  // Sensitive action: require a fresh second factor (TOTP or backup code),
+  // not just the session + password.
+  if (!verifySecondFactor(req.user.id, req.body?.code)) {
+    throw httpError(401, 'Invalid 2FA code');
+  }
   disableTotp(req.user.id);
   // Removing the second factor is sensitive — drop every other session.
   revokeOtherSessions(req.user.id, req.sessionId);

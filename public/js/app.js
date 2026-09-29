@@ -4705,14 +4705,46 @@ function passwordConfirmModal(title, message) {
 }
 
 async function disable2faModal() {
-  const pw = await passwordConfirmModal('Disable 2FA', 'Enter your password to turn off two-factor authentication.');
-  if (!pw) return;
+  const creds = await twofaDisableModal();
+  if (!creds) return;
   try {
-    await api('/api/auth/2fa/disable', { method: 'POST', body: { password: pw } });
+    await api('/api/auth/2fa/disable', { method: 'POST', body: { password: creds.password, code: creds.code } });
     _twofaStatus = await api('/api/auth/2fa/status');
     render2faBox();
     toast('2FA disabled');
   } catch (err) { toast('Disable failed: ' + err.message); }
+}
+
+function twofaDisableModal() {
+  return new Promise((resolve) => {
+    const root = $('#modal-root');
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.innerHTML = `
+      <div class="modal-card">
+        <h3>Disable 2FA</h3>
+        <p class="muted">Enter your password and a current 2FA code (or backup code) to turn off two-factor authentication.</p>
+        <form class="modal-form">
+          <input type="password" class="input" autocomplete="current-password" placeholder="Password" required>
+          <input type="text" class="input" inputmode="numeric" autocomplete="one-time-code" placeholder="2FA code" required>
+          <div class="modal-actions">
+            <button type="button" class="btn cancel">Cancel</button>
+            <button type="submit" class="btn danger">Disable 2FA</button>
+          </div>
+        </form>
+      </div>`;
+    root.appendChild(wrap);
+    const close = (v) => { wrap.remove(); resolve(v); };
+    const form = wrap.querySelector('form');
+    const [pwInput, codeInput] = form.querySelectorAll('input');
+    wrap.querySelector('.cancel').onclick = () => close(null);
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) close(null); });
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      close({ password: pwInput.value, code: codeInput.value });
+    };
+    setTimeout(() => pwInput.focus(), 30);
+  });
 }
 
 function renderPasskeyBox() {
