@@ -2538,8 +2538,12 @@ function deleteChatModal(conv) {
         try { await api(`/api/conversations/${conv.id}/stop`, { method: 'POST' }); }
         catch { /* best-effort: the delete proceeds regardless */ }
       }
-      await api(`/api/conversations/${conv.id}`, { method: 'DELETE' });
+      // Set BEFORE the DELETE: the server publishes conversation_deleted on the
+      // user bus immediately, and the SSE echo can arrive before the API call
+      // resolves. Setting it after creates a race where our own delete looks
+      // like it came from elsewhere.
       S.selfDeletedAt[conv.id] = Date.now(); // our own delete echoes back on the user bus
+      await api(`/api/conversations/${conv.id}`, { method: 'DELETE' });
       closeModal();
       delete S.runByConv[conv.id];
       delete S.doneByConv[conv.id]; saveDoneFlags();
@@ -3346,7 +3350,7 @@ async function onConversationDeleted(rawId) {
         updateComposer();
       }
     } catch {}
-    if (!self) toast('Chat deleted on another device');
+    if (!self) toast('Chat deleted in another tab');
   }
 }
 function closeEventStream() {
