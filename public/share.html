@@ -60,6 +60,10 @@
     display: none; align-items: center; justify-content: center; cursor: zoom-out; padding: 24px; }
   #lb.open { display: flex; }
   #lb img { max-width: 100%; max-height: 100%; border-radius: 10px; object-fit: contain; }
+  #lb-close { position: absolute; top: calc(16px + env(safe-area-inset-top)); right: 16px;
+    width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
+    background: rgba(250, 247, 240, .32); color: #fff; font-size: 20px; font-weight: 700; }
+  #lb-close:hover { background: rgba(250, 247, 240, .45); }
   .chip { display: inline-block; font-family: var(--sans); font-size: 13.5px; color: var(--ink-2);
     border: 1px solid var(--hairline); border-radius: 999px; padding: 6px 14px; text-decoration: none; margin: .25em .35em .25em 0; }
   .err { text-align: center; padding: 80px 20px; color: var(--ink-2); }
@@ -92,7 +96,7 @@
   <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
 </button>
 <div class="wrap" id="root"><div class="err"><p>Loading…</p></div></div>
-<div id="lb" role="dialog" aria-label="Image viewer"><img alt=""></div>
+<div id="lb" role="dialog" aria-label="Image viewer"><img alt=""><button id="lb-close" aria-label="Close">✕</button></div>
 <script src="/js/markdown.js"></script>
 <script>
 (function () {
