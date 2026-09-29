@@ -702,7 +702,9 @@ app.post('/api/conversations/:id/unarchive', requireAuth, (req, res) => {
   const conv = getConv(req.params.id, req.user.id);
   if (!conv) return res.status(404).json({ error: 'Not found' });
   if (!conv.archived) return res.json({ ok: true, archived: false });
-  db.prepare('UPDATE conversations SET archived = 0, archived_at = NULL, updated_at = ? WHERE id = ?').run(Date.now(), conv.id);
+  // updated_at is deliberately untouched: unarchiving isn't new activity,
+  // and bumping it would trip the sidebar's unread dot (updated_at > lastSeenAt).
+  db.prepare('UPDATE conversations SET archived = 0, archived_at = NULL WHERE id = ?').run(conv.id);
   publishToUser(req.user.id, { type: 'conversations_changed' }); // restore the row on other devices
   res.json({ ok: true, archived: false });
 });
