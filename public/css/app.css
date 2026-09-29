@@ -75,7 +75,7 @@ a { color: var(--accent); }
    Eight traced copies of the two ribbons (main + followers + leaders) glide
    as a seamless loop; the SVG viewport clips them to the icon square. */
 .logo-glyph { display: inline-flex; overflow: hidden; }
-.logo-glyph svg { display: block; width: 100%; height: 100%; }
+.logo-glyph svg { display: block; width: 100%; height: 100%; overflow: hidden; }
 .logo-flow { animation: logo-flow 16s linear infinite; }
 @keyframes logo-flow { to { transform: translate(410.1px, 410.1px); } }
 @media (prefers-reduced-motion: reduce) {
