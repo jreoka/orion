@@ -1107,15 +1107,11 @@ button.avatar.lg:hover { opacity: .85; }
 .msg.user .rx-row:has(.rx-chip) .rx-reply { right: calc(100% + 82px); }
 .msg.user:has(.rx-chip) .bubble { margin-bottom: 40px; }
 /* Touch devices: the copy/+ buttons are always semi-visible (opacity .5),
-   so the floating button row needs reserved space even with no reaction
-   chips — otherwise it overlaps the message below. Desktop keeps the
-   hover-only float with no reserved space. */
+   so the user bubble reserves space below it — otherwise the floating row
+   overlaps the message below. Assistant messages reserve the space inside
+   their own box (see below), so no touch-only rule is needed for them. */
 @media (hover: none) {
   .msg.user .bubble { margin-bottom: 40px; }
-  /* margin, not padding: the hover-button row is absolutely positioned at
-     top:100%, so padding would push it 40px below the text instead of
-     leaving it a 6px gap in reserved space. */
-  .msg.assistant:not(:has(+ .msg.assistant)) .a-body { margin-bottom: 40px; }
 }
 /* Consecutive assistant messages belong to one run: tuck them into a single
    visual group and keep one + for the group instead of one per message. */
@@ -1159,7 +1155,6 @@ button.avatar.lg:hover { opacity: .85; }
 .wl-body .upd { font-size: 12.5px; }
 /* Plain mid-run text folded into the log reads as dimmed notes, not answers. */
 .wl-body .msg.assistant { margin: 2px 0; }
-.wl-body .msg.assistant .a-body { margin-bottom: 0; }
 .wl-body .msg.assistant .a-body .content { font-size: 14px; color: var(--ink-2); }
 .wl-body .msg.assistant .a-body p { margin-bottom: 8px; }
 /* Secure vault request widget: a locked card with an inline same-origin form. */
@@ -1200,18 +1195,24 @@ button.avatar.lg:hover { opacity: .85; }
 .msg.assistant .rx-row:not(:has(.rx-chip)) {
   right: auto;
   left: 0;
+  /* The row floats in reserved space INSIDE the message box (padding, not
+     margin): it is bottom-anchored 6px above the message's own box edge, so
+     a following message or work-log tray starts after the box ends and can
+     never slide behind the buttons. */
+  top: auto; bottom: 6px; margin: 0;
 }
+.msg.assistant .a-body { padding-bottom: 44px; }
+/* Reaction chips are in-flow content; they need only their normal tight gap. */
+.msg.assistant:has(.rx-row:has(.rx-chip)) .a-body { padding-bottom: 0; }
+/* Grouped run messages hide their button row; no reserved space needed. */
+.msg.assistant:has(+ .msg.assistant) .a-body { padding-bottom: 0; }
+/* Inside a folded work log the messages are a quarantined record, not
+   interactive cards — their action rows are hidden and reserve nothing. */
+.wl-body .rx-row { display: none; }
+.wl-body .msg.assistant .a-body { padding-bottom: 0; }
 @media (hover: hover) {
-  /* Reserve room below the message for the floating buttons so they never
-     touch the next message. Grouped run messages hide their button row. */
-  .msg.assistant:has(.rx-row:not(:has(.rx-chip))) { margin-bottom: 44px; }
-  .msg.assistant:has(+ .msg.assistant) { margin-bottom: 0; }
-}
-/* Hover-capable: the user message's floating copy/+ row sits fully below the
-   bubble in reserved space — 32px buttons can't fit in the 28px message gap
-   without clipping either message. The extra bottom margin reserves exactly
-   enough room. Touch keeps its 40px reservation. */
-@media (hover: hover) {
+  /* User message's floating copy/+ row keeps its below-the-bubble reserved
+     space on desktop. Assistant messages reserve theirs inside the box. */
   .msg.user:not(:has(.rx-chip)) { margin-bottom: 44px; }
   .msg.user .rx-row:not(:has(.rx-chip)) {
     top: 100%; margin: 6px 0 0; right: 10px;
