@@ -1694,7 +1694,7 @@ function messageEl(m) {
   } else {
     wrap.innerHTML = `
       <div class="a-avatar">
-        <img src="/logo-mark.png?v=PENDING" alt="" aria-hidden="true">
+        <img src="/logo-mark.png?v=5926458" alt="" aria-hidden="true">
       </div>
       <div class="a-body">
         ${quoteHtml(m)}
