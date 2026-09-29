@@ -175,7 +175,7 @@ function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = fals
         <button class="btn" data-x="cancel">Cancel</button>
         <button class="btn ${danger ? 'danger-ghost' : 'primary'}" data-x="ok">${esc(confirmLabel)}</button>
       </div>`);
-    const done = (v) => { closeModal(); resolve(v); };
+    const done = (v) => { bd.remove(); resolve(v); };
     bd.querySelector('[data-x=cancel]').onclick = () => done(false);
     bd.querySelector('[data-x=ok]').onclick = () => done(true);
   });
@@ -205,7 +205,7 @@ function promptDialog({ title, message = '', label = '', placeholder = '', value
           <button type="submit" class="btn primary">${esc(okLabel)}</button>
         </div>
       </form>`);
-    const done = (v) => { closeModal(); resolve(v); };
+    const done = (v) => { bd.remove(); resolve(v); };
     bd.querySelector('[data-x=cancel]').onclick = () => done(null);
     const input = bd.querySelector('#pd-input');
     input.focus();
