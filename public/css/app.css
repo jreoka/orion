@@ -1066,25 +1066,27 @@ button.avatar.lg:hover { opacity: .85; }
   position: absolute; top: 100%; right: 4px; margin: 6px 0 0;
   flex-wrap: nowrap; /* one line — never a wrapped column in a narrow bubble */
 }
-/* Assistant hover buttons (+ / copy) sit inside the message's bottom edge
-   on hover-capable devices — 32px buttons can't fit in the 28px gap without
-   clipping the next message. Left matches where reaction chips appear. */
+/* Assistant hover buttons (+ / copy) sit fully below the message in reserved
+   space on hover-capable devices — same 32px-in-28px-gap problem as user
+   messages. Left matches where reaction chips appear. */
 .msg.assistant .rx-row:not(:has(.rx-chip)) {
   right: auto;
   left: 0;
 }
 @media (hover: hover) {
-  .msg.assistant .rx-row:not(:has(.rx-chip)) {
-    top: auto; bottom: 6px; margin: 0;
-  }
+  /* Reserve room below the message for the floating buttons so they never
+     touch the next message. Grouped run messages hide their button row. */
+  .msg.assistant:has(.rx-row:not(:has(.rx-chip))) { margin-bottom: 12px; }
+  .msg.assistant:has(+ .msg.assistant) { margin-bottom: 0; }
 }
-/* Hover-capable: the user message's floating copy/+ row sits inside the
-   bubble's bottom edge (overlapping its padding) instead of hanging below —
-   32px buttons can't fit in the 28px message gap without clipping the
-   next message. Touch keeps the below-bubble row with its reserved 40px. */
+/* Hover-capable: the user message's floating copy/+ row sits fully below the
+   bubble in reserved space — 32px buttons can't fit in the 28px message gap
+   without clipping either message. The extra bottom margin reserves exactly
+   enough room. Touch keeps its 40px reservation. */
 @media (hover: hover) {
+  .msg.user:not(:has(.rx-chip)) { margin-bottom: 12px; }
   .msg.user .rx-row:not(:has(.rx-chip)) {
-    top: auto; bottom: 6px; margin: 0; right: 10px;
+    top: 100%; margin: 6px 0 0; right: 10px;
   }
 }
 .rx-chip {
