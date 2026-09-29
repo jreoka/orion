@@ -961,10 +961,11 @@ button.avatar.lg:hover { opacity: .85; }
 /* Flash highlight when jumping to a quoted message. */
 .msg.quote-flash .bubble, .msg.quote-flash .a-body {
   animation: quote-flash 1.2s ease-out;
+  border-radius: 12px;
 }
 @keyframes quote-flash {
-  0%, 40% { background: var(--accent-soft); border-radius: 12px; }
-  100% { background: transparent; }
+  0%, 40% { box-shadow: 0 0 0 3px var(--accent); }
+  100% { box-shadow: none; }
 }
 .attach-chip {
   display: flex; align-items: center; gap: 8px;
