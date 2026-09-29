@@ -144,13 +144,30 @@ export async function ensureSandbox(userId) {
       Binds: [`${vname}:${WORKDIR}`, `${proxyHostDir}:/docker-proxy:ro`],
       PidsLimit: 256,
       CapDrop: ['ALL'],
+      // Root needs a minimal set of safe capabilities to actually function as
+      // root inside the container (without DAC_OVERRIDE, root is subject to
+      // normal file permission checks and can't even enter /home/agent).
+      // None of these help escape the container — the dangerous ones
+      // (SYS_ADMIN, NET_ADMIN, SYS_PTRACE, etc.) stay dropped.
+      CapAdd: [
+        'DAC_OVERRIDE',
+        'DAC_READ_SEARCH',
+        'CHOWN',
+        'FOWNER',
+        'FSETID',
+        'KILL',
+        'SETUID',
+        'SETGID',
+        'NET_BIND_SERVICE',
+        'SYS_CHROOT',
+      ],
       SecurityOpt: ['no-new-privileges:true'],
       // --init (tini) as PID 1: the image's CMD is `sleep infinity`, which
       // never reaps children. Without an init, every unreaped child becomes
       // a zombie held by PID 1 and eats the 256-PID budget until fork
       // fails with EAGAIN — exactly what wedged sandboxes in the wild.
       Init: true,
-      // No privileged, no extra caps, no host networking: this is the sandbox.
+      // No privileged, no host networking: this is the sandbox.
     };
     const mk = (HostConfig) =>
       docker.createContainer({
