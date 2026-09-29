@@ -98,7 +98,7 @@ export const TOOLS = [
     function: {
       name: 'exec',
       description:
-        'Run a shell command inside your Linux VM (working directory /home/agent/workspace). Returns merged stdout+stderr and the exit code. Confirm with the user before destructive commands. Optional env: extra environment variables as an object. A value of the form "vault:<id>" injects a secret from the user\u2019s encrypted vault — it is resolved server-side and scrubbed from all output, so it never enters your context; use this for API keys/tokens instead of pasting them into the command.',
+        'Run a shell command inside your Linux VM (working directory /home/agent/workspace). Returns merged stdout+stderr and the exit code. Confirm with the user before destructive commands. Optional env: extra environment variables as an object. A value of the form "vault:<id>" injects a secret from the user\u2019s encrypted vault — it is resolved server-side and scrubbed from all output, so it never enters your context; use this for API keys/tokens instead of pasting them into the command. Resource limits: 2 GB RAM, 1 CPU, 256 processes, 64 MB /dev/shm — size workloads off the cgroup limits, NOT `free` (which reports the host\u2019s memory and will get you OOM-killed). Headless Chromium needs --disable-dev-shm-usage (and usually --single-process) here.',
       parameters: {
         type: 'object',
         properties: {

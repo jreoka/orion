@@ -57,6 +57,18 @@ function sandboxSockPath(userId) {
   return `/docker-proxy/u${Number(userId)}.sock`;
 }
 
+// Each user's socket lives in its own subdirectory: PROXY_DIR/u<id>/u<id>.sock.
+// The sandbox bind-mounts ONLY its own subdirectory at /docker-proxy, so a
+// user can never reach another user's socket. (The proxy trusts the socket
+// path for identity — mounting the shared parent directory let any sandbox
+// point DOCKER_HOST at another user's socket and fully impersonate them:
+// create/exec/cp as that user. Fixed 2026-09-29.) Directory mounts (not file
+// mounts) keep working across proxy restarts: when the socket file is
+// recreated, the sandbox sees the new file through the mounted directory.
+function proxySockDir(userId) {
+  return path.join(PROXY_DIR, `u${Number(userId)}`);
+}
+
 // Names the user is allowed to create/manage (their own namespace).
 function allowedName(userId, name) {
   if (!name) return false;
@@ -689,6 +701,11 @@ async function handleProxy(userId, req, res) {
   }
 
   // ---- images: pull/build/list/inspect allowed; push/delete blocked ----
+  // /images/json is deliberately NOT filtered: images are a shared build
+  // cache on the single shared daemon (layers are content-addressed and
+  // common base images are identical for everyone). Filtering the list
+  // would be theater — anyone can still `docker pull` by name. The security
+  // boundary is containers/volumes/networks/exec, which are namespaced.
   if (p.startsWith('/images/') && (m === 'DELETE' || p.endsWith('/push'))) {
     return deny(res, 'image push/delete is not allowed from the sandbox');
   }
@@ -711,6 +728,16 @@ export function ensureDockerProxy(userId) {
     return existing.ready;
   }
   fs.mkdirSync(PROXY_DIR, { recursive: true });
+  // Per-user subdirectory (see proxySockDir): only this user's socket file
+  // lives here, and only this directory is mounted into their sandbox.
+  fs.mkdirSync(proxySockDir(id), { recursive: true });
+  // Clean up the legacy flat socket (pre-2026-09-29 layout mounted the whole
+  // PROXY_DIR into every sandbox — the cross-tenant impersonation hole).
+  try {
+    fs.unlinkSync(path.join(PROXY_DIR, `u${id}.sock`));
+  } catch {
+    /* already gone */
+  }
   try {
     fs.unlinkSync(sockPath);
   } catch {
@@ -739,8 +766,8 @@ export function ensureDockerProxy(userId) {
   });
   const ready = new Promise((resolve, reject) => {
     server.listen(sockPath, () => {
-      // World-writable socket: the sandbox's `agent` user (different uid)
-      // must be able to talk to it.
+      // World-writable socket: harmless belt-and-braces (the sandbox runs as
+      // root, and only its own per-user directory is mounted there anyway).
       try {
         fs.chmodSync(sockPath, 0o777);
       } catch {
@@ -758,10 +785,18 @@ export function ensureDockerProxy(userId) {
 }
 
 export function proxySockPath(userId) {
-  return path.resolve(path.join(PROXY_DIR, `u${Number(userId)}.sock`));
+  return path.resolve(path.join(proxySockDir(Number(userId)), `u${Number(userId)}.sock`));
+}
+
+/** Host-side per-user socket directory, bind-mounted at /docker-proxy inside
+ *  that user's sandbox (contains only their own socket file). */
+export function proxySockDirHostPath(userId) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('Invalid user id');
+  return path.resolve(path.join(PROXY_HOST_DIR, `u${id}`));
 }
 
 /** Host-side path for bind-mounting the user's proxy socket into sandboxes. */
 export function proxySockHostPath(userId) {
-  return path.resolve(path.join(PROXY_HOST_DIR, `u${Number(userId)}.sock`));
+  return path.resolve(path.join(proxySockDirHostPath(userId), `u${Number(userId)}.sock`));
 }

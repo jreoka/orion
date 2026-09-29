@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { ensureDockerProxy, proxySockPath, proxySockHostPath } from './docker-proxy.js';
+import { ensureDockerProxy, proxySockDirHostPath } from './docker-proxy.js';
 import { clearUserVault } from './vault.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -132,16 +132,19 @@ export async function ensureSandbox(userId) {
     // never use privileged mode, host-path mounts, or other users'
     // containers. See src/docker-proxy.js. The raw host socket never enters
     // the sandbox.
-    // Mount the proxy DIRECTORY (not the socket file): bind-mounts of a
-    // directory follow path resolution, so when the proxy recreates its
-    // socket after a server restart, the sandbox sees the new socket.
-    // A direct file mount would pin the old (dead) inode.
+    // Mount the user's OWN proxy subdirectory (not the shared parent dir):
+    // the proxy trusts the socket path for identity, so a sandbox that can
+    // see another user's socket file can impersonate that user wholesale.
+    // A directory mount (not a file mount) keeps working across proxy
+    // restarts: when the socket file is recreated, the sandbox sees the new
+    // file through the mounted directory. A direct file mount would pin the
+    // old (dead) inode.
     // DOCKER_HOST tells the in-sandbox `docker` CLI which socket to use.
-    const proxyHostDir = proxySockHostPath(userId).replace(/\/u\d+\.sock$/, '');
+    const proxyUserDir = proxySockDirHostPath(userId);
     const baseHostConfig = {
       Memory: 2 * 1024 ** 3, // 2 GB
       NanoCpus: 1_000_000_000, // 1 CPU
-      Binds: [`${vname}:${WORKDIR}`, `${proxyHostDir}:/docker-proxy:ro`],
+      Binds: [`${vname}:${WORKDIR}`, `${proxyUserDir}:/docker-proxy:ro`],
       PidsLimit: 256,
       CapDrop: ['ALL'],
       // Root needs a minimal set of safe capabilities to actually function as
@@ -175,7 +178,13 @@ export async function ensureSandbox(userId) {
         Image: SANDBOX_IMAGE,
         Cmd: ['sleep', 'infinity'],
         Tty: false,
-        Env: [`DOCKER_HOST=unix:///docker-proxy/u${Number(userId)}.sock`],
+        Env: [
+          `DOCKER_HOST=unix:///docker-proxy/u${Number(userId)}.sock`,
+          // HOME must match where the persistent files actually live.
+          // Without this, `~` expands to /root while MEMORY.md, SOUL.md,
+          // ~/.ssh etc. live under /home/agent.
+          'HOME=/home/agent',
+        ],
         HostConfig,
       });
     let container;
@@ -206,9 +215,9 @@ export async function ensureSandbox(userId) {
   try {
     const info = await container.inspect();
     const binds = info?.HostConfig?.Binds || [];
-    // The proxy directory must be mounted (not the raw host socket) —
-    // a stale file-mount or raw socket forces a recreate.
-    const expectSock = proxySockHostPath(userId).replace(/\/u\d+\.sock$/, '');
+    // The per-user proxy directory must be mounted (not the raw host socket,
+    // not the old shared proxy dir) — a stale mount forces a recreate.
+    const expectSock = proxySockDirHostPath(userId);
     const needsRecreate =
       !binds.some((b) => String(b).split(':')[0] === expectSock) ||
       info?.HostConfig?.Init !== true;
