@@ -1500,16 +1500,28 @@ function foldLiveWorkLog() {
   if (!S.runActive || !S.activeId) return;
   const box = document.getElementById('messages');
   if (!box) return;
-  // The in-flight run is the trailing segment: after the last user message
-  // or the last run boundary, whichever is later.
+  // The in-flight run starts at the last run boundary. A user message that
+  // arrives after that boundary came in mid-run (a new run would have
+  // planted a newer boundary) — it must NOT split the fold range, or the
+  // run's earlier chatter is stranded loose whenever the transient live
+  // tray is discarded by a re-render.
   const kids = [...box.children];
+  const runStarts = [];
+  kids.forEach((el, i) => { if (el.dataset && el.dataset.runStart) runStarts.push(i); });
   let start = 0;
   kids.forEach((el, i) => {
     const isUser =
       el.classList && el.classList.contains('msg') &&
       el.classList.contains('user') && !el.classList.contains('update');
     const isRunStart = el.dataset && el.dataset.runStart;
-    if (isUser || isRunStart) start = i + 1;
+    if (isRunStart) {
+      start = i + 1;
+    } else if (isUser) {
+      const hasRunStartBefore = runStarts.some((r) => r < i);
+      const hasRunStartAfter = runStarts.some((r) => r > i);
+      // Mid-run user message (run continues through it): not a boundary.
+      if (!(hasRunStartBefore && !hasRunStartAfter)) start = i + 1;
+    }
   });
   // The latest assistant text row is the potential final answer — everything
   // before it (plus live update notes) belongs in the tray.
@@ -3167,6 +3179,12 @@ function setRunActive(on) {
     // work log so the final answer stands alone.
     document.querySelectorAll('#messages .msg.update[data-live-run]')
       .forEach((el) => el.removeAttribute('data-live-run'));
+    // Clear live markers BEFORE the run-end fold: the run is over, so the
+    // fold's live-row bail (which protects in-flight chatter from being
+    // tucked into a work log mid-run) must not fire here — otherwise the
+    // just-finished run's paras are left loose and no work log forms until
+    // some later re-render.
+    S.liveIds.clear();
     finalizeLiveWorkLog(); // collapse the live tray (its rows are already inside)
     collapseWorkLogs();
     // Folding shifts the layout — if pinned, land exactly on the final answer.
@@ -3174,7 +3192,6 @@ function setRunActive(on) {
     // The streaming caret never survives a run either — it may sit on a
     // nested paragraph, not just .content, so clear it everywhere.
     document.querySelectorAll('#messages .caret').forEach((el) => el.classList.remove('caret'));
-    S.liveIds.clear();
     loadConversationsQuiet(); // pick up the server-side title
   } else {
     showRunStatus('Working…'); // refined by the first tool event

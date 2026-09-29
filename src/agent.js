@@ -467,11 +467,7 @@ function summarizeTool(name, args) {
     case 'web_search': return 'Searching the web…';
     case 'browser_shot': return `Looking at ${domain(args.url)}…`;
     case 'send_image': return 'Sending an image…';
-    case 'delegate': {
-      let t = trunc(args.task, 56);
-      if (t) t = t.charAt(0).toLowerCase() + t.slice(1);
-      return t ? `Working on ${t}…` : 'Working on a subtask…';
-    }
+    case 'delegate': return 'Working on a subtask…';
     case 'send_update': return null; // the update line speaks for itself
     case 'send_push': return 'Sending a notification…';
     case 'schedule_task': {
