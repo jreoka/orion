@@ -392,6 +392,21 @@ async function boot() {
   if (S.me) adoptTheme(); // server theme wins; else push up this device's choice
   wireGlobal();
   loadDoneFlags();
+  // Cross-tab sync: if another tab sets/clears a done flag, pick it up live.
+  // Without this, a run finishing in tab A never shows the green check in tab B.
+  window.addEventListener('storage', (e) => {
+    if (e.key === DONE_KEY) {
+      loadDoneFlags();
+      renderSidebar();
+    }
+  });
+  // Also re-load on focus — catches flags set while this tab was in background
+  // in browsers where the storage event is unreliable.
+  window.addEventListener('focus', () => {
+    const before = JSON.stringify(S.doneByConv);
+    loadDoneFlags();
+    if (JSON.stringify(S.doneByConv) !== before) renderSidebar();
+  });
   await render();
   maybeShowPushNudge();
   if (S.me) { refreshUsage(); startUsageTimer(); openUserEventStream(); }
