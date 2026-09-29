@@ -963,7 +963,7 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
 
   // A run is already active — the message stays queued; the in-flight run
   // chains a follow-up when it finishes. Never 409: sending mid-run is fine.
-  if (!startRunIfIdle(conv.id, req.user.id, content, { trigger: 'user-message' })) {
+  if (!startRunIfIdle(conv.id, req.user.id, content, { trigger: 'user-message', hasAttachments: attachmentIds.length > 0 })) {
     publish(conv.id, { type: 'queued' });
     return res.json({ message, queued: true });
   }

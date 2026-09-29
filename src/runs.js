@@ -143,9 +143,12 @@ export async function runConversation(
   // holds the run lock on entry, so release it on the way out.
   const triggerName = opts.trigger || (chainDepth > 0 ? 'chain' : 'direct');
   const hasUserText = userText != null && String(userText).length > 0;
+  // An attachment-only message (photo, file, no text) is still a real user
+  // trigger — the agent must run and look at it.
+  const hasAttachments = !!opts.hasAttachments;
   const trustedWithoutText =
     triggerName.includes('chain') || triggerName.startsWith('boot-recovery');
-  if (!hasUserText && !trustedWithoutText) {
+  if (!hasUserText && !hasAttachments && !trustedWithoutText) {
     console.warn(
       `[orion] refusing triggerless run conv=${id} trigger=${triggerName} (no user text, no trusted trigger)`
     );
