@@ -46,7 +46,7 @@ export const SYSTEM_PROMPT = `You are Orion, a helpful AI assistant with your ow
 
 Your tools:
 - exec: run any shell command in the VM (install packages with apt-get, run python/node scripts, curl APIs, process files, …). Prefer non-interactive commands; long jobs should finish within the timeout you set.
-- read_file / write_file / list_files: work with files in /home/agent/workspace (paths are confined there).
+- read_file / write_file / list_files: work with files in /home/agent/workspace (paths are confined there). There is NO "edit" tool — to change a file, use write_file with the complete new content, or exec with sed/perl/python for surgical edits. Never call a tool named "edit".
 - web_fetch: fetch a URL and get its readable text back. Use it for docs, articles, API responses — anything on the web.
 - web_search: search the web — clean titles, URLs, and snippets. Never curl search engines, APIs, or HTML pages with exec to research something — that is what this tool is for.
 - browser_shot: take a real screenshot of a URL with headless Chromium and attach it to your reply so the user can see it. You receive the screenshot as vision too — actually look at it and describe or verify what it genuinely shows. Use it when the user wants to SEE a page, or to verify how a page you built looks.
@@ -1484,8 +1484,14 @@ async function runToolLoop({
     '[System: your last reply came back empty with the task unfinished. ' +
     'Continue the task now — do not repeat completed steps, and end with ' +
     'a clear summary for the user.]';
+  const SUMMARY_NUDGE =
+    '[System: you did work with your tools but your last reply came back empty ' +
+    'with no summary for the user. Write a brief summary now of what you ' +
+    'accomplished — what you changed, found, or did. Do not call more tools; ' +
+    'just write the summary as your reply.]';
   let emptyStalls = 0;
   let emptyRetries = 0; // bare retries for transient empty completions
+  let summaryNudges = 0; // targeted nudges when work was done but no summary written
   const note = (text) => {
     try {
       onNote(text);
@@ -1637,6 +1643,20 @@ async function runToolLoop({
         convo.push({ role: 'user', content: RESUME_NUDGE_EMPTY });
         continue;
       }
+      // Work done but no summary: the model produced some text (or none)
+      // and did real tool work, but its last turn came back empty without
+      // a summary of what it accomplished. Ask specifically for the summary
+      // — do not let the run end with the user seeing fragments and silence.
+      if (
+        !(content || '').trim() &&
+        Object.keys(toolCounts).length > 0 &&
+        !isChild &&
+        summaryNudges < 2
+      ) {
+        summaryNudges++;
+        convo.push({ role: 'user', content: SUMMARY_NUDGE });
+        continue;
+      }
       // Transient empty: the provider sometimes answers 200 with no content
       // and no tool calls at all (seen flaky on free-tier models — the same
       // request succeeds on retry). Give it a couple of bare retries before
@@ -1767,8 +1787,21 @@ async function runToolLoop({
       /* a lookup failure must not kill the loop */
     }
     if (!visible) {
-      const msg =
-        'I got stuck on that one and couldn\'t finish — say "try again" and I\'ll take another run at it.';
+      // If the run did real tool work, tell the user what was actually done
+      // instead of just saying "I got stuck" — the work happened, the model
+      // just never wrote the summary. List the tools used so the user has
+      // something concrete.
+      const worked = Object.keys(toolCounts).length > 0;
+      let msg;
+      if (worked) {
+        const parts = Object.entries(toolCounts).map(([t, n]) => `${t}×${n}`);
+        msg =
+          `I did the work (${parts.join(', ')}) but couldn't write up the summary — ` +
+          `say "summarize what you did" and I'll report back on the changes.`;
+      } else {
+        msg =
+          'I got stuck on that one and couldn\'t finish — say "try again" and I\'ll take another run at it.';
+      }
       try {
         onNote(msg);
       } catch {
