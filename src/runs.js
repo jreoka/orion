@@ -16,7 +16,7 @@
 // A user message queued while the run was active still chains a follow-up —
 // stop halts the in-flight work, not the user's newer intent.
 import { db, getSetting } from './db.js';
-import { runAgentContinuation } from './agent.js';
+import { runAgentContinuation, autoCaptureMemories } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
 import { sandboxKillExec } from './sandbox.js';
 import { notifyConversation } from './push.js';
@@ -269,6 +269,11 @@ export async function runConversation(
       }
     } catch (e) {
       console.warn('[orion] run-end push failed:', e?.message || e);
+    }
+    // Auto-memory: extract durable facts in the background (never blocks).
+    // Skip for heartbeat (noise) and stopped runs (incomplete work).
+    if (!wasStopped && !opts.noUsageCharge) {
+      autoCaptureMemories({ userId, conversationId: id, settings: globalSettings() }).catch(() => {});
     }
   }
 

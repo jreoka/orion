@@ -42,10 +42,16 @@ import {
 
 const STUCK_REPEATS = 3; // identical consecutive tool calls before we stop
 
+// Vault secrets per background job (for output redaction on job_status).
+// Key: `${userId}:${jobId}`, value: string[] of secrets. In-memory only —
+// lost on restart, which is fine (worst case: a secret appears in job output).
+const jobSecrets = new Map();
+
 export const SYSTEM_PROMPT = `You are Orion, a helpful AI assistant with your own Linux computer — a Docker VM whose home directory is /home/agent/workspace. You also have a real headless Chromium browser inside that VM.
 
 Your tools:
 - exec: run any shell command in the VM (run python/node scripts, curl APIs, process files, …). You are ROOT in your VM — apt-get install, pip install, system config, everything works. The VM starts lean: install what you need as the task requires. Prefer non-interactive commands; long jobs should finish within the timeout you set.
+- background_exec / job_status / job_kill: for LONG jobs (training, builds, downloads) — start with background_exec (returns a job ID immediately), do other work, poll with job_status, stop with job_kill. Never block a turn waiting on a long job; tell the user it's running and check back.
 - read_file / write_file / list_files / edit_file: work with files in /home/agent/workspace (paths are confined there). For targeted changes, prefer edit_file (search-and-replace with exact old_text) over rewriting the whole file with write_file. Files the user attaches to their messages are copied into your workspace automatically — look for them by name with list_files or read_file; if the user says "the file I attached" and you don't see it, list the workspace root.
 - web_fetch: fetch a URL and get its readable text back. Use it for docs, articles, API responses — anything on the web.
 - web_search: search the web — clean titles, URLs, and snippets. Never curl search engines, APIs, or HTML pages with exec to research something — that is what this tool is for.
@@ -105,6 +111,57 @@ export const TOOLS = [
           },
         },
         required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'background_exec',
+      description:
+        'Start a LONG-RUNNING command in the background (ML training, big builds, downloads) — returns immediately with a job ID instead of waiting. The job keeps running after your turn ends. Check on it later with job_status (which returns new output since your last check), or stop it with job_kill. Use this for anything that might take more than a few minutes — never block a turn on a long job.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'The shell command to run in the background' },
+          name: { type: 'string', description: 'Short label for the job (e.g. "train-model")' },
+          env: {
+            type: 'object',
+            description: 'Optional extra environment variables. Vault references work the same as exec.',
+            additionalProperties: { type: 'string' },
+          },
+        },
+        required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'job_status',
+      description:
+        'Check on a background job: whether it is still running, its exit code if finished, and new output since your last check (or the tail of all output). Call this to poll long jobs — e.g. after starting one with background_exec, do other work and check back periodically.',
+      parameters: {
+        type: 'object',
+        properties: {
+          job_id: { type: 'string', description: 'The job ID from background_exec' },
+          tail: { type: 'number', description: 'Lines of output to return if no new output (default 50, max 200)' },
+        },
+        required: ['job_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'job_kill',
+      description: 'Stop a running background job.',
+      parameters: {
+        type: 'object',
+        properties: {
+          job_id: { type: 'string', description: 'The job ID from background_exec' },
+        },
+        required: ['job_id'],
       },
     },
   },
@@ -540,6 +597,9 @@ function summarizeTool(name, args) {
   };
   switch (name) {
     case 'exec': return describeCommand(str(args.command));
+    case 'background_exec': return `Starting background job${args.name ? ` (${args.name})` : ''}…`;
+    case 'job_status': return 'Checking job status…';
+    case 'job_kill': return 'Stopping job…';
     case 'read_file': { const f = base(args.path); return f ? `Reading ${f}…` : 'Reading a file…'; }
     case 'write_file': { const f = base(args.path); return f ? `Writing ${f}…` : 'Writing a file…'; }
     case 'edit_file': { const f = base(args.path); return f ? `Editing ${f}…` : 'Editing a file…'; }
@@ -1021,6 +1081,91 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
           /* ignore */
         }
       }
+    }
+    // Background jobs: fire-and-forget long-running commands. State lives in
+    // /home/agent/workspace/.jobs/<id>.{json,log} inside the sandbox — the
+    // container persists, so jobs survive across turns (but not container
+    // recreation, which kills the processes anyway).
+    case 'background_exec': {
+      checkExecEnv(args.env);
+      const danger = screenExecCommand(args.command);
+      if (danger) throw new Error(`Blocked: this command looks destructive (${danger}).`);
+      const { env, secrets } = resolveVaultEnv(userId, args.env);
+      const jobId = crypto.randomUUID().slice(0, 8);
+      const jobDir = '/home/agent/workspace/.jobs';
+      const logPath = `${jobDir}/${jobId}.log`;
+      const metaPath = `${jobDir}/${jobId}.json`;
+      const name = String(args.name || 'job').slice(0, 40).replace(/[^a-zA-Z0-9_-]/g, '_');
+      // Write the command to a script file to avoid quoting hell, then launch
+      // with nohup so it survives the exec session. Records PID + start time.
+      const script = `mkdir -p ${jobDir}\ncat > ${jobDir}/${jobId}.sh <<'ORION_JOB_EOF'\n#!/bin/bash\n${args.command}\nORION_JOB_EOF\nchmod +x ${jobDir}/${jobId}.sh\n` +
+        `nohup ${jobDir}/${jobId}.sh > ${logPath} 2>&1 &\n` +
+        `echo $! > ${jobDir}/${jobId}.pid\n` +
+        `echo "{\\"id\\":\\"${jobId}\\",\\"name\\":\\"${name}\\",\\"started\\":$(date +%s),\\"pid\\":$(cat ${jobDir}/${jobId}.pid),\\"offset\\":0}" > ${metaPath}\n` +
+        `cat ${jobDir}/${jobId}.pid`;
+      const { output, exitCode } = await sandboxExec(userId, script, { env, timeout: 30 });
+      if (exitCode !== 0) throw new Error(`background_exec: failed to start job: ${output.trim().slice(0, 300)}`);
+      const pid = output.trim().split('\n').pop();
+      // Store secrets for redaction on status checks (in-memory only).
+      jobSecrets.set(`${userId}:${jobId}`, secrets);
+      return { text: `Job started: ${jobId} ("${name}", PID ${pid}). Use job_status to check on it, job_kill to stop it.` };
+    }
+    case 'job_status': {
+      const jobId = String(args.job_id || '').replace(/[^a-zA-Z0-9-]/g, '');
+      if (!jobId) throw new Error('job_status: job_id is required');
+      const jobDir = '/home/agent/workspace/.jobs';
+      const metaPath = `${jobDir}/${jobId}.json`;
+      const logPath = `${jobDir}/${jobId}.log`;
+      const tail = Math.min(Math.max(Number(args.tail) || 50, 1), 200);
+      const { output } = await sandboxExec(userId,
+        `if [ ! -f ${metaPath} ]; then echo "NOJOB"; exit 0; fi\n` +
+        `PID=$(cat ${jobDir}/${jobId}.pid 2>/dev/null)\n` +
+        `if kill -0 "$PID" 2>/dev/null; then echo "RUNNING pid=$PID"; else echo "DONE pid=$PID"; fi\n` +
+        `OFFSET=$(python3 -c "import json;print(json.load(open('${metaPath}'))['offset'])" 2>/dev/null || echo 0)\n` +
+        `tail -c +$((OFFSET+1)) ${logPath} 2>/dev/null | tail -n 100\n` +
+        `echo "---OFFSET_MARKER---"\n` +
+        `wc -c < ${logPath} 2>/dev/null || echo 0`,
+        { timeout: 30 });
+      if (output.trim().startsWith('NOJOB')) throw new Error(`job_status: no such job: ${jobId}`);
+      const lines = output.split('\n');
+      const statusLine = lines[0];
+      const markerIdx = lines.indexOf('---OFFSET_MARKER---');
+      const newOutput = lines.slice(1, markerIdx).join('\n').trim();
+      const newOffset = markerIdx >= 0 ? Number(lines[markerIdx + 1]) || 0 : 0;
+      // Persist the new offset so the next check only returns fresh output.
+      if (newOffset > 0) {
+        await sandboxExec(userId,
+          `python3 -c "import json;p='${metaPath}';d=json.load(open(p));d['offset']=${newOffset};json.dump(d,open(p,'w'))"`,
+          { timeout: 15 });
+      }
+      const secrets = jobSecrets.get(`${userId}:${jobId}`) || [];
+      const clean = redactSecrets(newOutput, secrets);
+      const running = statusLine.startsWith('RUNNING');
+      let text = `Job ${jobId}: ${running ? 'RUNNING' : 'FINISHED'} (${statusLine})\n`;
+      text += clean ? `New output:\n${clean.slice(-8000)}` : '(no new output)';
+      if (!running) {
+        // Fetch exit code from the shell's perspective.
+        const { output: ec } = await sandboxExec(userId,
+          `wait $(cat ${jobDir}/${jobId}.pid 2>/dev/null) 2>/dev/null; echo $?`, { timeout: 15 });
+        text += `\nExit code: ${ec.trim()}`;
+      }
+      return { text };
+    }
+    case 'job_kill': {
+      const jobId = String(args.job_id || '').replace(/[^a-zA-Z0-9-]/g, '');
+      if (!jobId) throw new Error('job_kill: job_id is required');
+      const jobDir = '/home/agent/workspace/.jobs';
+      const { output } = await sandboxExec(userId,
+        `PID=$(cat ${jobDir}/${jobId}.pid 2>/dev/null)\n` +
+        `if [ -z "$PID" ]; then echo "NOJOB"; exit 0; fi\n` +
+        `kill "$PID" 2>/dev/null && sleep 1\n` +
+        `kill -0 "$PID" 2>/dev/null && kill -9 "$PID" 2>/dev/null\n` +
+        `kill -0 "$PID" 2>/dev/null && echo "STILL_RUNNING" || echo "KILLED"`,
+        { timeout: 30 });
+      const result = output.trim().split('\n').pop();
+      if (result === 'NOJOB') throw new Error(`job_kill: no such job: ${jobId}`);
+      jobSecrets.delete(`${userId}:${jobId}`);
+      return { text: result === 'KILLED' ? `Job ${jobId} stopped.` : `Job ${jobId} could not be stopped (still running).` };
     }
     case 'read_file': {
       const text = await sandboxReadFile(userId, args.path);
@@ -2014,8 +2159,57 @@ export async function runAgentContinuation({
  * or returns nothing usable. Never overwrites a title the user (or another
  * path) set while the call was in flight.
  */
-export async function generateChatTitle({ userId, conversationId, settings, userText, finalText }) {
-  const fallback = () => {
+// Auto-memory: after a run completes, extract durable facts from the
+// conversation and save them to MEMORY.md without the agent having to call
+// `remember` manually. Best-effort — failures are silent.
+export async function autoCaptureMemories({ userId, conversationId, settings }) {
+  try {
+    const { base_url: baseUrl, api_key: apiKey, model } = settings || {};
+    if (!apiKey) return;
+    // Last 12 messages: enough context for fact extraction, cheap enough.
+    const msgs = db.prepare(
+      "SELECT role, content FROM messages WHERE conversation_id = ? AND role IN ('user','assistant') ORDER BY id DESC LIMIT 12"
+    ).all(conversationId).reverse();
+    if (msgs.length < 2) return;
+    const transcript = msgs
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${String(m.content || '').replace(/\s+/g, ' ').slice(0, 800)}`)
+      .join('\n');
+    if (transcript.length < 100) return;
+    const { content } = await streamChatCompletion({
+      baseUrl,
+      apiKey,
+      model,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Extract durable facts worth remembering long-term from this conversation. ' +
+            'Durable: user preferences, facts about the user, commitments, decisions made together, things accomplished. ' +
+            'NOT durable: trivia, one-off questions, small talk, secrets, credentials, or anything the user asked to forget. ' +
+            'Reply with 0-3 facts, one per line, each starting with "- ". If nothing is worth remembering, reply with exactly: NONE',
+        },
+        { role: 'user', content: transcript.slice(0, 6000) },
+      ],
+    });
+    const text = String(content || '').trim();
+    if (!text || text === 'NONE') return;
+    const facts = text.split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith('- ') && l.length > 4 && l.length < 500)
+      .slice(0, 3);
+    if (!facts.length) return;
+    const date = new Date().toISOString().slice(0, 10);
+    for (const f of facts) {
+      await appendIdentityFile(userId, 'MEMORY.md', `- ${date}: ${f.slice(2).trim()} (auto-captured)`);
+    }
+    console.log(`[orion] auto-memory: saved ${facts.length} fact(s) for user ${userId}`);
+  } catch (e) {
+    // Best-effort: never break the run over memory capture.
+    console.warn('[orion] auto-memory failed:', e?.message || e);
+  }
+}
+
+export async function generateChatTitle({ userId, conversationId, settings, userText, finalText }) {  const fallback = () => {
     const t = String(userText || '').slice(0, 40);
     return (String(userText || '').length > 40 ? t + '…' : t) || 'New chat';
   };
