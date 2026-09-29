@@ -3054,6 +3054,11 @@ function openSidebarDrawer() {
   $('#sidebar')?.classList.add('open');
   const b = $('#side-backdrop');
   if (b) b.hidden = false;
+  // The list is the thing the user is about to look at — pull the live
+  // server state so a delete/rename/archive from another device can't sit
+  // stale in the drawer (the in-memory list may have missed its SSE event
+  // while this tab was backgrounded).
+  if (S.me) loadConversationsQuiet();
 }
 function closeSidebarDrawer(silent) {
   const sb = $('#sidebar');
@@ -3162,12 +3167,27 @@ function wireSidebarOnce() {
     S.lastSyncAt = Date.now();
     loadConversationsQuiet();
     syncThemeFromServer(); // pick up a theme change made on another device
+    // The per-user stream (conversation_deleted, conversations_changed,
+    // usage_updated) can die silently while backgrounded — mobile OSes kill
+    // idle sockets with no error event, and EventSource won't always
+    // resurrect itself. Without it, deletes from another device never
+    // arrive until a manual refresh.
+    if (!S.userEvt || S.userEvt.readyState === EventSource.CLOSED) openUserEventStream();
     // A tab backgrounded long enough can have its SSE stream die silently
     // (no error event, no heartbeat): re-establish it and restore the
     // Stop button / run state from the server.
     if (S.activeId && (!S.evt || S.evt.readyState === EventSource.CLOSED)) {
       refreshAfterReconnect(S.activeId);
     }
+  });
+  // bfcache restores don't always fire visibilitychange — re-sync on
+  // pageshow too, so a restored tab can't show a deleted chat.
+  window.addEventListener('pageshow', (e) => {
+    if (!e.persisted || !S.me || document.hidden) return;
+    if (Date.now() - (S.lastSyncAt || 0) < 5000) return;
+    S.lastSyncAt = Date.now();
+    loadConversationsQuiet();
+    if (!S.userEvt || S.userEvt.readyState === EventSource.CLOSED) openUserEventStream();
   });
   // Desktop: alt-tabbing between apps doesn't hide the tab, so
   // visibilitychange never fires — re-sync the list when the window
