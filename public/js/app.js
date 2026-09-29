@@ -1819,9 +1819,9 @@ function applyReactions(messageId, reactions) {
       setTimeout(() => { if (chip.classList.contains('rx-leave')) chip.remove(); }, 190);
     }
   });
-  const anchor = row.querySelector('.rx-copy');
+  const anchor = row.querySelector('.rx-reply');
   if (anchor) row.insertBefore(frag, anchor);
-  else row.appendChild(frag);
+  else row.prepend(frag);
 }
 
 async function toggleReaction(chip) {
