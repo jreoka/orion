@@ -68,7 +68,7 @@
     background: rgba(250, 247, 240, .32); color: #fff; font-size: 20px; font-weight: 700;
     display: flex; align-items: center; justify-content: center; line-height: 1; padding: 0 0 2px; }
   #lb-close:hover { background: rgba(250, 247, 240, .45); }
-  .chip { display: inline-flex; align-items: center; gap: 8px; font-family: var(--sans); font-size: 13.5px; color: var(--ink-2);
+  .chip { display: inline-flex; align-items: center; gap: 8px; font-family: var(--sans); font-size: 13.5px; color: var(--accent);
     border: 1px solid var(--hairline); border-radius: 999px; padding: 8px 14px; text-decoration: none; margin: .25em .35em .25em 0; }
   .chip svg { display: block; flex-shrink: 0; }
   .chip:hover { border-color: var(--ink-3); }
@@ -80,6 +80,30 @@
   .worklog > summary::before { content: '›'; display: inline-block; transition: transform .18s; opacity: .7; }
   .worklog[open] > summary::before { transform: rotate(90deg); }
   .worklog .wl-body { display: flex; flex-direction: column; gap: 20px; padding: 2px 0 14px; }
+  /* Per-message copy button, mirroring the main chat's hover/hold affordance
+     (copy only — no react or reply on the read-only share page). */
+  .m-copyrow { display: flex; height: 0; overflow: visible; transition: height .18s ease; }
+  .m-copyrow.ur { justify-content: flex-end; }
+  .msg-copy {
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 32px; height: 32px; padding: 0; margin-top: 8px;
+    border-radius: 50%; border: 1px solid var(--hairline);
+    background: var(--lift); color: var(--ink-2); cursor: pointer;
+    box-shadow: 0 2px 6px rgba(28, 24, 19, .18);
+    opacity: 0; pointer-events: none; transition: opacity .15s;
+  }
+  .msg-copy svg { display: block; }
+  .msg-copy:hover { color: var(--ink); border-color: var(--ink-3); }
+  @media (hover: hover) {
+    .m-user:hover + .m-copyrow, .m-assistant:hover + .m-copyrow,
+    .m-copyrow:hover, .m-copyrow.show { height: 42px; }
+    .m-user:hover + .m-copyrow .msg-copy, .m-assistant:hover + .m-copyrow .msg-copy,
+    .m-copyrow:hover .msg-copy, .m-copyrow.show .msg-copy { opacity: 1; pointer-events: auto; }
+  }
+  @media (hover: none) {
+    .m-copyrow.show { height: 42px; }
+    .m-copyrow.show .msg-copy { opacity: 1; pointer-events: auto; }
+  }
   .err { text-align: center; padding: 80px 20px; color: var(--ink-2); }
   .err h1 { font-size: 22px; }
   footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--hairline);
@@ -128,6 +152,25 @@
       : `<a class="chip" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" download="${esc(a.filename || 'file')}">${SVG_CLIP}<span>${esc(a.filename || 'file')}</span></a>`;
   }
 
+  // Same copy glyph the main chat's message row uses.
+  const COPY_SVG = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5v5A1.5 1.5 0 0 0 4 10h1.5"/></svg>';
+  const CHECK_SVG = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4.5"/></svg>';
+  const copyRowHtml = (ur) =>
+    `<div class="m-copyrow${ur ? ' ur' : ''}"><button class="msg-copy" data-copybtn aria-label="Copy message" title="Copy">${COPY_SVG}</button></div>`;
+
+  async function copyTextPlain(t) {
+    try { await navigator.clipboard.writeText(t); return true; }
+    catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        const ok = document.execCommand('copy'); ta.remove();
+        return ok;
+      } catch { return false; }
+    }
+  }
+
   // Mirror the regular chat's work-log folding: within each run (assistant
   // blocks between user messages), every assistant block except the final
   // answer folds into an expandable Work log tray. Blocks with images stay
@@ -159,9 +202,51 @@
         '<div class="wl-body"></div>';
       const body = details.querySelector('.wl-body');
       group[0].before(details);
-      for (const el of group) body.appendChild(el);
+      for (const el of group) {
+        // A message's copy row (if present) travels with it.
+        const row = el.nextElementSibling;
+        body.appendChild(el);
+        if (row && row.classList.contains('m-copyrow')) body.appendChild(row);
+      }
     }
   }
+
+  root.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-copybtn]');
+    // Tap-away hides any long-press-revealed copy row.
+    if (!btn) {
+      root.querySelectorAll('.m-copyrow.show').forEach((r) => r.classList.remove('show'));
+      return;
+    }
+    const msg = btn.closest('.m-copyrow')?.previousElementSibling;
+    const text = msg ? msg.innerText.trim() : '';
+    if (!text) return;
+    copyTextPlain(text).then((ok) => {
+      if (!ok) return;
+      btn.innerHTML = CHECK_SVG;
+      setTimeout(() => { btn.innerHTML = COPY_SVG; }, 1200);
+    });
+  });
+
+  // Touch: long-press a message to reveal its copy button, mirroring the
+  // main chat's hold-to-reveal message actions. Native text selection is
+  // left alone — the button is just an extra affordance.
+  let pressTimer = null;
+  root.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || e.target.closest('[data-copybtn]')) return;
+    const msg = e.target.closest('.m-user, .m-assistant');
+    if (!msg) return;
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      root.querySelectorAll('.m-copyrow.show').forEach((r) => r.classList.remove('show'));
+      const row = msg.nextElementSibling;
+      if (row && row.classList.contains('m-copyrow')) row.classList.add('show');
+    }, 450);
+  }, { passive: true });
+  const cancelPress = () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
+  root.addEventListener('touchmove', cancelPress, { passive: true });
+  root.addEventListener('touchend', cancelPress);
+  root.addEventListener('touchcancel', cancelPress);
 
   document.getElementById('theme-toggle').addEventListener('click', () => {
     const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
@@ -204,10 +289,10 @@
         // attachments here; turns with neither text nor attachments are noise.
         if (!hasText && !atts.length) continue;
         if (m.role === 'user') {
-          html += `<div class="m-user${hasText ? '' : ' no-text'}">${hasText ? md(m.content) : ''}` + atts.map(attachmentHtml).join('') + '</div>';
+          html += `<div class="m-user${hasText ? '' : ' no-text'}">${hasText ? md(m.content) : ''}` + atts.map(attachmentHtml).join('') + '</div>' + copyRowHtml(true);
         } else {
           html += `<div class="m-assistant"${hasText ? ' data-hastext="1"' : ''}>` + (hasText ? md(m.content) : '') +
-            atts.map(attachmentHtml).join('') + '</div>';
+            atts.map(attachmentHtml).join('') + '</div>' + copyRowHtml(false);
         }
       }
       html += '</div><footer>Shared from Orion — read-only.</footer>';
