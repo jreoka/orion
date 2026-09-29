@@ -66,23 +66,11 @@ a { color: var(--accent); }
    Logo — Orion's belt, in ink
    ============================================================ */
 .orion-mark { display: flex; align-items: center; gap: 11px; }
-.orion-mark svg { display: block; overflow: visible; }
-/* Gentle slow rotation on the orbit group — the mark's "shiny" motion.
-   Rotates around the viewBox center (not the group's bbox, which the
-   off-center star would skew). */
-.orion-mark svg .orbit {
-  transform-box: view-box;
-  transform-origin: 16px 16px;
-  animation: orbit-spin 24s linear infinite;
-}
-@keyframes orbit-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-.orion-mark.sm svg { width: 26px; height: 26px; }
+.orion-mark img { display: block; }
+.orion-mark.sm img { width: 26px; height: 26px; }
 .orion-mark.lg { justify-content: center; }
-.orion-mark.lg svg { width: 44px; height: 44px; }
-.orion-mark.xl svg { width: 64px; height: 64px; }
+.orion-mark.lg img { width: 44px; height: 44px; }
+.orion-mark.xl img { width: 64px; height: 64px; }
 .wordmark { font-weight: 700; font-size: 17px; letter-spacing: -.02em; }
 .wordmark.sm { font-size: 15px; }
 
@@ -334,7 +322,7 @@ button.avatar.lg:hover { opacity: .85; }
   border-bottom: 1px solid var(--hairline);
 }
 .side-head .orion-mark { display: flex; align-items: center; gap: 8px; }
-.side-head .orion-mark svg { width: 22px; height: 22px; }
+.side-head .orion-mark img { width: 22px; height: 22px; }
 /* Search + new-chat stay glued together at the right edge. */
 .side-actions { display: flex; align-items: center; gap: 2px; }
 .conv-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 2px; }

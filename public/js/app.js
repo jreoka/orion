@@ -1694,13 +1694,7 @@ function messageEl(m) {
   } else {
     wrap.innerHTML = `
       <div class="a-avatar">
-        <svg viewBox="0 0 32 32" aria-hidden="true">
-          <g class="orbit">
-            <ellipse cx="16" cy="16" rx="13" ry="5" fill="none" stroke="#6974bc" stroke-width="1.6" transform="rotate(-25 16 16)"/>
-            <path d="M26.3,7.1 L26.85,8.75 L28.5,9.3 L26.85,9.85 L26.3,11.5 L25.75,9.85 L24.1,9.3 L25.75,8.75 Z" fill="#beb7a8"/>
-          </g>
-          <circle cx="16" cy="16" r="9" fill="none" stroke="#beb7a8" stroke-width="2.4"/>
-        </svg>
+        <img src="/logo-mark.png?v=PENDING" alt="" aria-hidden="true">
       </div>
       <div class="a-body">
         ${quoteHtml(m)}
