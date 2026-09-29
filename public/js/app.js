@@ -139,6 +139,7 @@ const S = {
   jumpUnread: 0,       // new messages arrived while the user was scrolled up
   stick: true,         // follow mode: pinned to the bottom; cleared when the user scrolls up
   turns: [],           // [{id, snippet}] every user message in the open conversation, oldest first
+  replyTo: null,       // {id, role, excerpt} of the message being quoted in the composer
 };
 
 /* ---------- toasts ---------- */
@@ -709,6 +710,7 @@ const OLDER_BATCH = 60;
 
 function setMessages(data) {
   S.messages = data.messages || [];
+  clearReply();
   S.hasMoreOlder = !!data.hasMoreOlder;
   S.loadingOlder = false;
 }
@@ -1609,6 +1611,10 @@ $('#messages').addEventListener('click', async (e) => {
   if (e.target.closest('[data-rxadd]')) { openRxPicker(e.target.closest('[data-rxadd]')); return; }
   const msgCopy = e.target.closest('[data-copy]');
   if (msgCopy) { copyMessage(msgCopy.closest('.msg')?.dataset.mid); return; }
+  const msgReply = e.target.closest('[data-reply]');
+  if (msgReply) { startReply(msgReply.closest('.msg')?.dataset.mid); return; }
+  const quote = e.target.closest('[data-quote]');
+  if (quote) { jumpToMessage(quote.dataset.quote); return; }
 });
 
 // Right-click (or long-press) a message: Copy / React. Native menu is kept
@@ -1683,22 +1689,68 @@ function messageEl(m) {
     const hasText = !!(m.content && String(m.content).trim());
     const imgs = (m.attachments || []).length
       ? `<div class="u-imgs${hasText ? '' : ' no-text'}">${(m.attachments || []).map(attachmentHtml).join('')}</div>` : '';
-    wrap.innerHTML = `<div class="bubble">${hasText ? md(m.content) : ''}${imgs}<div class="rx-row" data-rxrow>${rxRowInner(m)}</div></div>`;
+    wrap.innerHTML = `<div class="bubble">${quoteHtml(m)}${hasText ? md(m.content) : ''}${imgs}<div class="rx-row" data-rxrow>${rxRowInner(m)}</div></div>`;
   } else {
     wrap.innerHTML = `
       <div class="a-avatar">
         <svg viewBox="0 0 32 32" aria-hidden="true">
-          <circle cx="16" cy="16" r="5.5" fill="url(#orion-grad)"/>
-          <ellipse cx="16" cy="16" rx="13" ry="5.2" transform="rotate(-24 16 16)" fill="none" stroke="url(#orion-grad)" stroke-width="2" stroke-linecap="round"/>
+          <g class="orbit">
+            <ellipse cx="16" cy="16" rx="13" ry="5" fill="none" stroke="#6974bc" stroke-width="1.6" transform="rotate(-25 16 16)"/>
+            <path d="M26.3,7.1 L26.85,8.75 L28.5,9.3 L26.85,9.85 L26.3,11.5 L25.75,9.85 L24.1,9.3 L25.75,8.75 Z" fill="#beb7a8"/>
+          </g>
+          <circle cx="16" cy="16" r="9" fill="none" stroke="#beb7a8" stroke-width="2.4"/>
         </svg>
       </div>
       <div class="a-body">
+        ${quoteHtml(m)}
         <div class="content">${m.content ? md(m.content) : ''}</div>
         <div class="imgs">${(m.attachments || []).map(attachmentHtml).join('')}</div>
         <div class="rx-row" data-rxrow>${rxRowInner(m)}</div>
       </div>`;
   }
   return wrap;
+}
+
+/* ---------- quote-reply ---------- */
+function quoteHtml(m) {
+  const q = m.reply_to_message;
+  if (!q) return '';
+  const who = q.role === 'assistant' ? 'Orion' : 'You';
+  const excerpt = String(q.excerpt || '').replace(/\s+/g, ' ').trim().slice(0, 140) || '[attachment]';
+  return `<button class="quote" data-quote="${q.id}" title="Jump to quoted message"><span class="quote-who">${esc(who)}</span><span class="quote-text">${esc(excerpt)}</span></button>`;
+}
+
+function startReply(mid) {
+  if (!mid || String(mid).startsWith('local-')) return;
+  const m = S.messages.find((x) => String(x.id) === String(mid));
+  if (!m) return;
+  const text = String(m.content || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+  S.replyTo = { id: m.id, role: m.role, excerpt: text || '[attachment]' };
+  renderReplyBar();
+  $('#composer-input')?.focus();
+}
+
+function renderReplyBar() {
+  const bar = $('#reply-bar');
+  if (!bar) return;
+  const r = S.replyTo;
+  bar.hidden = !r;
+  if (!r) return;
+  $('#reply-bar-who').textContent = r.role === 'assistant' ? 'Orion' : 'yourself';
+  $('#reply-bar-text').textContent = r.excerpt;
+}
+
+function clearReply() { S.replyTo = null; renderReplyBar(); }
+
+$('#reply-cancel')?.addEventListener('click', clearReply);
+
+function jumpToMessage(id) {
+  const el = document.querySelector(`.msg[data-mid="${CSS.escape(String(id))}"]`);
+  if (!el) { toast('Original message is not loaded', 'error'); return; }
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.remove('quote-flash');
+  void el.offsetWidth; // restart the highlight animation
+  el.classList.add('quote-flash');
 }
 
 /* ---------- reactions ---------- */
@@ -1710,7 +1762,7 @@ function rxChipHtml(r) {
 
 function rxRowInner(m) {
   const chips = (m.reactions || []).map(rxChipHtml).join('');
-  return `${chips}<button class="rx-copy" data-copy aria-label="Copy message" title="Copy"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5v5A1.5 1.5 0 0 0 4 10h1.5"/></svg></button><button class="rx-add" data-rxadd aria-label="Add reaction" title="Add reaction"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button>`;
+  return `${chips}<button class="rx-reply" data-reply aria-label="Reply to message" title="Reply"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 3.5 3 7l3.5 3.5"/><path d="M3.5 7H10a3.5 3.5 0 0 1 0 7H8.5"/></svg></button><button class="rx-copy" data-copy aria-label="Copy message" title="Copy"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5v5A1.5 1.5 0 0 0 4 10h1.5"/></svg></button><button class="rx-add" data-rxadd aria-label="Add reaction" title="Add reaction"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button>`;
 }
 
 // Refresh one message's reaction row from a grouped-reactions payload.
@@ -1894,6 +1946,7 @@ function openMsgMenu(msgEl, x, y) {
   menu.style.position = 'fixed';
   menu.setAttribute('role', 'menu');
   menu.innerHTML = `
+    ${isLocal ? '' : '<button data-act="reply" role="menuitem">Reply</button>'}
     <button data-act="copy" role="menuitem">Copy text</button>
     ${isLocal ? '' : '<button data-act="react" role="menuitem">Add reaction…</button>'}`;
   document.body.appendChild(menu);
@@ -1907,6 +1960,7 @@ function openMsgMenu(msgEl, x, y) {
     closeMsgMenu();
     if (act === 'copy') copyMessage(mid);
     else if (act === 'react') openRxPickerAt(mid, x, y, y);
+    else if (act === 'reply') startReply(mid);
   });
   // Skip the click that opened the menu.
   setTimeout(() => {
@@ -1943,6 +1997,10 @@ function openMsgSheet(mid) {
     ${isLocal ? '' : `<div class="sheet-rx" role="group" aria-label="Quick reactions">${
       RX_EMOJI.map((e) => `<button data-pick="${e}" aria-label="React ${e}">${e}</button>`).join('')
     }</div>`}
+    ${isLocal ? '' : `<button class="sheet-act" data-act="reply">
+      <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 3.5 3 7l3.5 3.5"/><path d="M3.5 7H10a3.5 3.5 0 0 1 0 7H8.5"/></svg>
+      <span>Reply</span>
+    </button>`}
     <button class="sheet-act" data-act="copy">
       <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5v5A1.5 1.5 0 0 0 4 10h1.5"/></svg>
       <span>Copy text</span>
@@ -1955,7 +2013,8 @@ function openMsgSheet(mid) {
   sheet.addEventListener('click', (e) => {
     const pk = e.target.closest('[data-pick]');
     if (pk) { closeSheet(); addReaction(mid, pk.dataset.pick); return; }
-    if (e.target.closest('[data-act="copy"]')) { closeSheet(); copyMessage(mid); }
+    if (e.target.closest('[data-act="copy"]')) { closeSheet(); copyMessage(mid); return; }
+    if (e.target.closest('[data-act="reply"]')) { closeSheet(); startReply(mid); }
   });
   // Swipe down to dismiss.
   let startY = 0, dy = 0;
@@ -2005,8 +2064,12 @@ function wireLongPress() {
 }
 
 let localMsgSeq = 0; // disambiguates optimistic ids minted within the same millisecond
-function appendUserMessage(content, attachments) {
+function appendUserMessage(content, attachments, replyTo) {
   const m = { id: `local-${Date.now()}-${localMsgSeq++}`, role: 'user', content, attachments: attachments || [] };
+  if (replyTo) {
+    m.reply_to = replyTo.id;
+    m.reply_to_message = { id: replyTo.id, role: replyTo.role, excerpt: replyTo.excerpt };
+  }
   S.messages.push(m);
   $('#messages').appendChild(messageEl(m));
   // A queued message mid-run closes the current visual chapter: collapse the
@@ -3098,6 +3161,8 @@ async function sendMessage() {
   }
   if (S.activeId !== convId) { toast('Switched chats — message not sent', 'error'); return; }
 
+  const replyTo = S.replyTo;
+  clearReply();
   input.value = '';
   input.style.height = 'auto';
   if (S.clearComposerDraft) S.clearComposerDraft();
@@ -3109,19 +3174,20 @@ async function sendMessage() {
   // Optimistic bubble, reconciled with the real row id below. The server
   // also publishes the row on the bus, which can arrive before the POST
   // response — upsertMessage dedupes by id either way.
-  const local = appendUserMessage(content, staged.map((p) => ({ filename: p.filename, url: p.url })));
+  const local = appendUserMessage(content, staged.map((p) => ({ filename: p.filename, url: p.url })), replyTo);
 
   let resp;
   try {
     resp = await api(`/api/conversations/${convId}/messages`, {
       method: 'POST',
-      body: { content, attachment_ids: staged.map((p) => p.id) },
+      body: { content, attachment_ids: staged.map((p) => p.id), reply_to: replyTo?.id || null },
     });
   } catch (e) {
     // If the bus already reconciled this message, the server did persist
     // it — don't remove it or resurrect the draft as if it never sent.
     if (!local._reconciled) {
       removeMessage(local);
+      if (replyTo) { S.replyTo = replyTo; renderReplyBar(); } // restore the quote
       input.value = content; // restore the draft
       S.pendingByConv[stagedKey] = staged; // keep the files staged so they can resend
       renderAttachTray();
@@ -3441,7 +3507,7 @@ function onBusMessage(m) {  if (!m || m.id == null || S.activeId == null) return
       reconcileLocal(local, m);
       return;
     }
-    msg = { id: m.id, role: m.role, content: m.content || '', kind: m.kind || 'message', run_start: m.run_start || 0, attachments: m.attachments || [], reactions: m.reactions || [] };
+    msg = { id: m.id, role: m.role, content: m.content || '', kind: m.kind || 'message', run_start: m.run_start || 0, attachments: m.attachments || [], reactions: m.reactions || [], reply_to: m.reply_to || null, reply_to_message: m.reply_to_message || null };
     S.messages.push(msg);
     const el = messageEl(msg);
     $('#messages').appendChild(el);

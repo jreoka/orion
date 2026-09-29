@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import dns from 'node:dns';
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, attachmentSummary, groupedReactions, getSetting } from './db.js';
+import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, replySummary, attachmentSummary, groupedReactions, getSetting } from './db.js';
 import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
 import { imagePartsForMessage, imagePartFromFile, messageHasImages, stripImageParts } from './vision.js';
 import { notifyConversation } from './push.js';
@@ -1556,7 +1556,7 @@ export async function loadHistory(conversationId, limit) {
   if (limit && Number.isFinite(limit) && limit > 0) {
     rows = db
       .prepare(
-        'SELECT id, role, content, kind, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?'
+        'SELECT id, role, content, kind, tool_calls, tool_call_id, reply_to FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?'
       )
       .all(conversationId, Math.ceil(limit));
     rows.reverse();
@@ -1566,7 +1566,7 @@ export async function loadHistory(conversationId, limit) {
   } else {
     rows = db
       .prepare(
-        'SELECT id, role, content, kind, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? ORDER BY id'
+        'SELECT id, role, content, kind, tool_calls, tool_call_id, reply_to FROM messages WHERE conversation_id = ? ORDER BY id'
       )
       .all(conversationId);
   }
@@ -1649,7 +1649,7 @@ export async function loadHistory(conversationId, limit) {
     // reacted to what without any schema changes. Same for file
     // attachments: readable text is embedded; images become vision parts
     // so the model genuinely sees them instead of guessing.
-    let text = (r.content || '') + reactionSummary(r.id) + attachmentSummary(r.id);
+    let text = replySummary(r) + (r.content || '') + reactionSummary(r.id) + attachmentSummary(r.id);
     if (r.kind === 'vault_request') {
       // The widget payload is metadata only; replay it as a plain line so
       // the model sees the request state without JSON noise.

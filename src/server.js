@@ -443,7 +443,7 @@ function getConv(id, userId) {
 // The client sees user/assistant turns only; the agent replays tool rows
 // from the DB directly when it needs context.
 function messagePayload(m, userId) {
-  return {
+  const payload = {
     ...m,
     attachments: db
       .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
@@ -451,13 +451,22 @@ function messagePayload(m, userId) {
       .map((a) => ({ id: a.id, filename: a.filename, url: `/api/files/${a.id}` })),
     reactions: groupedReactions(m.id, userId),
   };
+  // Quote-reply preview: attach the referenced message's role + excerpt so
+  // the client can render the quote without an extra round trip.
+  if (m.reply_to) {
+    const ref = db
+      .prepare('SELECT id, role, substr(content, 1, 300) AS excerpt FROM messages WHERE id = ?')
+      .get(m.reply_to);
+    if (ref) payload.reply_to_message = { id: ref.id, role: ref.role, excerpt: ref.excerpt };
+  }
+  return payload;
 }
 
 function conversationPayload(conv, limit = 80) {
   const n = Math.max(1, Math.min(200, Number(limit) || 80));
   const messages = db
     .prepare(
-      `SELECT id, role, content, kind, created_at, run_start FROM messages
+      `SELECT id, role, content, kind, created_at, run_start, reply_to FROM messages
        WHERE conversation_id = ? AND role != 'tool' ORDER BY id DESC LIMIT ?`
     )
     .all(conv.id, n)
@@ -547,7 +556,7 @@ app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
   if (!Number.isFinite(before)) return res.status(400).json({ error: 'before is required' });
   const messages = db
     .prepare(
-      `SELECT id, role, content, kind, created_at, run_start FROM messages
+      `SELECT id, role, content, kind, created_at, run_start, reply_to FROM messages
        WHERE conversation_id = ? AND role != 'tool' AND id < ?
        ORDER BY id DESC LIMIT ?`
     )
@@ -789,13 +798,23 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
   // A single chat message has no business being megabytes: cap it well below
   // the JSON body limit so one paste can't bloat the DB or the model replay.
   if (content.length > 100_000) throw httpError(400, 'Message too long (100,000 character limit).');
+  // Optional quote-reply: must reference a message in this same conversation.
+  let replyTo = null;
+  const rawReplyTo = Number(req.body?.reply_to);
+  if (Number.isFinite(rawReplyTo) && rawReplyTo > 0) {
+    const target = db
+      .prepare('SELECT id FROM messages WHERE id = ? AND conversation_id = ?')
+      .get(Math.floor(rawReplyTo), conv.id);
+    if (!target) throw httpError(400, 'Replied-to message not found in this conversation.');
+    replyTo = target.id;
+  }
 
   // Persist + publish the user message first. Runs always replay history
   // from the DB, so the insert is the single source of truth.
   const now = Date.now();
   const info = db
-    .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
-    .run(conv.id, 'user', content, now);
+    .prepare('INSERT INTO messages (conversation_id, role, content, created_at, reply_to) VALUES (?, ?, ?, ?, ?)')
+    .run(conv.id, 'user', content, now, replyTo);
   const messageId = Number(info.lastInsertRowid);
   // Claim this user's staged uploads for the new message.
   if (attachmentIds.length) {
@@ -857,11 +876,10 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
       }
     } catch { /* attachment copy must never block the message */ }
   }
-  const attachments = db
-    .prepare('SELECT id, filename, mime FROM attachments WHERE message_id = ?')
-    .all(messageId)
-    .map((a) => ({ id: a.id, filename: a.filename, url: `/api/files/${a.id}` }));
-  const message = { id: messageId, role: 'user', content, created_at: now, attachments };
+  const message = messagePayload(
+    { id: messageId, role: 'user', content, created_at: now, reply_to: replyTo },
+    req.user.id
+  );
   db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, conv.id);
   publish(conv.id, { type: 'message', message });
   publishToUser(req.user.id, { type: 'conversations_changed' }); // sidebar reorder/preview on other devices

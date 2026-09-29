@@ -14,7 +14,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%277%27%20fill%3D%27%23171310%27%2F%3E%3Cellipse%20cx%3D%2716%27%20cy%3D%2716%27%20rx%3D%2713%27%20ry%3D%275%27%20fill%3D%27none%27%20stroke%3D%27%236974bc%27%20stroke-width%3D%271.6%27%20transform%3D%27rotate%28-25%2016%2016%29%27%2F%3E%3Ccircle%20cx%3D%2716%27%20cy%3D%2716%27%20r%3D%279%27%20fill%3D%27none%27%20stroke%3D%27%23beb7a8%27%20stroke-width%3D%272.4%27%2F%3E%3Cpath%20d%3D%27M26.3%2C7.1%20L26.85%2C8.75%20L28.5%2C9.3%20L26.85%2C9.85%20L26.3%2C11.5%20L25.75%2C9.85%20L24.1%2C9.3%20L25.75%2C8.75%20Z%27%20fill%3D%27%23beb7a8%27%2F%3E%3C%2Fsvg%3E">
   <link rel="apple-touch-icon" href="/icons/icon-192.png?v=da415a4">
   <title>Orion</title>
-  <link rel="stylesheet" href="/css/app.css?v=da415a4">
+  <link rel="stylesheet" href="/css/app.css?v=f3c91b3">
 </head>
 <body>
   <div id="app">
@@ -155,6 +155,13 @@
           <p class="muted">Your agent has a computer of its own and a browser.<br>Give it something to do.</p>
         </div>
         <div class="composer-wrap">
+          <div id="reply-bar" class="reply-bar" hidden>
+            <div class="reply-bar-body">
+              <div class="reply-bar-label">Replying to <span id="reply-bar-who"></span></div>
+              <div class="reply-bar-text" id="reply-bar-text"></div>
+            </div>
+            <button type="button" id="reply-cancel" class="reply-cancel" aria-label="Cancel reply">✕</button>
+          </div>
           <div id="attach-tray" class="attach-tray" hidden></div>
           <div id="dictation-bar" class="dictation-bar" hidden>
             <canvas id="dictation-wave" aria-hidden="true"></canvas>
@@ -367,6 +374,6 @@
   <div id="toasts" aria-live="polite"></div>
   <script src="/js/markdown.js?v=2a82c31"></script>
   <script src="/js/dictation.js?v=5c47e90"></script>
-  <script src="/js/app.js?v=da415a4"></script>
+  <script src="/js/app.js?v=f3c91b3"></script>
 </body>
 </html>

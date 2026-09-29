@@ -123,6 +123,7 @@ addColumn('users', 'abuse_locked_at', 'INTEGER');
 addColumn('users', 'weekly_token_limit', 'INTEGER DEFAULT 1000000');
 addColumn('users', 'avatar_path', 'TEXT');
 addColumn('users', 'theme', 'TEXT'); // 'light'|'dark', NULL = never set (adopt device local)
+addColumn('messages', 'reply_to', 'INTEGER'); // id of the quoted message (NULL = not a reply)
 // User file uploads: rows are staged (message_id = 0, staged = 1) at
 // upload time and claimed by a user message at send time.
 addColumn('attachments', 'user_id', 'INTEGER');
@@ -406,6 +407,19 @@ export function reactionSummary(messageId) {
     return `${r.emoji}${r.n > 1 ? ' ×' + r.n : ''} (${who} reacted)`;
   });
   return `\n\n[reactions on this message: ${parts.join('; ')}]`;
+}
+
+/** Quote-reply context for the model. When a message replies to an earlier
+ * one, prefix it with the quoted text so the model knows what "this" / "it"
+ * refers to — e.g. the user replying "remember this?" to an old message. */
+export function replySummary(messageRow) {
+  if (!messageRow || !messageRow.reply_to) return '';
+  const ref = db
+    .prepare('SELECT role, substr(content, 1, 500) AS excerpt FROM messages WHERE id = ?')
+    .get(messageRow.reply_to);
+  if (!ref || !ref.excerpt) return '';
+  const who = ref.role === 'assistant' ? 'you' : ref.role === 'user' ? 'the user' : ref.role;
+  return `[Replying to this earlier message from ${who}: "${ref.excerpt}"]\n\n`;
 }
 
 /** Plain-text summary of a message's file attachments for the model. Text
