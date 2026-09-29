@@ -1462,6 +1462,8 @@ button.avatar.lg:hover { opacity: .85; }
   position: absolute; top: calc(16px + env(safe-area-inset-top)); right: 16px;
   background: rgba(250, 247, 240, .32); color: #fff; width: 44px; height: 44px;
   font-size: 20px; font-weight: 700; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+  padding: 0 0 2px;
 }
 #lightbox-close:hover { background: rgba(250, 247, 240, .45); color: #fff; }
 
