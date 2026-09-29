@@ -1,7 +1,7 @@
 // Orion service worker — offline-capable app shell, never caches the API.
 'use strict';
 
-const VERSION = 'orion-v6';
+const VERSION = 'orion-v7';
 const SHELL = [
   '/',
   '/index.html',
@@ -43,9 +43,9 @@ self.addEventListener('fetch', (event) => {
   // Never cache-bust the query string off cache lookups for versioned assets.
   // Share pages are HTML that changes per deploy — always try the network
   // first like the app shell, so reloading a link never renders stale markup.
-  // (Each /share/<token> URL caches separately; without this the service
+  // (Each /s/<token> URL caches separately; without this the service
   // worker would keep serving the old page for a revisited link.)
-  if (NETWORK_FIRST.has(url.pathname) || url.pathname.startsWith('/share/')) {
+  if (NETWORK_FIRST.has(url.pathname) || url.pathname.startsWith('/s/')) {
     event.respondWith(
       fetch(event.request).then((res) => {
         if (res && res.ok) {
