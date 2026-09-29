@@ -2338,12 +2338,16 @@ export async function runAgentLoop({
   // chats titled "Check in…" / "Task: …".
   {
     const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(conversationId);
-    const titleTrigger = userText || (Array.isArray(attachmentNames) && attachmentNames.length ? attachmentNames.join(', ') : '');
-    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && titleTrigger && !noAutoTitle && !isOverLimit(userId)) {
+    // Immediate title only when there's real user text. Attachment-only
+    // messages are titled at run end instead (runs.js): at run start the
+    // titler only sees a filename and produces junk like "Image Shared
+    // for Discussion"; after the run the assistant's reply describes what
+    // was actually shared.
+    if (conv && (conv.title === 'New chat' || conv.title === 'New side chat') && userText && !noAutoTitle && !isOverLimit(userId)) {
       // Fire-and-forget: the title is published on the bus when it lands,
       // so the run isn't held up by a second model call. Failures fall
       // back to the old first-words slice inside generateChatTitle.
-      generateChatTitle({ userId, conversationId, settings, userText, attachmentNames, finalText: '' }).catch(() => {});
+      generateChatTitle({ userId, conversationId, settings, userText, finalText: '' }).catch(() => {});
     }
   }
   // Assistant message IDs created during this run, in turn order. At run end

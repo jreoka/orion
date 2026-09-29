@@ -16,7 +16,8 @@
 // A user message queued while the run was active still chains a follow-up —
 // stop halts the in-flight work, not the user's newer intent.
 import { db, getSetting } from './db.js';
-import { runAgentContinuation, autoCaptureMemories } from './agent.js';
+import { isOverLimit } from './usage.js';
+import { runAgentContinuation, autoCaptureMemories, generateChatTitle } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
 import { sandboxKillExec } from './sandbox.js';
 import { notifyConversation } from './push.js';
@@ -278,6 +279,24 @@ export async function runConversation(
     // Skip for heartbeat (noise) and stopped runs (incomplete work).
     if (!wasStopped && !opts.noUsageCharge) {
       autoCaptureMemories({ userId, conversationId: id, settings: globalSettings() }).catch(() => {});
+    }
+    // Deferred auto-title for attachment-only first messages: at run start
+    // the titler only saw a filename; now the assistant's reply describes
+    // what was actually shared, so title from that instead.
+    if (!wasStopped && !shuttingDown) {
+      try {
+        const c2 = db.prepare('SELECT title FROM conversations WHERE id = ?').get(id);
+        const attOnly = !userText && Array.isArray(opts.attachmentNames) && opts.attachmentNames.length > 0;
+        if (c2 && (c2.title === 'New chat' || c2.title === 'New side chat') && attOnly && !isOverLimit(userId)) {
+          const last = db
+            .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1")
+            .get(id);
+          const finalText = String(last?.content || '').replace(/\s+/g, ' ').trim().slice(0, 800);
+          if (finalText) {
+            generateChatTitle({ userId, conversationId: id, settings: globalSettings(), userText: '', attachmentNames: opts.attachmentNames, finalText }).catch(() => {});
+          }
+        }
+      } catch { /* titling is best-effort */ }
     }
   }
 
