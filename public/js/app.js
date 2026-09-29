@@ -2658,6 +2658,7 @@ async function archiveChat(conv) {
         paintArchivedState();
         renderAttachTray();
         updateComposer();
+        S.turns = []; renderTurnRail(); // clear the turn rail for the empty state
       }
     }
   } catch (ex) { toast(ex.message || 'Archive failed', 'error'); }
