@@ -427,6 +427,10 @@ button.avatar.lg:hover { opacity: .85; }
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 10px 12px; border: none; border-radius: 10px; background: none;
   font: inherit; text-align: left; cursor: pointer; color: var(--ink);
+  /* Long-press opens the chat menu — never let the title get text-selected
+     or pop the iOS callout while the finger is down. */
+  user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 .conv-item:hover { background: var(--paper-2); }
 /* Active chat: a quiet wash + hairline ring, title in full ink.

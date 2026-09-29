@@ -2392,6 +2392,9 @@ function convItemEl(c) {
   el.addEventListener('touchmove', lpCancel, { passive: true });
   el.addEventListener('touchend', lpCancel, { passive: true });
   el.addEventListener('touchcancel', lpCancel, { passive: true });
+  // Some Android browsers fire contextmenu on long-press — swallow it when
+  // our long-press already opened the menu (same gating as the click above).
+  el.addEventListener('contextmenu', (e) => { if (lpFired) e.preventDefault(); });
   return el;
 }
 
