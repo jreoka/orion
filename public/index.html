@@ -344,15 +344,13 @@
         <div class="card">
           <h2>Appearance</h2>
           <p class="muted small">Paper by day, ink by night.</p>
-          <label class="toggle-row" style="margin-bottom:8px">
-            <span>Theme</span>
-            <select id="theme-select" class="select" aria-label="Theme">
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-              <option value="auto">Auto</option>
-            </select>
-          </label>
-          <p class="muted small" style="margin:0">Auto follows your device's light / dark setting.</p>
+          <label class="stack-label" for="theme-select">Theme</label>
+          <select id="theme-select" class="select" aria-label="Theme">
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="auto">Auto</option>
+          </select>
+          <p class="muted small" style="margin:8px 0 0">Auto follows your device's light / dark setting.</p>
           <label class="toggle-row" style="margin-bottom:0">
             <span>Haptic feedback</span>
             <span class="toggle"><input id="haptics-toggle" type="checkbox" checked><span class="knob"></span></span>
