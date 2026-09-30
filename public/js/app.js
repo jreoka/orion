@@ -952,9 +952,10 @@ async function loadOlder(force) {
   // before jumpToBottom() settles, and then the "stay pinned to top"
   // logic loads the entire history and leaves the user at the top.
   if (S.switching) return;
-  // Also suppress for 1.5s after the switch completes: the observer fires
-  // async and can still beat the scroll/layout settling.
-  if (S.switchSettledAt && Date.now() - S.switchSettledAt < 1500) return;
+  // Suppress for 1.5s after the switch completes: the observer fires
+  // async and can still beat the scroll/layout settling. (Bypassed when
+  // force=true — the fill code in renderMessages() is intentional.)
+  if (!force && S.switchSettledAt && Date.now() - S.switchSettledAt < 1500) return;
   // Re-attach trimmed nodes first — even when the server has nothing older
   // left (hasMoreOlder false), or scrolling up dead-ends on messages the
   // client already has but can't see.
