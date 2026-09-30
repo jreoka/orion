@@ -272,6 +272,14 @@ export async function runConversation(
         // A fizzled run (model went quiet through every recovery nudge) is
         // not a finish — say so plainly instead of reusing a stale snippet
         // or falling back to a bare "finished".
+        // Post it as a visible chat message too, not just a push: the user
+        // may be on web (no push) or watching (push suppressed) — either way
+        // a silent stop with an empty last message looks like a crash.
+        if (loopStopReason === 'fizzled') {
+          db.prepare(
+            "INSERT INTO messages (conversation_id, role, content, created_at, kind) VALUES (?, 'assistant', ?, ?, 'message')"
+          ).run(id, "The run went quiet before finishing — say continue and I'll pick up where I left off.", Date.now());
+        }
         const body = loopStopReason === 'fizzled'
           ? `${conv.title || 'Chat'}: the run went quiet before finishing — say continue and I'll pick up where I left off`
           : `${conv.title || 'Chat'}${runStatus !== 'done' ? ` (${runStatus})` : ''}: ${snippet || 'finished'}`;
