@@ -136,7 +136,7 @@ export async function authenticationOptions(req, username) {
   let allowCredentials = [];
   let userId = null;
   if (username) {
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(String(username).toLowerCase());
     if (user && !user.disabled) {
       userId = user.id;
       allowCredentials = userCredentials(user.id).map((c) => ({

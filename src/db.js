@@ -205,6 +205,23 @@ try {
   console.warn('[orion] weekly_token_limit repair skipped:', e?.message || e);
 }
 
+// Usernames are forced lowercase ("Bob" and "bob" are the same account).
+// Lowercase any pre-existing mixed-case usernames once at boot. If two
+// rows would collide after lowercasing, the UPDATE fails and the admin
+// resolves it manually — the constraint below still blocks new dupes.
+try {
+  db.exec("UPDATE users SET username = LOWER(username) WHERE username != LOWER(username)");
+} catch (e) {
+  console.warn('[orion] username lowercase migration skipped:', e?.message || e);
+}
+// Belt-and-braces: a case-insensitive unique index so no code path can ever
+// create "Bob" alongside "bob", even if it bypasses the lowercase forcing.
+try {
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_username_nocase ON users(username COLLATE NOCASE)');
+} catch (e) {
+  console.warn('[orion] username NOCASE index migration skipped:', e?.message || e);
+}
+
 db.exec(`
 CREATE TABLE IF NOT EXISTS totp_backup_codes (
   id INTEGER PRIMARY KEY,

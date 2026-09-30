@@ -55,7 +55,9 @@ export function avatarUrlFor(userId) {
 }
 
 export function signup(username, password) {
-  if (!USERNAME_RE.test(username || '')) {
+  // Usernames are forced lowercase: "Bob" and "bob" are the same account.
+  username = String(username || '').toLowerCase();
+  if (!USERNAME_RE.test(username)) {
     throw httpError(400, 'Username must be 3–24 characters: letters, numbers, _ or -');
   }
   const pw = checkPasswordRules(password);
@@ -78,7 +80,7 @@ export function signup(username, password) {
 }
 
 export function login(username, password) {
-  const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  const row = db.prepare('SELECT * FROM users WHERE username = ?').get(String(username || '').toLowerCase());
   // Don't reveal whether the username exists via bcrypt timing: always pay
   // the compare cost, even for unknown users.
   if (!row) {
