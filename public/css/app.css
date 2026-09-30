@@ -718,6 +718,14 @@ button.avatar.lg:hover { opacity: .85; }
   scrollbar-width: thin;
 }
 .messages[hidden] { display: none !important; }
+/* Anchor short chats to the bottom: an invisible spacer that absorbs free
+   space above the content. Collapses to zero when content overflows, so
+   scrolling is unaffected. The sentinel stays in place for the observer. */
+.messages::before {
+  content: '';
+  flex: 1 0 auto;
+  min-height: 0;
+}
 .msg { display: flex; animation: rise .25s var(--ease); max-width: 720px; width: 100%; margin: 0 auto; }
 #older-spinner { display: flex; justify-content: center; padding: 10px 0 2px; }
 #older-spinner[hidden] { display: none; }
