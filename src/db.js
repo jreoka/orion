@@ -341,6 +341,9 @@ addColumn('shared_chats', 'snapshot', 'TEXT');
 // Vault multi-field forms: JSON [{name,label}] per request/item; NULL = legacy single value.
 addColumn('vault_requests', 'fields', 'TEXT');
 addColumn('vault_items', 'fields', 'TEXT');
+// Vault overwrite: vault_requests.target_item_id links a request to an
+// existing item to overwrite (via the vault_update agent tool).
+addColumn('vault_requests', 'target_item_id', 'TEXT');
 
 // NOTE: `messages.tool_call_id` is one column beyond the original sketch —
 // tool-role rows need it to be replayable as valid OpenAI history.

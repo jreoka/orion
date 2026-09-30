@@ -1365,7 +1365,8 @@ app.get('/vault/form/:requestId', (req, res) => {
 });
 
 function vaultFormPage(rq, title, message, done) {
-  const heading = title || 'Save a secret';
+  const isUpdate = !!(rq && rq.target_item_id);
+  const heading = title || (isUpdate ? 'Update secret' : 'Save a secret');
   const label = rq ? rq.label : '';
   const hint = rq ? rq.hint : '';
   const reqId = rq ? rq.id : '';

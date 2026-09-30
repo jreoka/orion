@@ -70,7 +70,7 @@ Your tools:
 - schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in the main chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
   - Waiting on the user to do something OUTSIDE chat (OAuth device approval, clicking a confirmation link, etc.): never tell them to reply "done" or send a message to resume you. Schedule a one-shot task that polls for completion — its prompt must say: if complete, finish the work and tell the user; if not, reschedule itself (schedule_task again) until it succeeds or the window expires, then report the outcome either way. The task's output lands in the chat and notifies them on its own.
 
-- vault_request / vault_list / vault_delete / vault_rename: the encrypted vault. NEVER ask the user to paste secrets (API keys, tokens, passwords) into chat — anything typed in chat is visible to the underlying AI model. When you need a credential, call vault_request with a label and a short hint; it shows the user a secure in-chat form whose contents go straight into the encrypted vault in the VM. For multi-part credentials pass fields: [{name: "username", label: "Username"}, {name: "password", label: "Password"}] — the form shows one labeled box per field, all stored under ONE vault entry. You never see any value — only handles: "vault:<id>" for single-value entries, "vault:<id>:<field_name>" per field of a multi-field entry. Use them through exec's env param ({"SOME_KEY": "vault:<id>"}): the value is injected server-side and scrubbed from all command output, so it never enters your context. Never echo, print, or write a vault value anywhere (no echo $KEY, no writing it to files, no putting it in task prompts).
+- vault_request / vault_list / vault_delete / vault_rename / vault_update: the encrypted vault. NEVER ask the user to paste secrets (API keys, tokens, passwords) into chat — anything typed in chat is visible to the underlying AI model. When you need a credential, call vault_request with a label and a short hint; it shows the user a secure in-chat form whose contents go straight into the encrypted vault in the VM. To overwrite an existing entry (e.g. rotating a key), call vault_update with the item id — same secure form, updates in place. For multi-part credentials pass fields: [{name: "username", label: "Username"}, {name: "password", label: "Password"}] — the form shows one labeled box per field, all stored under ONE vault entry. You never see any value — only handles: "vault:<id>" for single-value entries, "vault:<id>:<field_name>" per field of a multi-field entry. Use them through exec's env param ({"SOME_KEY": "vault:<id>"}): the value is injected server-side and scrubbed from all command output, so it never enters your context. Never echo, print, or write a vault value anywhere (no echo $KEY, no writing it to files, no putting it in task prompts).
 
 Guidelines:
 - Work quietly: never narrate your plan, progress, or tool steps in chat text. No "I'll look that up…", no "Let me try a different approach…", no "That didn't work, trying…". The user already sees live activity indicators while you work, and everything you write becomes a chat message they have to read. Just do the work silently with your tools.
@@ -496,6 +496,29 @@ export const TOOLS = [
         required: ['id', 'label'],
       },
     },
+    {
+      name: 'vault_update',
+      description: 'Overwrite an existing vault secret\'s value by its id (see vault_list). Shows the user a secure form to enter the new value — you never see it. Use when a secret needs rotating or correcting. For multi-field entries, pass the same fields structure as the original.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The vault item id to overwrite' },
+          hint: { type: 'string', description: 'Short hint shown on the form (e.g. "Enter the new API key")' },
+          fields: {
+            type: 'array',
+            description: 'For multi-field entries: [{name, label}] matching the original entry\'s fields',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                label: { type: 'string' },
+              },
+            },
+          },
+        },
+        required: ['id'],
+      },
+    },
   },
 ];
 
@@ -663,6 +686,7 @@ function summarizeTool(name, args) {
     case 'vault_list': return 'Checking the vault…';
     case 'vault_delete': return 'Updating the vault…';
     case 'vault_rename': return 'Renaming vault entry…';
+    case 'vault_update': return 'Preparing secure update form…';
     case 'remember': return 'Saving a memory…';
     case 'todo_write': {
       const todos = execCtx?.todos;
@@ -1579,6 +1603,43 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       if (!label) throw new Error('vault_rename: label is required');
       if (!renameVaultItem(userId, vid, label)) throw new Error('vault item not found');
       return { text: `Vault item renamed to "${label}".` };
+    }
+    case 'vault_update': {
+      const vid = String(args.id ?? '').trim();
+      if (!vid) throw new Error('vault_update: id is required');
+      // Verify the item exists and get its label/fields for the form.
+      const items = listVaultItems(userId);
+      const item = items.find((i) => i.id === vid);
+      if (!item) throw new Error('vault item not found');
+      const hint = String(args.hint ?? '').trim() || `Enter the new value for "${item.label}"`;
+      // For multi-field entries, the agent must pass the fields structure.
+      // If the item has fields but none were passed, use the item's own.
+      let fields = args.fields ?? null;
+      if (item.fields && !fields) {
+        try { fields = JSON.parse(item.fields); } catch { fields = null; }
+      }
+      const cleanFields = cleanVaultFields(fields);
+      const requestId = createVaultRequest(userId, conversationId, item.label, hint, args.fields ?? null, vid);
+      const content = JSON.stringify({
+        vault_request_id: requestId, label: item.label, hint, status: 'pending',
+        fields: cleanFields ? cleanFields.map((f) => f.label) : null,
+        update: true,
+      });
+      const now = Date.now();
+      const info = db
+        .prepare('INSERT INTO messages (conversation_id, role, content, kind, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(conversationId, 'assistant', content, 'vault_request', now);
+      const id = Number(info.lastInsertRowid);
+      db.prepare('UPDATE vault_requests SET message_id = ? WHERE id = ?').run(id, requestId);
+      publish(conversationId, {
+        type: 'message',
+        message: { id, role: 'assistant', content, kind: 'vault_request', created_at: now },
+      });
+      return {
+        text: `Secure form shown to overwrite "${item.label}" (request ${requestId}). ` +
+          `The new value goes straight into the encrypted vault — you will never see it. ` +
+          `Tell the user to fill the form and say "done".`,
+      };
     }
     case 'remember': {
       const text = String(args.text ?? '').trim().slice(0, 2000);

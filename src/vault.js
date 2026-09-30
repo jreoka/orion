@@ -109,7 +109,7 @@ export function parseVaultFields(row) {
 }
 
 /** Create a pending secret request. Returns the request id (unguessable). */
-export function createVaultRequest(userId, conversationId, label, hint = '', fields = null) {
+export function createVaultRequest(userId, conversationId, label, hint = '', fields = null, targetItemId = null) {
   const cleanLabel = String(label ?? '').trim().slice(0, 120);
   if (!cleanLabel) throw new Error('vault_request: label is required');
   const cleanHint = String(hint ?? '').trim().slice(0, 500);
@@ -117,9 +117,9 @@ export function createVaultRequest(userId, conversationId, label, hint = '', fie
   const id = crypto.randomUUID();
   const now = Date.now();
   db.prepare(
-    `INSERT INTO vault_requests (id, user_id, conversation_id, label, hint, fields, status, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
-  ).run(id, userId, conversationId, cleanLabel, cleanHint, cleanFields ? JSON.stringify(cleanFields) : null, now, now + REQUEST_TTL_MS);
+    `INSERT INTO vault_requests (id, user_id, conversation_id, label, hint, fields, target_item_id, status, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+  ).run(id, userId, conversationId, cleanLabel, cleanHint, cleanFields ? JSON.stringify(cleanFields) : null, targetItemId, now, now + REQUEST_TTL_MS);
   return id;
 }
 
@@ -178,6 +178,22 @@ export function fulfillVaultRequest(userId, requestId, payload = {}) {
   }
   const itemId = crypto.randomUUID();
   const now = Date.now();
+  // Overwrite mode: update the existing item instead of creating a new one.
+  // The label and field structure come from the existing item (not the
+  // request) to avoid mismatches.
+  if (req.target_item_id) {
+    const existing = db.prepare('SELECT id, label, fields FROM vault_items WHERE id = ? AND user_id = ?').get(req.target_item_id, userId);
+    if (!existing) throw new Error('target vault item not found');
+    // If the existing item has fields, the request must supply matching values.
+    const existingFields = existing.fields ? JSON.parse(existing.fields) : null;
+    if (existingFields && !fields) throw new Error('this entry has multiple fields — use vault_update with matching fields');
+    if (!existingFields && fields) throw new Error('this entry is a single value — use vault_update without fields');
+    db.prepare(
+      'UPDATE vault_items SET secret_enc = ?, fields = ?, created_at = ? WHERE id = ?'
+    ).run(encryptSecret(blob), fieldsJson, now, existing.id);
+    db.prepare(`UPDATE vault_requests SET status = 'fulfilled', item_id = ? WHERE id = ?`).run(existing.id, requestId);
+    return { itemId: existing.id, request: req, fields };
+  }
   db.prepare(
     'INSERT INTO vault_items (id, user_id, label, secret_enc, fields, created_at) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(itemId, userId, req.label, encryptSecret(blob), fieldsJson, now);
