@@ -1499,23 +1499,17 @@ function renderMessages() {
   // smooth scroll-behavior for the jump (a bare scrollTop assignment still
   // animates otherwise).
   jumpToBottom();
-  // If the chat isn't scrollable but there's older history, load batches
-  // until it is (or history runs out). Otherwise short chats with long
-  // histories are dead-ends — the user can't scroll up to reach older
-  // messages. Cap at 5 batches to avoid runaway loads.
-  if (S.hasMoreOlder) {
-    const box = $('#messages');
-    if (box && box.scrollHeight <= box.clientHeight + 10) {
-      (async () => {
-        for (let i = 0; i < 5; i++) {
-          if (!S.hasMoreOlder) break;
-          const b = $('#messages');
-          if (!b || b.scrollHeight > b.clientHeight + 10) break;
-          await loadOlder(true);
-        }
-        jumpToBottom();
-      })();
-    }
+  // If there are fewer than 200 messages loaded but more history exists,
+  // load batches until we hit 200 (or run out). Collapsed work logs don't
+  // add much height, so checking scrollHeight doesn't work — we need enough
+  // messages in the DOM for scrolling to be useful. Cap at 5 batches.
+  if (S.hasMoreOlder && S.messages.length < 200) {
+    (async () => {
+      for (let i = 0; i < 5 && S.hasMoreOlder && S.messages.length < 200; i++) {
+        await loadOlder(true);
+      }
+      jumpToBottom();
+    })();
   }
 }
 
