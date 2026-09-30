@@ -1077,9 +1077,12 @@ async function jumpToTurn(mid) {
     reattachMissingOlder();
     const el = msgElById(mid);
     if (!el) { toast('Could not find that turn', 'error'); return; }
-    el.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    el.classList.add('turn-flash');
-    setTimeout(() => el.classList.remove('turn-flash'), 1200);
+    // Same highlight as clicking a reply quote: center the message and
+    // flash the bubble with the accent ring.
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.remove('quote-flash');
+    void el.offsetWidth; // restart the highlight animation
+    el.classList.add('quote-flash');
     // If we're already there, no scroll event fires — paint directly.
     // Also re-paint after the smooth scroll lands.
     schedulePaintRail();
