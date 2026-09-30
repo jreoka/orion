@@ -862,7 +862,10 @@ function wireOlderObserver() {
       if (e.isIntersecting) loadOlder();
     }
     // Viewport root: fires whether #messages or an ancestor scrolls.
-  }, { root: null, rootMargin: '400px 0px 0px 0px', threshold: 0 });
+    // No rootMargin: only fire when the sentinel is actually visible, not
+    // 400px before — the aggressive margin caused history to load during
+    // chat switches before the scroll-to-bottom settled.
+  }, { root: null, rootMargin: '0px 0px 0px 0px', threshold: 0 });
   olderObserver.observe(ensureOlderSentinel());
 }
 function showOlderSpinner(on) {
@@ -953,19 +956,10 @@ async function loadOlder() {
   if (reattachMissingOlder()) return;
   if (!S.hasMoreOlder) return;
   if (!(await fetchOlderBatch())) return;
-  // Still pinned to the top with more on the server? Keep paging. The
-  // IntersectionObserver only fires on intersection CHANGES, so it won't
-  // re-trigger while the sentinel stays continuously visible — without
-  // this the user has to nudge the scroll to load each batch.
-  // But only if the content is actually scrollable: if the chat is shorter
-  // than the viewport, scrollTop is 0 because there's nowhere to scroll,
-  // not because the user is pinned to the top — auto-paging here would
-  // load the entire history on every chat switch.
-  const box = $('#messages');
-  if (S.hasMoreOlder && box.scrollTop < 100 && box.scrollHeight > box.clientHeight + 100) {
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    if (box.scrollTop < 100 && S.activeId) loadOlder();
-  }
+  // NOTE: no recursive auto-page here. The IntersectionObserver re-fires
+  // when the sentinel becomes visible after each prepend, so the user can
+  // keep scrolling up to load more. Auto-paging in a loop caused runaway
+  // history loads that froze the page and stuck the user at the top.
 }
 
 /* ---------- turn rail: one line per user turn, tap to jump ---------- */
