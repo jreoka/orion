@@ -595,7 +595,8 @@ app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
   if (!conv) return res.status(404).json({ error: 'Not found' });
   // User opened the chat — clear the unseen-finish flag (sidebar green check).
   try {
-    db.prepare('DELETE FROM unseen_finishes WHERE user_id = ? AND conversation_id = ?').run(req.user.id, conv.id);
+    const del = db.prepare('DELETE FROM unseen_finishes WHERE user_id = ? AND conversation_id = ?').run(req.user.id, conv.id);
+    if (del.changes > 0) publishToUser(req.user.id, { type: 'unseen_finish_cleared', conversation_id: conv.id });
   } catch {}
   const n = Math.max(1, Math.min(200, Number(req.query.limit) || 60));
   const before = Number(req.query.before);
@@ -705,7 +706,8 @@ app.get('/api/conversations/:id', requireAuth, (req, res) => {
   if (!conv) return res.status(404).json({ error: 'Not found' });
   // User opened the chat — clear the unseen-finish flag (sidebar green check).
   try {
-    db.prepare('DELETE FROM unseen_finishes WHERE user_id = ? AND conversation_id = ?').run(req.user.id, conv.id);
+    const del = db.prepare('DELETE FROM unseen_finishes WHERE user_id = ? AND conversation_id = ?').run(req.user.id, conv.id);
+    if (del.changes > 0) publishToUser(req.user.id, { type: 'unseen_finish_cleared', conversation_id: conv.id });
   } catch {}
   res.json(conversationPayload(conv));
 });

@@ -3729,6 +3729,15 @@ function openUserEventStream() {
   const es = new EventSource('/api/user/events');
   S.userEvt = es;
   es.addEventListener('usage_updated', () => { refreshUsage(); renderUsageCard(); });
+  es.addEventListener('unseen_finish_cleared', (e) => {
+    const d = parseBusEvent(e);
+    if (d && d.conversation_id != null) {
+      // Another device dismissed the green check — clear it here too.
+      const c = S.conversations.find((x) => x.id === d.conversation_id);
+      if (c && c.unseenFinish) { c.unseenFinish = false; renderSidebar(); }
+      if (S.doneByConv[d.conversation_id]) { delete S.doneByConv[d.conversation_id]; saveDoneFlags(); renderSidebar(); }
+    }
+  });
   es.addEventListener('conversation_deleted', (e) => {
     const d = parseBusEvent(e);
     if (d && d.conversation_id != null) onConversationDeleted(d.conversation_id);
