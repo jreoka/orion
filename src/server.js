@@ -593,6 +593,10 @@ app.get('/api/conversations/:id/turns', requireAuth, (req, res) => {
 app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
   const conv = getConv(req.params.id, req.user.id);
   if (!conv) return res.status(404).json({ error: 'Not found' });
+  // User opened the chat — clear the unseen-finish flag (sidebar green check).
+  try {
+    db.prepare('DELETE FROM unseen_finishes WHERE user_id = ? AND conversation_id = ?').run(req.user.id, conv.id);
+  } catch {}
   const n = Math.max(1, Math.min(200, Number(req.query.limit) || 60));
   const before = Number(req.query.before);
   if (!Number.isFinite(before)) return res.status(400).json({ error: 'before is required' });
@@ -618,9 +622,11 @@ app.get('/api/conversations/:id/messages', requireAuth, (req, res) => {
 
 app.get('/api/conversations', requireAuth, (req, res) => {
   const rows = db
-    .prepare("SELECT id, title, kind, task_id, created_at, updated_at FROM conversations WHERE user_id = ? AND kind != 'heartbeat' AND archived = 0 ORDER BY updated_at DESC")
-    .all(req.user.id)
-    .map((c) => ({ ...c, running: isRunLocked(c.id) }));
+    .prepare(`SELECT id, title, kind, task_id, created_at, updated_at,
+       EXISTS(SELECT 1 FROM unseen_finishes WHERE user_id = ? AND conversation_id = conversations.id) AS unseenFinish
+       FROM conversations WHERE user_id = ? AND kind != 'heartbeat' AND archived = 0 ORDER BY updated_at DESC`)
+    .all(req.user.id, req.user.id)
+    .map((c) => ({ ...c, running: isRunLocked(c.id), unseenFinish: !!c.unseenFinish }));
   res.json(rows);
 });
 

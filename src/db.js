@@ -38,6 +38,15 @@ CREATE TABLE IF NOT EXISTS conversations (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+-- Tracks runs that finished while the user wasn't viewing the chat, so the
+-- sidebar green check works across devices and page reloads. Cleared when
+-- the user opens the conversation.
+CREATE TABLE IF NOT EXISTS unseen_finishes (
+  user_id INTEGER NOT NULL,
+  conversation_id INTEGER NOT NULL,
+  finished_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, conversation_id)
+);
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY,
   conversation_id INTEGER NOT NULL,

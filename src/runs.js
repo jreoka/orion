@@ -21,7 +21,7 @@ import { runAgentContinuation, autoCaptureMemories, generateChatTitle } from './
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
 import { sandboxKillExec } from './sandbox.js';
 import { notifyConversation } from './push.js';
-import { publish } from './events.js';
+import { publish, subscriberCount } from './events.js';
 
 export const MAX_CHAINED_RUNS = 10;
 
@@ -262,6 +262,20 @@ export async function runConversation(
   // Reminders, scheduled tasks, and heartbeat findings always notify via
   // their own paths.
   if (chainDepth === 0) {
+    // Record the finish for the sidebar green check. This is server-side so
+    // it works across devices and page reloads — cleared when the user
+    // actually opens the conversation. Skip for stopped runs (not a finish),
+    // heartbeat (background-only, never shows a check), and when the user
+    // is actively watching (they saw it finish live; no check needed).
+    if (!wasStopped && !opts.noUsageCharge && subscriberCount(id) === 0) {
+      try {
+        db.prepare(
+          'INSERT OR REPLACE INTO unseen_finishes (user_id, conversation_id, finished_at) VALUES (?, ?, ?)'
+        ).run(userId, id, Date.now());
+      } catch (e) {
+        console.warn('[orion] unseen_finishes insert failed:', e?.message || e);
+      }
+    }
     try {
       const conv = db.prepare('SELECT title FROM conversations WHERE id = ?').get(id);
       if (conv) {

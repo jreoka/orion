@@ -2414,12 +2414,16 @@ async function loadConversationsQuiet(retried = false) {
         // A new run supersedes the finished check.
         if (S.doneByConv[c.id]) { delete S.doneByConv[c.id]; dirty = true; }
       } else if (c.id !== S.activeId) {
-        if (S.runByConv[c.id]) {
+        // Server-side unseen-finish flag (works across devices/reloads).
+        // Local runByConv transition is the fallback for older servers.
+        if (c.unseenFinish || S.runByConv[c.id]) {
           // The run finished while we were looking at another chat —
           // show the green check where the working light was.
-          S.doneByConv[c.id] = true;
-          dirty = true;
-          refreshUsage(); // tokens moved
+          if (!S.doneByConv[c.id]) {
+            S.doneByConv[c.id] = true;
+            dirty = true;
+            refreshUsage(); // tokens moved
+          }
         }
         if (S.runByConv[c.id]) { delete S.runByConv[c.id]; runDirty = true; }
       }
