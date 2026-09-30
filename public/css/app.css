@@ -249,6 +249,14 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
 }
 .auth-tab:hover { color: var(--ink); }
 .auth-tab.active { color: var(--ink); box-shadow: inset 0 -2px 0 var(--ink); }
+/* Count pill on the Pending admin tab (hidden when there's nothing to review). */
+.tab-badge {
+  display: inline-block; min-width: 22px; text-align: center;
+  font-family: var(--sans); font-size: 11px; font-weight: 700;
+  background: var(--ink); color: var(--paper);
+  border-radius: 99px; padding: 2px 7px; margin-left: 2px; vertical-align: 1px;
+}
+.tab-badge[hidden] { display: none; }
 /* Admin tab pages sit right under the tab bar — the bar already draws the line. */
 .admin-tabs ~ .card { border-top: none; padding-top: 8px; }
 #auth-form .btn { margin-top: 6px; }
@@ -1367,6 +1375,30 @@ button.avatar.lg:hover { opacity: .85; }
   padding-top: 14px;
 }
 .users-pager[hidden] { display: none; }
+/* Pending tab: pending / denied filter segmented control. */
+.pending-filter-bar { display: flex; gap: 8px; margin: 14px 0 12px; }
+.filter-btn {
+  border: 1px solid var(--hairline); background: transparent; color: var(--ink-2);
+  font-family: var(--sans); font-size: 13px; font-weight: 600;
+  border-radius: 99px; padding: 8px 18px; cursor: pointer; min-height: 38px;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.filter-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+.filter-btn.active { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+
+/* Signup approval note on the auth screen (shown on the signup tab only). */
+.approval-note { margin: -16px 0 20px; }
+/* Signup approval: toggle disabled state follows "Allow public signups". */
+#signup-approval-row:has(input:disabled) { opacity: .45; }
+
+/* Pending landing screen (post-signup while awaiting approval). */
+.pending-card { text-align: center; padding-top: 28px; }
+.pending-card h1 { font-family: var(--serif); font-weight: 600; font-size: 26px; margin: 10px 0 0; }
+.pending-icon { font-size: 46px; animation: pending-pulse 2.6s ease-in-out infinite; }
+@keyframes pending-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+#pending-username { margin-bottom: 14px; }
+#pending-status { font-size: 15px; line-height: 1.6; max-width: 320px; margin: 0 auto; }
+.pending-actions { margin-top: 26px; display: flex; flex-direction: column; gap: 10px; }
 .users-table { width: 100%; border-collapse: collapse; font-size: 14px; font-family: var(--sans); }
 .users-table th {
   text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .08em;

@@ -14,7 +14,7 @@
   <link rel="icon" href="/favicon.png?v=5926458">
   <link rel="apple-touch-icon" href="/icons/icon-192.png?v=5926458">
   <title>Orion</title>
-  <link rel="stylesheet" href="/css/app.css?v=44c5b35">
+  <link rel="stylesheet" href="/css/app.css?v=78a1cd1">
 </head>
 <body>
   <div id="app">
@@ -31,6 +31,7 @@
             <button id="tab-login" class="auth-tab active" role="tab">Log in</button>
             <button id="tab-signup" class="auth-tab" role="tab">Sign up</button>
           </div>
+          <p class="muted small approval-note" id="signup-approval-note" hidden>New accounts need an admin's approval before you can sign in.</p>
           <form id="auth-form" autocomplete="off">
             <label class="field">
               <span>Username</span>
@@ -63,6 +64,20 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- ============ PENDING SIGNUP ============ -->
+    <section id="view-pending" class="view starfield" hidden>
+      <div class="auth-wrap"><div class="auth-card pending-card">
+        <div class="pending-icon" aria-hidden="true">⏳</div>
+        <h1>You're on the list</h1>
+        <p class="auth-sub" id="pending-username"></p>
+        <p class="muted" id="pending-status">An admin needs to approve your account before you can sign in. This usually happens soon — you can leave this page open.</p>
+        <div class="pending-actions">
+          <button type="button" class="btn primary block" id="pending-signin" hidden>Sign in</button>
+          <button type="button" class="btn block" id="pending-back">Back to sign in</button>
+        </div>
+      </div></div>
     </section>
 
     <!-- ============ CHAT ============ -->
@@ -188,6 +203,7 @@
 
         <nav class="auth-tabs admin-tabs" id="admin-tabs">
           <button type="button" class="auth-tab active" data-atab="users">Users</button>
+          <button type="button" class="auth-tab" data-atab="pending">Pending <span class="tab-badge" id="pending-badge" hidden></span></button>
           <button type="button" class="auth-tab" data-atab="provider">AI provider</button>
           <button type="button" class="auth-tab" data-atab="limits">Limits</button>
         </nav>
@@ -217,6 +233,10 @@
             <label class="toggle-row">
               <span>Allow public signups</span>
               <span class="toggle"><input id="set-signup" type="checkbox"><span class="knob"></span></span>
+            </label>
+            <label class="toggle-row" id="signup-approval-row">
+              <span>Require admin approval for new signups</span>
+              <span class="toggle"><input id="set-signup-approval" type="checkbox"><span class="knob"></span></span>
             </label>
             <div class="form-row">
               <button type="submit" class="btn primary" id="provider-save">Save changes</button>
@@ -268,6 +288,31 @@
             <button type="button" class="btn" id="users-prev">← Prev</button>
             <span class="muted small" id="users-page-info"></span>
             <button type="button" class="btn" id="users-next">Next →</button>
+          </div>
+        </div>
+
+        <div class="card" id="admin-card-pending" hidden>
+          <h2>Pending signups</h2>
+          <p class="muted small">New account requests waiting on you. Approve the ones you trust — approving creates the account and lets them sign in.</p>
+          <div class="pending-filter-bar">
+            <button type="button" class="filter-btn active" id="pending-filter-pending">Pending</button>
+            <button type="button" class="filter-btn" id="pending-filter-denied">Denied</button>
+          </div>
+          <div class="users-toolbar">
+            <input type="search" id="pending-search" class="input" placeholder="Search usernames…" autocomplete="off" aria-label="Search pending signups">
+          </div>
+          <div class="table-wrap">
+            <table class="users-table">
+              <thead>
+                <tr><th>User</th><th>Requested</th><th>Status</th><th class="th-actions">Actions</th></tr>
+              </thead>
+              <tbody id="pending-body"></tbody>
+            </table>
+          </div>
+          <div class="users-pager" id="pending-pager" hidden>
+            <button type="button" class="btn" id="pending-prev">← Prev</button>
+            <span class="muted small" id="pending-page-info"></span>
+            <button type="button" class="btn" id="pending-next">Next →</button>
           </div>
         </div>
       </div>
@@ -399,9 +444,9 @@
 
   <div id="modal-root"></div>
   <div id="toasts" aria-live="polite"></div>
-  <script src="/js/markdown.js?v=2a82c31"></script>
+  <script src="/js/markdown.js?v=78a1cd1"></script>
   <script src="/js/dictation.js?v=b10ac73"></script>
-  <script src="/js/render.js?v=84a8ef4"></script>
-  <script src="/js/app.js?v=a305a0c"></script>
+  <script src="/js/render.js?v=78a1cd1"></script>
+  <script src="/js/app.js?v=78a1cd1"></script>
 </body>
 </html>

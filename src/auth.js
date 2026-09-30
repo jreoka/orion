@@ -85,6 +85,15 @@ export function login(username, password) {
   // the compare cost, even for unknown users.
   if (!row) {
     bcrypt.compareSync(password || '', DUMMY_HASH);
+    // A pending or denied signup request looks like an unknown username —
+    // give it a friendlier message than a bare 401.
+    const req_ = db.prepare('SELECT status FROM signup_requests WHERE username = ?').get(String(username || '').toLowerCase());
+    if (req_?.status === 'pending') {
+      throw httpError(403, 'Your account is awaiting admin approval.');
+    }
+    if (req_?.status === 'denied') {
+      throw httpError(403, "Your signup request wasn't approved.");
+    }
     throw httpError(401, 'Invalid username or password');
   }
   if (!bcrypt.compareSync(password || '', row.password_hash)) {

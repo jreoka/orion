@@ -244,8 +244,8 @@ function formatTokenLimit(v) {
 }
 
 /* ---------- routing ---------- */
-const ROUTES = ['login', 'chat', 'admin', 'settings'];
-const VIEW_ID = { login: 'view-auth', chat: 'view-chat', admin: 'view-admin', settings: 'view-settings' };
+const ROUTES = ['login', 'chat', 'admin', 'settings', 'pending'];
+const VIEW_ID = { login: 'view-auth', chat: 'view-chat', admin: 'view-admin', settings: 'view-settings', pending: 'view-pending' };
 function route() {
   const h = (location.hash || '').replace(/^#\/?/, '');
   // Old push-notification deep links (#/chat/123) land on the single chat.
@@ -256,14 +256,16 @@ function go(r) { location.hash = '#/' + r; }
 
 async function render() {
   const r = route();
-  if (!S.me && r !== 'login') { go('login'); return; }
-  if (S.me && r === 'login') { go('chat'); return; }
+  if (pendingPollTimer) { clearInterval(pendingPollTimer); pendingPollTimer = null; }
+  if (!S.me && r !== 'login' && r !== 'pending') { go('login'); return; }
+  if (S.me && (r === 'login' || r === 'pending')) { go('chat'); return; }
   if (r === 'admin' && S.me && S.me.role !== 'admin') { go('chat'); return; }
   for (const v of ROUTES) { const el = document.getElementById(VIEW_ID[v]); if (el) el.hidden = v !== r; }
   if (r === 'login') renderAuth();
   else if (r === 'chat') renderChat();
   else if (r === 'admin') renderAdmin();
   else if (r === 'settings') renderSettings();
+  else if (r === 'pending') renderPending();
 }
 // Boot navigates to the chat route itself; the resulting hashchange must not
 // re-run render() concurrently with the boot render — two interleaved
@@ -490,6 +492,7 @@ async function renderAuth() {
     $('#tab-signup').hidden = !on;
     if (!on) authMode = 'login';
     S.turnstileSiteKey = (cfg && cfg.turnstile_site_key) || null;
+    S.signupApprovalRequired = !!(cfg && cfg.signup_approval_required);
   } catch (e) { $('#tab-signup').hidden = false; }
   S.turnstileToken = null;
   $('#turnstile-slot').hidden = true;
@@ -570,6 +573,14 @@ async function doAuth() {
       method: 'POST', body
     });
     if (res && res.need_2fa) { show2faStep(res.challenge); return; }
+    if (res && res.pending) {
+      // Approval required: no session — park the request token and go wait.
+      sessionStorage.setItem('orion_pending', JSON.stringify({ token: res.request_token, username }));
+      $('#auth-password').value = '';
+      $('#auth-confirm').value = '';
+      go('pending');
+      return;
+    }
     $('#auth-password').value = '';
     $('#auth-confirm').value = '';
     await afterLogin();
@@ -599,7 +610,72 @@ function setAuthMode(mode) {
   $('#auth-confirm').required = mode === 'signup';
   if (mode === 'login') $('#auth-confirm').value = '';
   $('#auth-error').hidden = true;
+  // When admin approval is required, say so on the signup tab.
+  $('#signup-approval-note').hidden = !(mode === 'signup' && S.signupApprovalRequired);
   updatePasskeyBtn();
+}
+
+/* ---------- Pending signup view ----------
+   After signing up while approval is required, the user lands here.
+   The view polls /api/signup-status/:token so the "Sign in" button
+   appears the moment an admin approves. */
+let pendingPollTimer = null;
+let pendingViewWired = false;
+
+function clearPendingPoll() {
+  if (pendingPollTimer) { clearInterval(pendingPollTimer); pendingPollTimer = null; }
+}
+
+function wirePendingViewOnce() {
+  if (pendingViewWired) return;
+  pendingViewWired = true;
+  $('#pending-back').onclick = () => {
+    sessionStorage.removeItem('orion_pending');
+    clearPendingPoll();
+    go('login');
+  };
+}
+
+function renderPending() {
+  clearPendingPoll();
+  let info = null;
+  try { info = JSON.parse(sessionStorage.getItem('orion_pending')); } catch { /* gone */ }
+  if (!info || !info.token) {
+    sessionStorage.removeItem('orion_pending');
+    go('login');
+    return;
+  }
+  wirePendingViewOnce();
+  $('#pending-username').textContent = `Request for “${info.username || 'your account'}”`;
+  $('#pending-status').textContent = 'An admin needs to approve your account before you can sign in. This usually happens soon — you can leave this page open.';
+  $('#pending-signin').hidden = true;
+  const check = async () => {
+    let st = null;
+    try {
+      st = await api('/api/signup-status/' + encodeURIComponent(info.token));
+    } catch (e) {
+      if (/404/.test(e.message)) {
+        clearPendingPoll();
+        $('#pending-status').textContent = 'This signup request no longer exists.';
+        return;
+      }
+      return; // transient failure — try again on the next tick
+    }
+    if (st.status === 'approved') {
+      clearPendingPoll();
+      sessionStorage.removeItem('orion_pending');
+      $('#pending-status').textContent = 'Approved — welcome in.';
+      const btn = $('#pending-signin');
+      btn.hidden = false;
+      btn.onclick = () => go('login');
+    } else if (st.status === 'denied') {
+      clearPendingPoll();
+      sessionStorage.removeItem('orion_pending');
+      $('#pending-status').textContent = "Your request wasn't approved.";
+    }
+  };
+  check();
+  pendingPollTimer = setInterval(check, 10000);
 }
 
 function wireGlobal() {
@@ -3797,7 +3873,7 @@ function onBusFile(d) {
    Admin-only; render() already guards the route.
    ============================================================ */
 async function renderAdmin() {
-  await Promise.all([loadProviderSettings(), loadAdminUsers()]);
+  await Promise.all([loadProviderSettings(), loadAdminUsers(), loadPendingRequests()]);
   wireProviderFormOnce();
   wireLimitsFormOnce();
   wireAdminTabsOnce();
@@ -3813,6 +3889,7 @@ function wireAdminTabsOnce() {
     provider: $('#admin-card-provider'),
     limits: $('#admin-card-limits'),
     users: $('#admin-card-users'),
+    pending: $('#admin-card-pending'),
   };
   tabs.forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3839,12 +3916,25 @@ async function loadProviderSettings() {
   $('#set-key').placeholder = s.has_key ? 'Saved ✓ — leave blank to keep' : 'Not set';
   // signup_enabled arrives as the string '1'/'0' — !!'0' is true, so compare explicitly.
   $('#set-signup').checked = s.signup_enabled === '1' || s.signup_enabled === true;
+  // Approval only makes sense with signups enabled.
+  $('#set-signup-approval').checked = s.signup_approval_required === '1' || s.signup_approval_required === true;
+  $('#set-signup-approval').disabled = !$('#set-signup').checked;
+  wireSignupApprovalToggleOnce();
   // Limits & captcha card. The default allowance shows in shorthand ("1M"),
   // matching the per-user limit box.
   $('#set-default-limit').value = formatTokenLimit(s.default_weekly_token_limit);
   $('#set-turnstile-site').value = s.turnstile_site_key || '';
   $('#set-turnstile-secret').value = '';
   $('#set-turnstile-secret').placeholder = s.has_turnstile_secret ? 'Saved ✓ — leave blank to keep' : 'Not set';
+}
+
+let signupApprovalWired = false;
+function wireSignupApprovalToggleOnce() {
+  if (signupApprovalWired) return;
+  signupApprovalWired = true;
+  $('#set-signup').addEventListener('change', (e) => {
+    $('#set-signup-approval').disabled = !e.target.checked;
+  });
 }
 
 let limitsWired = false;
@@ -3893,7 +3983,8 @@ function wireProviderFormOnce() {
       provider_name: $('#set-provider').value.trim(),
       base_url: $('#set-baseurl').value.trim(),
       model: $('#set-model').value.trim(),
-      signup_enabled: $('#set-signup').checked
+      signup_enabled: $('#set-signup').checked,
+      signup_approval_required: $('#set-signup-approval').checked ? '1' : '0'
     };
     // Send the key only when the admin typed a new one.
     if (key) body.api_key = key;
@@ -4057,6 +4148,150 @@ function renderAdminUsers() {
   renderUsersPager(filtered.length);
 }
 
+
+/* ============================================================
+   Pending tab: signup requests awaiting an admin decision.
+   Same client-side search + 25/page pagination as the Users tab.
+   ============================================================ */
+const PENDING_PER_PAGE = 25;
+let pendingTabWired = false;
+
+function wirePendingTabOnce() {
+  if (pendingTabWired) return;
+  pendingTabWired = true;
+  S.pendingFilter = 'pending';
+  S.pendingSearch = '';
+  S.pendingPage = 0;
+  $('#pending-filter-pending').addEventListener('click', () => setPendingFilter('pending'));
+  $('#pending-filter-denied').addEventListener('click', () => setPendingFilter('denied'));
+  $('#pending-search').addEventListener('input', (e) => {
+    S.pendingSearch = e.target.value.trim().toLowerCase();
+    S.pendingPage = 0;
+    renderPendingRequests();
+  });
+  $('#pending-prev').addEventListener('click', () => {
+    if (S.pendingPage > 0) { S.pendingPage--; renderPendingRequests(); }
+  });
+  $('#pending-next').addEventListener('click', () => {
+    S.pendingPage++; renderPendingRequests();
+  });
+}
+
+function setPendingFilter(f) {
+  S.pendingFilter = f;
+  S.pendingPage = 0;
+  $('#pending-filter-pending').classList.toggle('active', f === 'pending');
+  $('#pending-filter-denied').classList.toggle('active', f === 'denied');
+  renderPendingRequests();
+}
+
+function filteredPendingRequests() {
+  const all = S.pendingRequests || [];
+  const byStatus = all.filter(r => (r.status || '') === S.pendingFilter);
+  const q = S.pendingSearch || '';
+  if (!q) return byStatus;
+  return byStatus.filter(r => String(r.username || '').toLowerCase().includes(q));
+}
+
+function renderPendingPager(count) {
+  const pages = Math.max(1, Math.ceil(count / PENDING_PER_PAGE));
+  if (S.pendingPage > pages - 1) S.pendingPage = pages - 1;
+  const pager = $('#pending-pager');
+  pager.hidden = pages <= 1;
+  if (pages <= 1) return;
+  $('#pending-page-info').textContent = `Page ${S.pendingPage + 1} of ${pages} · ${count} request${count === 1 ? '' : 's'}`;
+  $('#pending-prev').disabled = S.pendingPage === 0;
+  $('#pending-next').disabled = S.pendingPage >= pages - 1;
+}
+
+function pendingStatusPill(r) {
+  if (r.status === 'approved') return '<span class="pill">approved</span>';
+  if (r.status === 'denied') return '<span class="pill danger">denied</span>';
+  return '<span class="pill user">pending</span>';
+}
+
+function renderPendingRequests() {
+  const body = $('#pending-body');
+  body.innerHTML = '';
+  const filtered = filteredPendingRequests();
+  if (!filtered.length) {
+    body.innerHTML = `<tr><td colspan="4" class="muted">${
+      S.pendingSearch ? `No requests match “${esc(S.pendingSearch)}”.`
+      : S.pendingFilter === 'pending' ? 'No pending signup requests.' : 'No denied requests.'
+    }</td></tr>`;
+    renderPendingPager(0);
+    return;
+  }
+  const page = filtered.slice(S.pendingPage * PENDING_PER_PAGE, (S.pendingPage + 1) * PENDING_PER_PAGE);
+  for (const r of page) {
+    const tr = document.createElement('tr');
+    const isPending = r.status === 'pending';
+    const acts = isPending
+      ? `<button type="button" class="btn primary small" data-pact="approve">Approve</button>
+         <button type="button" class="btn danger-ghost small" data-pact="deny">Deny</button>`
+      : `<button type="button" class="btn danger-ghost small" data-pact="remove">Remove</button>`;
+    tr.innerHTML = `
+      <td><span class="u-name">${esc(r.username || '?')}</span></td>
+      <td class="muted">${esc(fmtDate(r.created_at))}</td>
+      <td>${pendingStatusPill(r)}</td>
+      <td><div class="u-actions">${acts}</div></td>`;
+    tr.querySelectorAll('[data-pact]').forEach(b => {
+      b.addEventListener('click', () => pendingRequestAction(r, b.dataset.pact));
+    });
+    body.appendChild(tr);
+  }
+  renderPendingPager(filtered.length);
+}
+
+async function pendingRequestAction(r, act) {
+  if (act === 'deny') {
+    const ok = await confirmDialog({
+      title: 'Deny this signup?',
+      message: `${r.username} won't be able to create an account.`,
+      confirmLabel: 'Deny request', danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api(`/api/admin/signup-requests/${encodeURIComponent(r.id)}/deny`, { method: 'POST' });
+      toast(`Denied ${r.username}'s signup request`);
+    } catch (e) { toast(e.message, 'error'); }
+  } else if (act === 'remove') {
+    const ok = await confirmDialog({
+      title: 'Remove this request?',
+      message: `Delete ${r.username}'s denied signup request. They can request again later.`,
+      confirmLabel: 'Remove', danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api(`/api/admin/signup-requests/${encodeURIComponent(r.id)}`, { method: 'DELETE' });
+      toast('Request removed');
+    } catch (e) { toast(e.message, 'error'); }
+  } else {
+    try {
+      const res = await api(`/api/admin/signup-requests/${encodeURIComponent(r.id)}/approve`, { method: 'POST' });
+      toast(`${res.username || r.username} approved — they can sign in now`);
+    } catch (e) { toast(e.message, 'error'); }
+  }
+  await loadPendingRequests();
+}
+
+async function loadPendingRequests() {
+  wirePendingTabOnce();
+  const body = $('#pending-body');
+  body.innerHTML = `<tr><td colspan="4" class="muted">Loading…</td></tr>`;
+  try {
+    S.pendingRequests = await api('/api/admin/signup-requests');
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="4" class="muted">Couldn't load signup requests.</td></tr>`;
+    S.pendingRequests = [];
+  }
+  renderPendingRequests();
+  // Tab badge: count of requests still waiting on an admin.
+  const n = (S.pendingRequests || []).filter(r => (r.status || '') === 'pending').length;
+  const badge = $('#pending-badge');
+  badge.textContent = String(n);
+  badge.hidden = n === 0;
+}
 
 /* ---------- admin user actions menu ---------- */
 function closeUserActionsMenu() {

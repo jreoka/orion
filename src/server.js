@@ -205,6 +205,7 @@ app.get('/api/auth/config', (req, res) => {
   const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
   res.json({
     signup_enabled: userCount === 0 || getSetting('signup_enabled', '1') === '1',
+    signup_approval_required: getSetting('signup_approval_required', '0') === '1',
     // Public site key only — the secret never leaves the server.
     turnstile_site_key: getSetting('turnstile_site_key', '') || null,
   });
@@ -248,6 +249,16 @@ app.post('/api/auth/signup', asyncRoute(async (req, res) => {
   await checkTurnstile(req);
   // Account-creation spam: 5/hour per IP.
   checkAuthLimit(req, res, 'signup', null, { max: 5, windowMs: 60 * 60 * 1000 });
+  // Approval mode: new signups queue as a pending request for an admin
+  // instead of creating a user. The very first user still signs up directly.
+  if (userCount > 0 && getSetting('signup_approval_required', '0') === '1') {
+    try {
+      return res.json(requestSignupApproval(req.body?.username, req.body?.password));
+    } catch (e) {
+      authFailed(req, 'signup', null, { max: 5, windowMs: 60 * 60 * 1000 });
+      throw e;
+    }
+  }
   let user;
   try {
     user = signup(req.body?.username, req.body?.password);
@@ -258,6 +269,28 @@ app.post('/api/auth/signup', asyncRoute(async (req, res) => {
   setSessionCookie(res, createSession(user.id));
   res.json(user);
 }));
+
+// Validate a signup request exactly like signup() does, but queue it in
+// signup_requests instead of creating a user. No session is issued.
+function requestSignupApproval(username, password) {
+  // Usernames are forced lowercase: "Bob" and "bob" are the same account.
+  username = String(username || '').toLowerCase();
+  if (!/^[a-zA-Z0-9_-]{3,24}$/.test(username)) {
+    throw httpError(400, 'Username must be 3–24 characters: letters, numbers, _ or -');
+  }
+  const pw = checkPasswordRules(password);
+  if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) {
+    throw httpError(409, 'That username is taken');
+  }
+  if (db.prepare('SELECT 1 FROM signup_requests WHERE username = ?').get(username)) {
+    throw httpError(409, 'That username is taken');
+  }
+  const token = crypto.randomUUID();
+  db.prepare(
+    'INSERT INTO signup_requests (username, password_hash, status, token, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(username, hashPassword(pw), 'pending', token, Date.now());
+  return { pending: true, request_token: token };
+}
 
 app.post('/api/auth/login', asyncRoute(async (req, res) => {
   checkAuthLimit(req, res, 'login', req.body?.username);
@@ -1823,7 +1856,7 @@ app.get('/s/:token', (req, res) => {
 // ---- admin ----------------------------------------------------------------
 
 // Token-limit shorthand parsing lives in usage.js (imported above).
-const ADMIN_SETTING_KEYS = ['provider_name', 'base_url', 'api_key', 'model', 'signup_enabled', 'default_weekly_token_limit', 'turnstile_site_key', 'turnstile_secret_key'];
+const ADMIN_SETTING_KEYS = ['provider_name', 'base_url', 'api_key', 'model', 'signup_enabled', 'signup_approval_required', 'default_weekly_token_limit', 'turnstile_site_key', 'turnstile_secret_key'];
 // Settings that hold secrets: only overwrite when a non-empty value is sent
 // (the client never sees the real value, it sends '' when untouched).
 const SECRET_SETTING_KEYS = new Set(['api_key', 'turnstile_secret_key']);
@@ -1836,6 +1869,7 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
     base_url: getSetting('base_url', ''),
     model: getSetting('model', ''),
     signup_enabled: getSetting('signup_enabled', '1'),
+    signup_approval_required: getSetting('signup_approval_required', '0'),
     default_weekly_token_limit: getSetting('default_weekly_token_limit', '1000000'),
     turnstile_site_key: getSetting('turnstile_site_key', ''),
     has_key: apiKey.length > 0, // the raw key is never sent to clients
@@ -1855,7 +1889,7 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
       // Only overwrite when a non-empty value is sent — the client sends ''
       // when the admin didn't touch the field (it never sees the real key).
       if (val.length > 0) setSetting(key, val);
-    } else if (key === 'signup_enabled') {
+    } else if (key === 'signup_enabled' || key === 'signup_approval_required') {
       setSetting(key, body[key] === '0' || body[key] === false ? '0' : '1');
     } else if (key === 'default_weekly_token_limit') {
       // Accepts shorthand ("1M", "500K") or a plain number; empty = unlimited.
@@ -1867,6 +1901,65 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
     }
   }
   res.json({ ok: true });
+});
+
+// Signup approval queue: when 'signup_approval_required' is on, new
+// signups land here as 'pending' instead of creating users; an admin
+// approves or denies each request.
+app.get('/api/admin/signup-requests', requireAdmin, (req, res) => {
+  res.json(
+    db
+      .prepare('SELECT id, username, status, created_at, reviewed_at FROM signup_requests ORDER BY created_at DESC')
+      .all()
+  );
+});
+
+app.post('/api/admin/signup-requests/:id/approve', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT * FROM signup_requests WHERE id = ?').get(req.params.id);
+  if (!row) throw httpError(404, 'Signup request not found');
+  if (row.status !== 'pending') throw httpError(400, 'Request is not pending');
+  if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(row.username)) {
+    // Leave the request pending — an admin can rename or delete it instead.
+    throw httpError(409, 'That username is taken');
+  }
+  // SAME parsing as signup() in auth.js ('' = unlimited, else Number).
+  const defRaw = getSetting('default_weekly_token_limit', '1000000').trim();
+  const defLimit = defRaw === '' ? null : Number(defRaw);
+  let info;
+  try {
+    info = db
+      .prepare('INSERT INTO users (username, password_hash, role, weekly_token_limit, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(row.username, row.password_hash, 'user', defLimit, Date.now());
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE constraint failed')) {
+      throw httpError(409, 'That username is taken');
+    }
+    throw e;
+  }
+  db.prepare('UPDATE signup_requests SET status = ?, reviewed_at = ? WHERE id = ?').run('approved', Date.now(), row.id);
+  res.json({ id: Number(info.lastInsertRowid), username: row.username, role: 'user' });
+});
+
+app.post('/api/admin/signup-requests/:id/deny', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT id, status FROM signup_requests WHERE id = ?').get(req.params.id);
+  if (!row) throw httpError(404, 'Signup request not found');
+  if (row.status !== 'pending') throw httpError(400, 'Request is not pending');
+  db.prepare('UPDATE signup_requests SET status = ?, reviewed_at = ? WHERE id = ?').run('denied', Date.now(), row.id);
+  res.json({ ok: true });
+});
+
+// Delete a request row — used to clear denied requests from the admin view.
+app.delete('/api/admin/signup-requests/:id', requireAdmin, (req, res) => {
+  db.prepare('DELETE FROM signup_requests WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/signup-status/:token', (req, res) => {
+  // Public, unauthenticated: the token is an unguessable UUID issued to the
+  // requester, so the status lookup doubles as a lightweight capability.
+  const row = db.prepare('SELECT status, username FROM signup_requests WHERE token = ?').get(req.params.token);
+  if (!row) throw httpError(404, 'Unknown signup request');
+  res.json({ status: row.status, username: row.username });
 });
 
 app.get('/api/admin/users', requireAdmin, (req, res) => {

@@ -69,6 +69,18 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_msg ON attachments(message_id);
+-- Signup approval: pending requests queue here until an admin approves or
+-- denies them; approved rows are kept as a record and deleted rows clear
+-- denied requests from the admin view.
+CREATE TABLE IF NOT EXISTS signup_requests (
+  id INTEGER PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  token TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  reviewed_at INTEGER
+);
 `);
 
 // ---- idempotent v2 migrations (ALTER TABLE is safe to re-run) --------------
