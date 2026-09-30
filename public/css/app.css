@@ -721,7 +721,10 @@ button.avatar.lg:hover { opacity: .85; }
 .msg { display: flex; animation: rise .25s var(--ease); max-width: 720px; width: 100%; margin: 0 auto; }
 #older-spinner { display: flex; justify-content: center; padding: 10px 0 2px; }
 #older-spinner[hidden] { display: none; }
-#older-sentinel { height: 1px; flex-shrink: 0; }
+#older-sentinel { height: 1px; flex-shrink: 0; margin-top: auto; }
+/* margin-top: auto pushes chat content to the bottom when it's shorter than
+   the viewport (empty space goes on top, not bottom). When content overflows,
+   the auto margin collapses to zero and scrolling works normally. */
 #older-spinner .spin {
   width: 18px; height: 18px; border-radius: 50%;
   border: 2px solid var(--paper-3); border-top-color: var(--ink-3);
