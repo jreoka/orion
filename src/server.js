@@ -50,6 +50,7 @@ import {
   createVaultRequest as vaultCreateRequest,
   getVaultRequest,
   fulfillVaultRequest,
+  parseVaultFields,
   listVaultItems,
   deleteVaultItem,
   renameVaultItem,
@@ -1323,6 +1324,75 @@ function vaultFormPage(rq, title, message, done) {
   const label = rq ? rq.label : '';
   const hint = rq ? rq.hint : '';
   const reqId = rq ? rq.id : '';
+  const fields = rq ? parseVaultFields(rq) : null;
+  // Form body: one labeled box per field, or the classic single box.
+  const fieldsHtml = fields
+    ? fields.map((f, i) => `
+    <div class="field">
+      <label for="v-${i}">${vaultEsc(f.label)}</label>
+      <input id="v-${i}" data-name="${vaultEsc(f.name)}" data-label="${vaultEsc(f.label)}" type="password"
+        autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>`).join('')
+    : `<div class="field"><input id="v" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"
+      placeholder="Paste the secret here" aria-label="Secret value"></div>`;
+  const submitScript = fields
+    ? `const f = document.getElementById('f'), e = document.getElementById('e'), go = document.getElementById('go'),
+          sh = document.getElementById('sh'),
+          inputs = Array.from(document.querySelectorAll('#f input[data-name]'));
+    sh.onclick = () => {
+      const show = inputs[0].type === 'password';
+      inputs.forEach((inp) => { inp.type = show ? 'text' : 'password'; });
+      sh.textContent = show ? 'Hide' : 'Show';
+    };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      e.textContent = '';
+      const values = {};
+      for (const inp of inputs) {
+        if (!inp.value) { e.textContent = 'Fill in "' + inp.dataset.label + '".'; inp.focus(); return; }
+        values[inp.dataset.name] = inp.value;
+      }
+      go.disabled = true;
+      try {
+        const r = await fetch('/api/vault/requests/${vaultEsc(reqId)}/fulfill', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values })
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || 'Save failed');
+        document.querySelector('.card').innerHTML =
+          '<div class="lock">🔒</div><h1>Saved ✓</h1>' +
+          '<p class="ok">"' + ${JSON.stringify(label)}.replace(/</g, '\\u003c') + '" is in your vault. ' +
+          'You can close this tab and tell the agent to continue.</p>';
+      } catch (err) { e.textContent = err.message; go.disabled = false; }
+    };
+    inputs[0].focus();`
+    : `const f = document.getElementById('f'), v = document.getElementById('v'),
+          e = document.getElementById('e'), go = document.getElementById('go');
+    document.getElementById('sh').onclick = () => {
+      const show = v.type === 'password';
+      v.type = show ? 'text' : 'password';
+      document.getElementById('sh').textContent = show ? 'Hide' : 'Show';
+    };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      e.textContent = '';
+      if (!v.value) { e.textContent = 'Paste a value first.'; return; }
+      go.disabled = true;
+      try {
+        const r = await fetch('/api/vault/requests/${vaultEsc(reqId)}/fulfill', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: v.value })
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || 'Save failed');
+        document.querySelector('.card').innerHTML =
+          '<div class="lock">🔒</div><h1>Saved ✓</h1>' +
+          '<p class="ok">"' + ${JSON.stringify(label)}.replace(/</g, '\\u003c') + '" is in your vault. ' +
+          'You can close this tab and tell the agent to continue.</p>';
+      } catch (err) { e.textContent = err.message; go.disabled = false; }
+    };
+    v.focus();`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${vaultEsc(heading)} — Orion vault</title>
@@ -1338,6 +1408,8 @@ function vaultFormPage(rq, title, message, done) {
   .hint { font-size: 14px; line-height: 1.5; color: #6b6257; margin-bottom: 16px; }
   @media (prefers-color-scheme: dark) { .hint { color: #a89e8d; } .label-name { color: #8f8574; } }
   .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 13px; color: #6b6257; margin-bottom: 6px; }
+  @media (prefers-color-scheme: dark) { .field label { color: #a89e8d; } }
   input[type=password], input[type=text] { width: 100%; box-sizing: border-box; font-size: 16px;
     font-family: ui-monospace, monospace; padding: 10px 12px; border: 1px solid #d8d0c0; border-radius: 8px;
     background: #fff; color: inherit; }
@@ -1361,8 +1433,7 @@ function vaultFormPage(rq, title, message, done) {
     : `
   ${hint ? `<p class="hint">${vaultEsc(hint)}</p>` : ''}
   <form id="f">
-    <div class="field"><input id="v" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"
-      placeholder="Paste the secret here" aria-label="Secret value"></div>
+    ${fieldsHtml}
     <div class="row">
       <button class="submit" type="submit" id="go">Save to vault</button>
       <button class="show" type="button" id="sh">Show</button>
@@ -1372,32 +1443,7 @@ function vaultFormPage(rq, title, message, done) {
   <p class="note">This goes straight into the encrypted vault in your VM. It is never shown to the AI model —
   not in chat, not in any log. Only this server can use it, when the agent explicitly asks for it by name.</p>
   <script>
-    const f = document.getElementById('f'), v = document.getElementById('v'),
-          e = document.getElementById('e'), go = document.getElementById('go');
-    document.getElementById('sh').onclick = () => {
-      const show = v.type === 'password';
-      v.type = show ? 'text' : 'password';
-      document.getElementById('sh').textContent = show ? 'Hide' : 'Show';
-    };
-    f.onsubmit = async (ev) => {
-      ev.preventDefault();
-      e.textContent = '';
-      if (!v.value) { e.textContent = 'Paste a value first.'; return; }
-      go.disabled = true;
-      try {
-        const r = await fetch('/api/vault/requests/${vaultEsc(reqId)}/fulfill', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: v.value })
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.error || 'Save failed');
-        document.querySelector('.card').innerHTML =
-          '<div class="lock">🔒</div><h1>Saved ✓</h1>' +
-          '<p class="ok">“' + ${JSON.stringify(label)}.replace(/</g, '\\u003c') + '” is in your vault. ' +
-          'You can close this tab and tell the agent to continue.</p>';
-      } catch (err) { e.textContent = err.message; go.disabled = false; }
-    };
-    v.focus();
+    ${submitScript}
     // Report the content height to the embedding page (the chat widget) so
     // the iframe can size itself — no inner scrollbar. Skipped when opened
     // as a standalone tab (no parent to report to).
@@ -1423,7 +1469,10 @@ function vaultFormPage(rq, title, message, done) {
 app.post('/api/vault/requests/:requestId/fulfill', requireAuth, asyncRoute(async (req, res) => {
   let itemId, rq;
   try {
-    ({ itemId, request: rq } = fulfillVaultRequest(req.user.id, req.params.requestId, req.body?.value));
+    ({ itemId, request: rq } = fulfillVaultRequest(req.user.id, req.params.requestId, {
+      value: req.body?.value,
+      values: req.body?.values,
+    }));
   } catch (e) {
     throw httpError(400, e.message); // expired/used/missing — a user error, not a 500
   }

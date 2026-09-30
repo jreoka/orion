@@ -1574,6 +1574,7 @@ function messageEl(m) {
         <div class="vault-head"><span class="vault-lock" aria-hidden="true">🔒</span>
           <div class="vault-head-text">
             <div class="vault-title">${esc(v.label || 'Secret')}</div>
+            ${Array.isArray(v.fields) && v.fields.length ? `<div class="vault-hint">${v.fields.map((f) => esc(f)).join(' · ')}</div>` : ''}
             ${v.hint ? `<div class="vault-hint">${esc(v.hint)}</div>` : ''}
           </div>
         </div>
@@ -2838,11 +2839,16 @@ async function vaultModal() {
     }
     list.innerHTML = items.map((i) => {
       const when = i.created_at ? new Date(i.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+      let fieldNames = '';
+      try {
+        const f = i.fields ? JSON.parse(i.fields) : null;
+        if (Array.isArray(f) && f.length) fieldNames = f.map((x) => x.label || x.name).join(', ');
+      } catch { /* ignore */ }
       return `
       <div class="shared-row">
         <div class="shared-info">
           <div class="shared-title"><span aria-hidden="true">🔒</span> ${esc(i.label || 'Secret')}</div>
-          ${when ? `<div class="shared-meta">Added ${esc(when)}</div>` : ''}
+          ${when || fieldNames ? `<div class="shared-meta">${[fieldNames ? esc(fieldNames) : '', when ? `Added ${esc(when)}` : ''].filter(Boolean).join(' · ')}</div>` : ''}
         </div>
         <div class="shared-actions">
           <button type="button" class="btn danger-ghost" data-vault-del="${esc(i.id)}" data-vault-label="${esc(i.label || 'Secret')}">Delete</button>

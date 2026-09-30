@@ -317,6 +317,9 @@ CREATE TABLE IF NOT EXISTS shared_chats (
 CREATE INDEX IF NOT EXISTS idx_shared_chats_user ON shared_chats(user_id);
 `);
 addColumn('shared_chats', 'snapshot', 'TEXT');
+// Vault multi-field forms: JSON [{name,label}] per request/item; NULL = legacy single value.
+addColumn('vault_requests', 'fields', 'TEXT');
+addColumn('vault_items', 'fields', 'TEXT');
 
 // NOTE: `messages.tool_call_id` is one column beyond the original sketch —
 // tool-role rows need it to be replayable as valid OpenAI history.

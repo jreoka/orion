@@ -29,6 +29,8 @@ import {
 import { validateTaskInput, scheduleTask, unscheduleTask } from './tasks.js';
 import {
   createVaultRequest,
+  cleanVaultFields,
+  vaultFieldSummary,
   listVaultItems,
   deleteVaultItem,
   renameVaultItem,
@@ -68,7 +70,7 @@ Your tools:
 - schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in the main chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
   - Waiting on the user to do something OUTSIDE chat (OAuth device approval, clicking a confirmation link, etc.): never tell them to reply "done" or send a message to resume you. Schedule a one-shot task that polls for completion — its prompt must say: if complete, finish the work and tell the user; if not, reschedule itself (schedule_task again) until it succeeds or the window expires, then report the outcome either way. The task's output lands in the chat and notifies them on its own.
 
-- vault_request / vault_list / vault_delete / vault_rename: the encrypted vault. NEVER ask the user to paste secrets (API keys, tokens, passwords) into chat — anything typed in chat is visible to the underlying AI model. When you need a credential, call vault_request with a label and a short hint; it shows the user a secure in-chat form whose contents go straight into the encrypted vault in the VM. You never see the value — only a "vault:<id>" handle. Use it through exec's env param ({"SOME_KEY": "vault:<id>"}): the value is injected server-side and scrubbed from all command output, so it never enters your context. Never echo, print, or write a vault value anywhere (no echo $KEY, no writing it to files, no putting it in task prompts).
+- vault_request / vault_list / vault_delete / vault_rename: the encrypted vault. NEVER ask the user to paste secrets (API keys, tokens, passwords) into chat — anything typed in chat is visible to the underlying AI model. When you need a credential, call vault_request with a label and a short hint; it shows the user a secure in-chat form whose contents go straight into the encrypted vault in the VM. For multi-part credentials pass fields: [{name: "username", label: "Username"}, {name: "password", label: "Password"}] — the form shows one labeled box per field, all stored under ONE vault entry. You never see any value — only handles: "vault:<id>" for single-value entries, "vault:<id>:<field_name>" per field of a multi-field entry. Use them through exec's env param ({"SOME_KEY": "vault:<id>"}): the value is injected server-side and scrubbed from all command output, so it never enters your context. Never echo, print, or write a vault value anywhere (no echo $KEY, no writing it to files, no putting it in task prompts).
 
 Guidelines:
 - Work quietly: never narrate your plan, progress, or tool steps in chat text. No "I'll look that up…", no "Let me try a different approach…", no "That didn't work, trying…". The user already sees live activity indicators while you work, and everything you write becomes a chat message they have to read. Just do the work silently with your tools.
@@ -425,12 +427,24 @@ export const TOOLS = [
     function: {
       name: 'vault_request',
       description:
-        'Ask the user for a secret (API key, token, password) through a secure in-chat form. NEVER ask the user to paste secrets into chat — anything typed in chat is visible to the underlying AI model. This shows them a locked form whose contents go straight into the encrypted vault in the VM; you never see the value, only a "vault:<id>" handle. Tell the user to fill the form and say "done", then use the handle via exec\u2019s env param (e.g. {"API_KEY": "vault:<id>"}) once they confirm.',
+        'Ask the user for a secret (API key, token, password) through a secure in-chat form. NEVER ask the user to paste secrets into chat — anything typed in chat is visible to the underlying AI model. This shows them a locked form whose contents go straight into the encrypted vault in the VM; you never see the value, only a "vault:<id>" handle. Tell the user to fill the form and say "done", then use the handle via exec\u2019s env param (e.g. {"API_KEY": "vault:<id>"}) once they confirm. For multi-part credentials, pass fields (e.g. username + password): the form shows one labeled box per field, all stored under ONE vault entry, and you address each field with "vault:<id>:<field_name>" in exec env.',
       parameters: {
         type: 'object',
         properties: {
           label: { type: 'string', description: 'Short name shown on the form, e.g. "GitHub token" (max 120 chars)' },
           hint: { type: 'string', description: 'One-line hint for the user, e.g. "Create one at github.com/settings/tokens with repo scope" (max 500 chars)' },
+          fields: {
+            type: 'array',
+            description: 'Optional: one labeled input box per field, all saved under a single vault entry. Omit for the classic single-value form.',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: 'Machine name, lowercase letters/digits/underscore, e.g. "username"' },
+                label: { type: 'string', description: 'Human label shown above the box, e.g. "Username"' },
+              },
+              required: ['name', 'label'],
+            },
+          },
         },
         required: ['label'],
       },
@@ -1503,10 +1517,14 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       const label = String(args.label ?? '').trim();
       if (!label) throw new Error('vault_request: label is required');
       const hint = String(args.hint ?? '').trim();
-      const requestId = createVaultRequest(userId, conversationId, label, hint);
+      const cleanFields = cleanVaultFields(args.fields ?? null);
+      const requestId = createVaultRequest(userId, conversationId, label, hint, args.fields ?? null);
       // A widget message the client renders as a secure input form. The
       // content carries only metadata — the secret itself never appears.
-      const content = JSON.stringify({ vault_request_id: requestId, label, hint, status: 'pending' });
+      const content = JSON.stringify({
+        vault_request_id: requestId, label, hint, status: 'pending',
+        fields: cleanFields ? cleanFields.map((f) => f.label) : null,
+      });
       const now = Date.now();
       const info = db
         .prepare('INSERT INTO messages (conversation_id, role, content, kind, created_at) VALUES (?, ?, ?, ?, ?)')
@@ -1519,9 +1537,15 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       });
       return {
         text: `Secure form shown to the user for "${label}" (request ${requestId}). ` +
+          (cleanFields
+            ? `It has ${cleanFields.length} labeled boxes (${cleanFields.map((f) => f.label).join(', ')}), all saved under ONE vault entry. `
+            : '') +
           `The secret goes straight into the encrypted vault — you will never see its value, so do NOT ask ` +
           `the user to paste it into chat. Tell the user to fill the form and say "done"; when they confirm, ` +
-          `call vault_list to get the new item's handle ("vault:<id>") and use it via exec's env param.`,
+          `call vault_list to get the new item's handle` +
+          (cleanFields
+            ? `, then address each field in exec's env param like {"SOME_USER": "vault:<id>:${cleanFields[0].name}"}.`
+            : ` ("vault:<id>") and use it via exec's env param.`),
       };
     }
     case 'vault_list': {
@@ -1529,8 +1553,8 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       if (!items.length) return { text: 'The vault is empty.' };
       return {
         text: 'Vault contents (metadata only — values are never revealed):\n' +
-          items.map((i) => `- ${i.id} — "${i.label}" (added ${new Date(i.created_at).toISOString().slice(0, 10)})`).join('\n') +
-          '\nUse a handle like "vault:<id>" in exec env to use one.',
+          items.map((i) => `- ${i.id} — "${i.label}"${vaultFieldSummary(i)} (added ${new Date(i.created_at).toISOString().slice(0, 10)})`).join('\n') +
+          '\nUse a handle like "vault:<id>" in exec env to use one; for a multi-field entry use "vault:<id>:<field_name>" per field.',
       };
     }
     case 'vault_delete': {

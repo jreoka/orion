@@ -26,6 +26,8 @@ const KEY_PATH = path.join(DATA_DIR, 'vault.key');
 const REQUEST_TTL_MS = 15 * 60 * 1000;
 const MAX_SECRET_BYTES = 8 * 1024;
 const MAX_ENV_VARS = 20;
+const MAX_FIELDS = 10;
+const FIELD_NAME_RE = /^[a-z_][a-z0-9_]{0,39}$/;
 export const VAULT_REF_PREFIX = 'vault:';
 
 let keyCache = null;
@@ -70,17 +72,54 @@ export function decryptSecret(blob) {
   return Buffer.concat([decipher.update(data.subarray(0, data.length - 16)), decipher.final()]).toString('utf8');
 }
 
+/**
+ * Validate the agent-supplied field list for a multi-field vault form.
+ * Returns the cleaned array, or null when no fields were given (legacy
+ * single-value form). Throws on invalid definitions.
+ */
+export function cleanVaultFields(fields) {
+  if (fields === undefined || fields === null) return null;
+  if (!Array.isArray(fields)) throw new Error('vault_request: fields must be an array');
+  if (!fields.length || fields.length > MAX_FIELDS) {
+    throw new Error(`vault_request: fields must have 1–${MAX_FIELDS} entries`);
+  }
+  const seen = new Set();
+  return fields.map((f, i) => {
+    const name = String(f?.name ?? '').trim();
+    const label = String(f?.label ?? '').trim().slice(0, 120);
+    if (!FIELD_NAME_RE.test(name)) {
+      throw new Error(`vault_request: fields[${i}].name must match ${FIELD_NAME_RE} (e.g. "api_key")`);
+    }
+    if (seen.has(name)) throw new Error(`vault_request: duplicate field name "${name}"`);
+    seen.add(name);
+    if (!label) throw new Error(`vault_request: fields[${i}].label is required`);
+    return { name, label };
+  });
+}
+
+/** Parse the stored fields JSON for a request/item row (null = single value). */
+export function parseVaultFields(row) {
+  if (!row?.fields) return null;
+  try {
+    const arr = JSON.parse(row.fields);
+    return Array.isArray(arr) && arr.length ? arr : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Create a pending secret request. Returns the request id (unguessable). */
-export function createVaultRequest(userId, conversationId, label, hint = '') {
+export function createVaultRequest(userId, conversationId, label, hint = '', fields = null) {
   const cleanLabel = String(label ?? '').trim().slice(0, 120);
   if (!cleanLabel) throw new Error('vault_request: label is required');
   const cleanHint = String(hint ?? '').trim().slice(0, 500);
+  const cleanFields = cleanVaultFields(fields);
   const id = crypto.randomUUID();
   const now = Date.now();
   db.prepare(
-    `INSERT INTO vault_requests (id, user_id, conversation_id, label, hint, status, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`
-  ).run(id, userId, conversationId, cleanLabel, cleanHint, now, now + REQUEST_TTL_MS);
+    `INSERT INTO vault_requests (id, user_id, conversation_id, label, hint, fields, status, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+  ).run(id, userId, conversationId, cleanLabel, cleanHint, cleanFields ? JSON.stringify(cleanFields) : null, now, now + REQUEST_TTL_MS);
   return id;
 }
 
@@ -98,10 +137,12 @@ export function pruneExpiredRequests() {
 }
 
 /**
- * Fulfill a pending request with the user's secret. Only the owning user
- * can fulfill; single-use; expires. Returns the new vault item id.
+ * Fulfill a pending request with the user's secret(s). Only the owning user
+ * can fulfill; single-use; expires. Multi-field requests store ONE vault
+ * item whose encrypted blob is a JSON object of field values; legacy
+ * requests store one plaintext value. Returns the new vault item id.
  */
-export function fulfillVaultRequest(userId, requestId, value) {
+export function fulfillVaultRequest(userId, requestId, payload = {}) {
   const req = getVaultRequest(requestId);
   if (!req || req.user_id !== userId) throw new Error('request not found');
   if (req.status !== 'pending') throw new Error(`request is ${req.status}`);
@@ -109,23 +150,46 @@ export function fulfillVaultRequest(userId, requestId, value) {
     db.prepare(`UPDATE vault_requests SET status = 'expired' WHERE id = ?`).run(requestId);
     throw new Error('request expired — ask the agent for a new one');
   }
-  const secret = String(value ?? '');
-  if (!secret) throw new Error('value is required');
-  if (Buffer.byteLength(secret, 'utf8') > MAX_SECRET_BYTES) throw new Error('value too long (max 8KB)');
+  const fields = parseVaultFields(req);
+  let blob;
+  let fieldsJson = null;
+  if (fields) {
+    const values = payload?.values;
+    if (!values || typeof values !== 'object' || Array.isArray(values)) {
+      throw new Error('field values are required');
+    }
+    const clean = {};
+    for (const f of fields) {
+      const v = String(values[f.name] ?? '');
+      if (!v) throw new Error(`“${f.label}” is required`);
+      if (Buffer.byteLength(v, 'utf8') > MAX_SECRET_BYTES) {
+        throw new Error(`“${f.label}” is too long (max 8KB)`);
+      }
+      clean[f.name] = v;
+    }
+    // Ignore any extra keys the client sent that weren't requested.
+    blob = JSON.stringify(clean);
+    fieldsJson = JSON.stringify(fields);
+  } else {
+    const secret = String(payload?.value ?? '');
+    if (!secret) throw new Error('value is required');
+    if (Buffer.byteLength(secret, 'utf8') > MAX_SECRET_BYTES) throw new Error('value too long (max 8KB)');
+    blob = secret;
+  }
   const itemId = crypto.randomUUID();
   const now = Date.now();
   db.prepare(
-    'INSERT INTO vault_items (id, user_id, label, secret_enc, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(itemId, userId, req.label, encryptSecret(secret), now);
+    'INSERT INTO vault_items (id, user_id, label, secret_enc, fields, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(itemId, userId, req.label, encryptSecret(blob), fieldsJson, now);
   db.prepare(`UPDATE vault_requests SET status = 'fulfilled', item_id = ? WHERE id = ?`).run(itemId, requestId);
-  return { itemId, request: req };
+  return { itemId, request: req, fields };
 }
 
 /** Metadata only — values never leave the vault except into exec env. */
 export function listVaultItems(userId) {
   pruneExpiredRequests();
   return db
-    .prepare('SELECT id, label, created_at FROM vault_items WHERE user_id = ? ORDER BY created_at DESC')
+    .prepare('SELECT id, label, fields, created_at FROM vault_items WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId);
 }
 
@@ -164,9 +228,43 @@ export function getVaultSecret(userId, id) {
 }
 
 /**
+ * Server-side only: resolve one field of a multi-field vault item.
+ * Throws a helpful error for single-value items or unknown fields.
+ */
+export function getVaultFieldSecret(userId, id, field) {
+  const row = db
+    .prepare('SELECT secret_enc, fields, label FROM vault_items WHERE id = ? AND user_id = ?')
+    .get(String(id), userId);
+  if (!row) throw new Error('vault item not found');
+  const fields = parseVaultFields(row);
+  if (!fields) throw new Error(`vault item "${row.label}" holds a single value — use "vault:${id}" without a field`);
+  const def = fields.find((f) => f.name === field);
+  if (!def) {
+    throw new Error(`vault item "${row.label}" has no field "${field}" (fields: ${fields.map((f) => f.name).join(', ')})`);
+  }
+  let obj;
+  try {
+    obj = JSON.parse(decryptSecret(row.secret_enc));
+  } catch {
+    throw new Error(`vault item "${row.label}" is corrupt`);
+  }
+  const value = obj?.[field];
+  if (typeof value !== 'string' || !value) throw new Error(`vault item "${row.label}" has no stored value for "${field}"`);
+  return value;
+}
+
+/** Human-readable field summary for listings, e.g. ' [username, password]'. */
+export function vaultFieldSummary(row) {
+  const fields = parseVaultFields(row);
+  return fields ? ` [${fields.map((f) => f.name).join(', ')}]` : '';
+}
+
+/**
  * Resolve an exec env object. Values may be plain strings or vault
- * references ("vault:<id>"). Returns docker-style KEY=value entries plus
- * the plaintext secrets so the caller can redact them from output.
+ * references: "vault:<id>" for a whole item, or "vault:<id>:<field>"
+ * for one field of a multi-field item. Returns docker-style KEY=value
+ * entries plus the plaintext secrets so the caller can redact them
+ * from output.
  */
 export function resolveVaultEnv(userId, envObj) {
   const env = [];
@@ -178,9 +276,30 @@ export function resolveVaultEnv(userId, envObj) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`invalid env var name: ${name}`);
     const value = String(raw ?? '');
     if (value.startsWith(VAULT_REF_PREFIX)) {
-      const secret = getVaultSecret(userId, value.slice(VAULT_REF_PREFIX.length));
-      env.push(`${name}=${secret}`);
-      secrets.push(secret);
+      const ref = value.slice(VAULT_REF_PREFIX.length);
+      const sep = ref.indexOf(':');
+      if (sep === -1) {
+        // Whole-item reference. For multi-field items this would inject
+        // the raw JSON blob — refuse and point at the field form instead.
+        const row = db
+          .prepare('SELECT id, fields, label FROM vault_items WHERE id = ? AND user_id = ?')
+          .get(ref, userId);
+        if (!row) throw new Error('vault item not found');
+        const fields = parseVaultFields(row);
+        if (fields) {
+          throw new Error(
+            `vault item "${row.label}" holds multiple fields (${fields.map((f) => f.name).join(', ')}) — ` +
+            `use "vault:${ref}:<field>"`
+          );
+        }
+        const secret = getVaultSecret(userId, ref);
+        env.push(`${name}=${secret}`);
+        secrets.push(secret);
+      } else {
+        const secret = getVaultFieldSecret(userId, ref.slice(0, sep), ref.slice(sep + 1));
+        env.push(`${name}=${secret}`);
+        secrets.push(secret);
+      }
     } else {
       env.push(`${name}=${value}`);
     }
