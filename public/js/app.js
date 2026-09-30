@@ -400,12 +400,16 @@ async function boot() {
   if (S.me) adoptTheme(); // server theme wins; else push up this device's choice
   wireGlobal();
   loadDoneFlags();
+  loadRunFlags();
   // Cross-tab sync: if another tab sets/clears a done flag, pick it up live.
   // Without this, a run finishing in tab A never shows the green check in tab B.
   window.addEventListener('storage', (e) => {
     if (e.key === DONE_KEY) {
       loadDoneFlags();
       renderSidebar();
+    }
+    if (e.key === RUN_KEY) {
+      loadRunFlags();
     }
   });
   // Also re-load on focus — catches flags set while this tab was in background
@@ -2235,6 +2239,21 @@ function loadDoneFlags() {
 function saveDoneFlags() {
   try { localStorage.setItem(DONE_KEY, JSON.stringify(S.doneByConv)); } catch {}
 }
+// Persist which chats had active runs, so a fresh page load can detect
+// "was running when I left, now finished" and show the green check.
+// Without this, opening the site after a run finished in another chat
+// shows no check — the client never observed the running→finished transition.
+const RUN_KEY = 'orion-running-chats';
+function loadRunFlags() {
+  try {
+    const o = JSON.parse(localStorage.getItem(RUN_KEY) || '{}') || {};
+    S.runByConv = {};
+    for (const k of Object.keys(o)) if (o[k]) S.runByConv[k] = true;
+  } catch { S.runByConv = {}; }
+}
+function saveRunFlags() {
+  try { localStorage.setItem(RUN_KEY, JSON.stringify(S.runByConv)); } catch {}
+}
 
 // Refresh the conversation list (titles, activity, running flags) without
 // disturbing the open chat. Called on every run end, on window focus, and
@@ -2388,9 +2407,10 @@ async function loadConversationsQuiet(retried = false) {
     if (!Array.isArray(rows)) return;
     S.conversations = rows;
     let dirty = false;
+    let runDirty = false;
     for (const c of rows) {
       if (c.running) {
-        S.runByConv[c.id] = true;
+        if (!S.runByConv[c.id]) { S.runByConv[c.id] = true; runDirty = true; }
         // A new run supersedes the finished check.
         if (S.doneByConv[c.id]) { delete S.doneByConv[c.id]; dirty = true; }
       } else if (c.id !== S.activeId) {
@@ -2401,7 +2421,7 @@ async function loadConversationsQuiet(retried = false) {
           dirty = true;
           refreshUsage(); // tokens moved
         }
-        delete S.runByConv[c.id];
+        if (S.runByConv[c.id]) { delete S.runByConv[c.id]; runDirty = true; }
       }
     }
     // Drop checks for chats that no longer exist.
@@ -2409,6 +2429,7 @@ async function loadConversationsQuiet(retried = false) {
       if (!rows.some((c) => String(c.id) === String(id))) { delete S.doneByConv[id]; dirty = true; }
     }
     if (dirty) saveDoneFlags();
+    if (runDirty) saveRunFlags();
     renderSidebar();
   } catch {
     // Sidebar refresh is best-effort, but a single transient failure (flaky
