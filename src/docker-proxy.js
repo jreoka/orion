@@ -197,6 +197,7 @@ function validateCreate(userId, body) {
   if (hc.IpcMode === 'host' || hc.UsernsMode === 'host' || hc.UtsMode === 'host') {
     return 'host namespaces are not allowed';
   }
+  if (hc.Devices && hc.Devices.length) return 'host device access is not allowed';
   // Binds: only the user's own named volumes, no host paths, no sockets.
   for (const b of hc.Binds || []) {
     const src = String(b).split(':')[0];
