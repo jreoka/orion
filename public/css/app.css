@@ -197,7 +197,9 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
 .stack-label { display: block; font-size: 15px; margin-bottom: 8px; }
 .select {
   appearance: none; -webkit-appearance: none;
-  width: 100%;
+  display: inline-block;
+  width: auto;
+  min-width: 160px;
   font: inherit; font-size: 15px; color: var(--ink);
   background-color: var(--lift);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%2357503f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
