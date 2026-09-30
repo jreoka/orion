@@ -496,7 +496,10 @@ export const TOOLS = [
         required: ['id', 'label'],
       },
     },
-    {
+  },
+  {
+      type: 'function',
+      function: {
       name: 'vault_update',
       description: 'Overwrite an existing vault secret\'s value by its id (see vault_list). Shows the user a secure form to enter the new value — you never see it. Use when a secret needs rotating or correcting. For multi-field entries, pass the same fields structure as the original.',
       parameters: {
@@ -518,8 +521,8 @@ export const TOOLS = [
         },
         required: ['id'],
       },
+      },
     },
-  },
 ];
 
 // Parent-only: durable memory lives in the sandbox volume and only the
