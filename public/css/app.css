@@ -636,6 +636,20 @@ button.avatar.lg:hover { opacity: .85; }
 .avatar-btn {
   background: transparent; border: none; padding: 4px; margin: -4px;
   border-radius: 50%; cursor: pointer; line-height: 0;
+  position: relative;
+}
+/* Red dot on the admin's avatar while signup requests await review. */
+.notif-dot {
+  position: absolute; top: 1px; right: 1px;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: #d63a2f;
+  box-shadow: 0 0 0 2.5px var(--paper);
+  pointer-events: none;
+  animation: dot-pulse 2.2s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.28); }
 }
 .avatar-btn .avatar { transition: transform .15s var(--ease); }
 .avatar-btn:hover .avatar { transform: scale(1.06); }

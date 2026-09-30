@@ -1922,6 +1922,11 @@ app.get('/api/admin/signup-requests', requireAdmin, (req, res) => {
   );
 });
 
+app.get('/api/admin/pending-count', requireAdmin, (req, res) => {
+  const row = db.prepare("SELECT COUNT(*) AS c FROM signup_requests WHERE status = 'pending'").get();
+  res.json({ count: row.c });
+});
+
 app.post('/api/admin/signup-requests/:id/approve', requireAdmin, (req, res) => {
   const row = db.prepare('SELECT * FROM signup_requests WHERE id = ?').get(req.params.id);
   if (!row) throw httpError(404, 'Signup request not found');

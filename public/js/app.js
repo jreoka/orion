@@ -377,6 +377,7 @@ async function boot() {
     // and recurse forever. The DOM effects are reproduced inline instead.
     closeEventStream();
     closeUserEventStream();
+    stopPendingDot();
     S.runActive = false;
     S.me = null; S.activeId = null; S.messages = [];
     try { localStorage.removeItem('orion-active-chat'); } catch {}
@@ -413,10 +414,11 @@ async function boot() {
     const before = JSON.stringify(S.doneByConv);
     loadDoneFlags();
     if (JSON.stringify(S.doneByConv) !== before) renderSidebar();
+    refreshPendingDot(); // a request may have arrived while the tab was in background
   });
   await render();
   maybeShowPushNudge();
-  if (S.me) { refreshUsage(); startUsageTimer(); openUserEventStream(); }
+  if (S.me) { refreshUsage(); startUsageTimer(); openUserEventStream(); startPendingDot(); }
 }
 document.addEventListener('DOMContentLoaded', boot);
 
@@ -2139,6 +2141,7 @@ function wireUserMenu() {
       try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
       closeEventStream();
       closeUserEventStream();
+      stopPendingDot();
       S.me = null; S.activeId = null; S.messages = [];
     try { localStorage.removeItem('orion-active-chat'); } catch {} S.hasMoreOlder = false; S.loadingOlder = false;
       S.doneByConv = {}; saveDoneFlags();
@@ -2256,7 +2259,7 @@ async function afterLogin() {
   S.activeId = null;
   S.messages = []; S.hasMoreOlder = false; S.loadingOlder = false;
   go('chat');
-  refreshUsage(); openUserEventStream();
+  refreshUsage(); openUserEventStream(); startPendingDot();
 }
 
 // Always-compact token count: 1234567 → "1.2M", 10500 → "10.5K", 999 → "999".
@@ -3931,6 +3934,10 @@ function wireAdminTabsOnce() {
       const key = btn.dataset.atab;
       tabs.forEach(b => b.classList.toggle('active', b === btn));
       Object.entries(cards).forEach(([k, card]) => { card.hidden = k !== key; });
+      // Each list tab reloads on open, so actions taken in one tab
+      // (e.g. approving a signup) show up in the others without a refresh.
+      if (key === 'users') loadAdminUsers();
+      else if (key === 'pending') loadPendingRequests();
     });
   });
 }
@@ -4308,6 +4315,32 @@ async function pendingRequestAction(r, act) {
     } catch (e) { toast(e.message, 'error'); }
   }
   await loadPendingRequests();
+  refreshPendingDot();
+}
+
+/* Red dot on the admin's avatar while signup requests await review.
+   Shown for admins only; a cheap count poll keeps it fresh on every page,
+   and it's refreshed immediately after each approve/deny/remove. */
+let pendingDotTimer = null;
+async function refreshPendingDot() {
+  const dot = document.getElementById('pending-dot');
+  if (!dot) return;
+  if (!S.me || S.me.role !== 'admin') { dot.hidden = true; return; }
+  try {
+    const r = await api('/api/admin/pending-count');
+    dot.hidden = !(r && r.count > 0);
+  } catch { /* transient failure — keep the current state */ }
+}
+function startPendingDot() {
+  stopPendingDot();
+  if (!S.me || S.me.role !== 'admin') return; // no session or not an admin: nothing to poll
+  refreshPendingDot();
+  pendingDotTimer = setInterval(refreshPendingDot, 30000);
+}
+function stopPendingDot() {
+  if (pendingDotTimer) { clearInterval(pendingDotTimer); pendingDotTimer = null; }
+  const dot = document.getElementById('pending-dot');
+  if (dot) dot.hidden = true;
 }
 
 async function loadPendingRequests() {
