@@ -178,43 +178,66 @@ async function ownsExec(userId, execId) {
   return ownsContainer(userId, info.ContainerID || info.Container);
 }
 
-// Validate a container-create body. Returns null if OK, else a reason string.
+// Validate a container-create body. Returns { body } (normalized, with
+// resource defaults injected) on success, or { reason } on rejection.
 function validateCreate(userId, body) {
   let cfg;
   try {
     cfg = JSON.parse(body || '{}');
   } catch {
-    return 'invalid JSON body';
+    return { reason: 'invalid JSON body' };
   }
   const hc = cfg.HostConfig || {};
-  if (hc.Privileged) return 'privileged containers are not allowed';
-  if (hc.CapAdd && hc.CapAdd.length) return 'adding capabilities is not allowed';
-  if (hc.PidMode && hc.PidMode !== '') return 'custom pid mode is not allowed';
-  if (hc.NetworkMode === 'host' || hc.NetworkMode === 'none') {
-    // 'none' is harmless actually; only block host
-    if (hc.NetworkMode === 'host') return 'host networking is not allowed';
-  }
+  const deny = (reason) => ({ reason });
+  if (hc.Privileged) return deny('privileged containers are not allowed');
+  if (hc.CapAdd && hc.CapAdd.length) return deny('adding capabilities is not allowed');
+  if (hc.PidMode && hc.PidMode !== '') return deny('custom pid mode is not allowed');
+  if (hc.NetworkMode === 'host') return deny('host networking is not allowed');
   if (hc.IpcMode === 'host' || hc.UsernsMode === 'host' || hc.UtsMode === 'host') {
-    return 'host namespaces are not allowed';
+    return deny('host namespaces are not allowed');
   }
-  if (hc.Devices && hc.Devices.length) return 'host device access is not allowed';
+  if (hc.CgroupnsMode === 'host') return deny('host cgroup namespace is not allowed');
+  if (hc.Devices && hc.Devices.length) return deny('host device access is not allowed');
+  for (const s of hc.SecurityOpt || []) {
+    if (/unconfined/i.test(String(s))) return deny(`disabling the security profile is not allowed: ${s}`);
+  }
   // Binds: only the user's own named volumes, no host paths, no sockets.
   for (const b of hc.Binds || []) {
     const src = String(b).split(':')[0];
-    if (src.includes('/')) return `host-path bind mounts are not allowed: ${b}`;
-    if (src === 'docker.sock' || src.endsWith('.sock')) return `mounting sockets is not allowed: ${b}`;
+    if (src.includes('/')) return deny(`host-path bind mounts are not allowed: ${b}`);
+    if (src === 'docker.sock' || src.endsWith('.sock')) return deny(`mounting sockets is not allowed: ${b}`);
     if (!allowedName(userId, src) && !ownInfra(userId, src)) {
-      return `volume not in your namespace: ${b}`;
+      return deny(`volume not in your namespace: ${b}`);
     }
   }
   for (const m of hc.Mounts || []) {
     const src = String(m.Source || '');
-    if ((m.Type || 'volume') !== 'volume') return `only volume mounts are allowed (got ${m.Type})`;
+    if ((m.Type || 'volume') !== 'volume') return deny(`only volume mounts are allowed (got ${m.Type})`);
     if (!allowedName(userId, src) && !ownInfra(userId, src)) {
-      return `volume not in your namespace: ${src}`;
+      return deny(`volume not in your namespace: ${src}`);
     }
   }
-  return null;
+  // Resource caps: user-created containers share a small VM with Orion
+  // itself, so an unbounded container could DoS the box. Caps are generous
+  // (same ballpark as the agent's own sandbox), not super low — and they're
+  // injected as defaults when the caller didn't set any, so plain
+  // `docker run` stays bounded without extra flags.
+  const MAX_MEMORY = 2 * 1024 * 1024 * 1024; // 2G
+  const MAX_NANO_CPUS = 1_000_000_000; // 1 CPU
+  const MAX_PIDS = 512;
+  if (hc.Memory && hc.Memory > MAX_MEMORY) return deny('memory limit too high (max 2G)');
+  if (hc.MemorySwap && hc.MemorySwap > MAX_MEMORY) return deny('swap limit too high (max 2G)');
+  if (hc.NanoCpus && hc.NanoCpus > MAX_NANO_CPUS) return deny('CPU limit too high (max 1 CPU)');
+  if (hc.CpuQuota && hc.CpuQuota > 0 && hc.CpuQuota / (hc.CpuPeriod || 100000) > 1) {
+    return deny('CPU limit too high (max 1 CPU)');
+  }
+  if (hc.PidsLimit && hc.PidsLimit > MAX_PIDS) return deny('pid limit too high (max 512)');
+  hc.Memory = hc.Memory || MAX_MEMORY;
+  hc.MemorySwap = hc.MemorySwap || MAX_MEMORY; // no extra swap beyond the cap
+  if (!hc.NanoCpus && !(hc.CpuQuota > 0)) hc.NanoCpus = MAX_NANO_CPUS;
+  hc.PidsLimit = hc.PidsLimit || MAX_PIDS;
+  cfg.HostConfig = hc;
+  return { body: JSON.stringify(cfg) };
 }
 
 function readBody(req) {
@@ -589,9 +612,12 @@ async function handleProxy(userId, req, res) {
     if (name && !allowedName(userId, name)) return deny(res, `container name must start with ${userPrefix(userId)}`);
     const body = await readBody(req).catch(() => null);
     if (body === null) return deny(res, 'could not read request body');
-    const reason = validateCreate(userId, body);
-    if (reason) return deny(res, reason);
-    const r = await forwardBuffer(m, req.url, req.headers, body).catch((e) => null);
+    const checked = validateCreate(userId, body);
+    if (checked.reason) return deny(res, checked.reason);
+    // The body was normalized (resource defaults injected), so its length
+    // changed — forward with a corrected content-length.
+    const fwdHeaders = { ...req.headers, 'content-length': String(Buffer.byteLength(checked.body)) };
+    const r = await forwardBuffer(m, req.url, fwdHeaders, checked.body).catch((e) => null);
     if (!r) return deny(res, 'docker daemon unreachable');
     return sendRaw(res, r);
   }
