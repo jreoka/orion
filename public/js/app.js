@@ -936,11 +936,12 @@ async function fetchOlderBatch() {
   }
 }
 
-async function loadOlder() {
+async function loadOlder(force) {
   // Don't page in history if the content isn't scrollable — the user is
-  // seeing everything, not "stuck at the top".
+  // seeing everything, not "stuck at the top". (renderMessages() passes
+  // force=true to fill short chats until they're scrollable.)
   const box0 = $('#messages');
-  if (box0 && box0.scrollHeight <= box0.clientHeight + 10) return;
+  if (!force && box0 && box0.scrollHeight <= box0.clientHeight + 10) return;
   // Safety: if a previous fetch never settled (network hang, unhandled
   // rejection), don't let the guard flag block loading forever.
   if (S.loadingOlder && Date.now() - (S.loadingOlderSince || 0) > 30000) {
@@ -1498,6 +1499,24 @@ function renderMessages() {
   // smooth scroll-behavior for the jump (a bare scrollTop assignment still
   // animates otherwise).
   jumpToBottom();
+  // If the chat isn't scrollable but there's older history, load batches
+  // until it is (or history runs out). Otherwise short chats with long
+  // histories are dead-ends — the user can't scroll up to reach older
+  // messages. Cap at 5 batches to avoid runaway loads.
+  if (S.hasMoreOlder) {
+    const box = $('#messages');
+    if (box && box.scrollHeight <= box.clientHeight + 10) {
+      (async () => {
+        for (let i = 0; i < 5; i++) {
+          if (!S.hasMoreOlder) break;
+          const b = $('#messages');
+          if (!b || b.scrollHeight > b.clientHeight + 10) break;
+          await loadOlder(true);
+        }
+        jumpToBottom();
+      })();
+    }
+  }
 }
 
 // Fold a finished run's intermediate chatter into a single expandable
