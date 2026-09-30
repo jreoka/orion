@@ -936,12 +936,7 @@ async function fetchOlderBatch() {
   }
 }
 
-async function loadOlder(force) {
-  // Don't page in history if the content isn't scrollable — the user is
-  // seeing everything, not "stuck at the top". (renderMessages() passes
-  // force=true to fill short chats until they're scrollable.)
-  const box0 = $('#messages');
-  if (!force && box0 && box0.scrollHeight <= box0.clientHeight + 10) return;
+async function loadOlder() {
   // Safety: if a previous fetch never settled (network hang, unhandled
   // rejection), don't let the guard flag block loading forever.
   if (S.loadingOlder && Date.now() - (S.loadingOlderSince || 0) > 30000) {
@@ -949,13 +944,11 @@ async function loadOlder(force) {
   }
   if (S.loadingOlder || !S.messages.length || !S.activeId) return;
   // Don't page in history during a chat switch — the observer can fire
-  // before jumpToBottom() settles, and then the "stay pinned to top"
-  // logic loads the entire history and leaves the user at the top.
+  // before jumpToBottom() settles.
   if (S.switching) return;
   // Suppress for 1.5s after the switch completes: the observer fires
-  // async and can still beat the scroll/layout settling. (Bypassed when
-  // force=true — the fill code in renderMessages() is intentional.)
-  if (!force && S.switchSettledAt && Date.now() - S.switchSettledAt < 1500) return;
+  // async and can still beat the scroll/layout settling.
+  if (S.switchSettledAt && Date.now() - S.switchSettledAt < 1500) return;
   // Re-attach trimmed nodes first — even when the server has nothing older
   // left (hasMoreOlder false), or scrolling up dead-ends on messages the
   // client already has but can't see.
@@ -1500,18 +1493,6 @@ function renderMessages() {
   // smooth scroll-behavior for the jump (a bare scrollTop assignment still
   // animates otherwise).
   jumpToBottom();
-  // If there are fewer than 200 messages loaded but more history exists,
-  // load batches until we hit 200 (or run out). Collapsed work logs don't
-  // add much height, so checking scrollHeight doesn't work — we need enough
-  // messages in the DOM for scrolling to be useful. Cap at 5 batches.
-  if (S.hasMoreOlder && S.messages.length < 200) {
-    (async () => {
-      for (let i = 0; i < 5 && S.hasMoreOlder && S.messages.length < 200; i++) {
-        await loadOlder(true);
-      }
-      jumpToBottom();
-    })();
-  }
 }
 
 // Fold a finished run's intermediate chatter into a single expandable
