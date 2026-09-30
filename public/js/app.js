@@ -3910,6 +3910,7 @@ function wireProviderFormOnce() {
 }
 
 async function loadAdminUsers() {
+  wireUsersTabOnce();
   const body = $('#users-body');
   body.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
   try {
@@ -3920,6 +3921,45 @@ async function loadAdminUsers() {
     return;
   }
   renderAdminUsers();
+}
+
+/* Users tab: search by username + pagination. Client-side over the full
+   list — plenty fast for any realistic admin roster. */
+const USERS_PER_PAGE = 25;
+let usersTabWired = false;
+function wireUsersTabOnce() {
+  if (usersTabWired) return;
+  usersTabWired = true;
+  S.userSearch = '';
+  S.userPage = 0;
+  $('#users-search').addEventListener('input', (e) => {
+    S.userSearch = e.target.value.trim().toLowerCase();
+    S.userPage = 0;
+    renderAdminUsers();
+  });
+  $('#users-prev').addEventListener('click', () => {
+    if (S.userPage > 0) { S.userPage--; renderAdminUsers(); }
+  });
+  $('#users-next').addEventListener('click', () => {
+    S.userPage++; renderAdminUsers();
+  });
+}
+
+function filteredAdminUsers() {
+  const q = S.userSearch || '';
+  if (!q) return S.adminUsers || [];
+  return (S.adminUsers || []).filter(u => String(u.username || '').toLowerCase().includes(q));
+}
+
+function renderUsersPager(count) {
+  const pages = Math.max(1, Math.ceil(count / USERS_PER_PAGE));
+  if (S.userPage > pages - 1) S.userPage = pages - 1;
+  const pager = $('#users-pager');
+  pager.hidden = pages <= 1;
+  if (pages <= 1) return;
+  $('#users-page-info').textContent = `Page ${S.userPage + 1} of ${pages} · ${count} user${count === 1 ? '' : 's'}`;
+  $('#users-prev').disabled = S.userPage === 0;
+  $('#users-next').disabled = S.userPage >= pages - 1;
 }
 
 function fmtTokens(n) {
@@ -3949,13 +3989,21 @@ function usageCell(used, lim) {
 function renderAdminUsers() {
   const body = $('#users-body');
   body.innerHTML = '';
-  if (!S.adminUsers.length) {
+  const filtered = filteredAdminUsers();
+  if (!(S.adminUsers || []).length) {
     body.innerHTML = `<tr><td colspan="6" class="muted">No users yet.</td></tr>`;
+    renderUsersPager(0);
+    return;
+  }
+  if (!filtered.length) {
+    body.innerHTML = `<tr><td colspan="6" class="muted">No users match “${esc(S.userSearch)}”.</td></tr>`;
+    renderUsersPager(0);
     return;
   }
   const usageById = {};
   for (const r of S.adminUsage || []) usageById[r.user_id] = r;
-  for (const u of S.adminUsers) {
+  const page = filtered.slice(S.userPage * USERS_PER_PAGE, (S.userPage + 1) * USERS_PER_PAGE);
+  for (const u of page) {
     const isSelf = S.me && u.id === S.me.id;
     const usage = usageById[u.id];
     const used = usage ? usage.total_tokens : 0;
@@ -4000,6 +4048,7 @@ function renderAdminUsers() {
 
     body.appendChild(tr);
   }
+  renderUsersPager(filtered.length);
 }
 
 

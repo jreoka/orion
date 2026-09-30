@@ -1360,6 +1360,13 @@ button.avatar.lg:hover { opacity: .85; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
 
 .table-wrap { overflow-x: auto; margin: 0 -6px; padding: 0 6px; }
+.users-toolbar { margin: 2px 0 10px; }
+.users-toolbar .input { max-width: 320px; }
+.users-pager {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  padding-top: 14px;
+}
+.users-pager[hidden] { display: none; }
 .users-table { width: 100%; border-collapse: collapse; font-size: 14px; font-family: var(--sans); }
 .users-table th {
   text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
