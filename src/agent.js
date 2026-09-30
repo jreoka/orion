@@ -2060,8 +2060,11 @@ async function runToolLoop({
       // request succeeds on retry). Give it a couple of bare retries before
       // accepting silence; the no-silence fallback below still owns the miss
       // if they all come back empty.
-      if (!(content || '').trim() && !isChild && emptyRetries < 2) {
+      if (!(content || '').trim() && !isChild && emptyRetries < 3) {
         emptyRetries++;
+        // Empty completions are often transient provider flakiness that clears
+        // within seconds — pause briefly before retrying an identical request.
+        await new Promise((r) => setTimeout(r, 4000 * emptyRetries));
         continue;
       }
       if (!(content || '').trim() && (summaryNudges > 0 || emptyRetries > 0)) {
