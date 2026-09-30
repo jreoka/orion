@@ -78,11 +78,10 @@ export function getWeeklyUsage(userId) {
 }
 
 /** True when the user has a limit and has reached it. Never throws.
- * Admins are exempt — the weekly token budget only gates regular users. */
+ * Applies to everyone, including admins — an admin who wants no cap sets
+ * their own limit to null (unlimited) in the admin panel. */
 export function isOverLimit(userId) {
   try {
-    const row = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
-    if (row && row.role === 'admin') return false;
     const u = getWeeklyUsage(userId);
     return u.limit !== null && u.total_tokens >= u.limit;
   } catch {
