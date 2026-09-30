@@ -846,12 +846,30 @@ function ensureOlderSpinner() {
 // miss on momentum scrolls or when the scroll container's geometry shifts
 // under late-loading content.
 let olderSentinel = null;
+let olderLoadBtn = null;
 function ensureOlderSentinel() {
   if (olderSentinel) return olderSentinel;
   olderSentinel = document.createElement('div');
   olderSentinel.id = 'older-sentinel';
   olderSentinel.setAttribute('aria-hidden', 'true');
+  // Manual "load older" button: visible when there's history but the chat
+  // isn't scrollable (e.g. 80 messages collapsed into 10 rows). The
+  // observer can't fire again if the sentinel stays visible.
+  olderLoadBtn = document.createElement('button');
+  olderLoadBtn.id = 'older-load-btn';
+  olderLoadBtn.textContent = 'Load older messages';
+  olderLoadBtn.hidden = true;
+  olderLoadBtn.onclick = () => loadOlder();
+  olderSentinel.appendChild(olderLoadBtn);
   return olderSentinel;
+}
+// Show/hide the manual load button based on whether there's more history
+// and the chat isn't scrollable.
+function updateOlderLoadBtn() {
+  if (!olderLoadBtn) return;
+  const box = $('#messages');
+  const needsIt = S.hasMoreOlder && box && box.scrollHeight <= box.clientHeight + 10;
+  olderLoadBtn.hidden = !needsIt;
 }
 let olderObserver = null;
 function wireOlderObserver() {
@@ -955,6 +973,7 @@ async function loadOlder() {
   if (reattachMissingOlder()) return;
   if (!S.hasMoreOlder) return;
   if (!(await fetchOlderBatch())) return;
+  updateOlderLoadBtn(); // hide the button if we now have a scrollbar
   // NOTE: no recursive auto-page here. The IntersectionObserver re-fires
   // when the sentinel becomes visible after each prepend, so the user can
   // keep scrolling up to load more. Auto-paging in a loop caused runaway
@@ -1487,6 +1506,7 @@ function renderMessages() {
   // re-fetch while the stream was down, and without this they sit loose
   // until (and unless) another event arrives.
   if (S.runActive) foldLiveWorkLog();
+  updateOlderLoadBtn(); // show "Load older" if history exists but no scrollbar
   // Full re-render: jump straight to the bottom in the same task as the DOM
   // build, so the first paint is already at the bottom — never a flash of
   // the top followed by a scroll-down. jumpToBottom() overrides the CSS

@@ -730,6 +730,19 @@ button.avatar.lg:hover { opacity: .85; }
 #older-spinner { display: flex; justify-content: center; padding: 10px 0 2px; }
 #older-spinner[hidden] { display: none; }
 #older-sentinel { height: 1px; flex-shrink: 0; }
+#older-load-btn {
+  display: block;
+  margin: 8px auto;
+  padding: 8px 16px;
+  border: 1px solid var(--hairline, #ddd);
+  border-radius: 20px;
+  background: var(--paper, #fff);
+  color: var(--ink, #333);
+  font-size: 13px;
+  cursor: pointer;
+}
+#older-load-btn[hidden] { display: none; }
+#older-load-btn:hover { background: var(--wash, #f5f5f5); }
 #older-spinner .spin {
   width: 18px; height: 18px; border-radius: 50%;
   border: 2px solid var(--paper-3); border-top-color: var(--ink-3);
