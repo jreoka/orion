@@ -1078,11 +1078,15 @@ async function jumpToTurn(mid) {
     const el = msgElById(mid);
     if (!el) { toast('Could not find that turn', 'error'); return; }
     // Same highlight as clicking a reply quote: center the message and
-    // flash the bubble with the accent ring.
+    // flash the bubble with the accent ring. Delay the flash until the
+    // smooth scroll has landed, otherwise it's over before the message
+    // is in view.
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.classList.remove('quote-flash');
-    void el.offsetWidth; // restart the highlight animation
-    el.classList.add('quote-flash');
+    setTimeout(() => {
+      el.classList.remove('quote-flash');
+      void el.offsetWidth; // restart the highlight animation
+      el.classList.add('quote-flash');
+    }, 500);
     // If we're already there, no scroll event fires — paint directly.
     // Also re-paint after the smooth scroll lands.
     schedulePaintRail();
@@ -1790,9 +1794,12 @@ function jumpToMessage(id) {
   const el = document.querySelector(`.msg[data-mid="${CSS.escape(String(id))}"]`);
   if (!el) { toast('Original message is not loaded', 'error'); return; }
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  el.classList.remove('quote-flash');
-  void el.offsetWidth; // restart the highlight animation
-  el.classList.add('quote-flash');
+  // Delay the flash until the scroll lands.
+  setTimeout(() => {
+    el.classList.remove('quote-flash');
+    void el.offsetWidth; // restart the highlight animation
+    el.classList.add('quote-flash');
+  }, 500);
 }
 
 /* ---------- reactions ---------- */
