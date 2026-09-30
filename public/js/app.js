@@ -936,14 +936,14 @@ async function fetchOlderBatch() {
   }
 }
 
-async function loadOlder() {
+async function loadOlder(force) {
   // Don't page in history if the content isn't scrollable — the user is
   // seeing everything, not "stuck at the top". Loading here just makes
   // the chat scrollable and leaves them at the top.
+  // (Exception: renderMessages() passes force=true for short chats with more
+  // history, so users can scroll up. That loads exactly one batch.)
   const box0 = $('#messages');
-  if (box0 && box0.scrollHeight <= box0.clientHeight + 10) return;
-  // DEBUG: trace when loadOlder is called
-  console.log('[orion-debug] loadOlder called: switching=' + S.switching + ' settledMs=' + (S.switchSettledAt ? Date.now() - S.switchSettledAt : 'n/a') + ' scrollTop=' + ($('#messages') ? $('#messages').scrollTop : 'n/a'));
+  if (!force && box0 && box0.scrollHeight <= box0.clientHeight + 10) return;
   // Safety: if a previous fetch never settled (network hang, unhandled
   // rejection), don't let the guard flag block loading forever.
   if (S.loadingOlder && Date.now() - (S.loadingOlderSince || 0) > 30000) {
@@ -1125,8 +1125,6 @@ function jumpToBottom() {
   S.stick = true; // an explicit jump (re)pins follow mode
   setScrollTopInstant(box, box.scrollHeight);
   hideJump();
-  // DEBUG: trace scroll position after jump
-  console.log('[orion-debug] jumpToBottom: scrollHeight=' + box.scrollHeight + ' scrollTop=' + box.scrollTop + ' clientHeight=' + box.clientHeight);
 }
 // Assign scrollTop without the CSS smooth-scroll animation: compensating
 // adjustments (trim, history prepend) must apply instantly — a bare
@@ -1503,6 +1501,17 @@ function renderMessages() {
   // smooth scroll-behavior for the jump (a bare scrollTop assignment still
   // animates otherwise).
   jumpToBottom();
+  // If the content isn't scrollable but there's older history on the server,
+  // load one batch so the user can scroll up. (Without this, short chats
+  // with long histories are dead-ends — no way to reach older messages.)
+  // Only one batch: the observer takes over from there if they keep scrolling.
+  if (S.hasMoreOlder && box.scrollHeight <= box.clientHeight + 10) {
+    // Defer a tick so the layout settles before measuring again.
+    setTimeout(() => {
+      const b = $('#messages');
+      if (b && b.scrollHeight <= b.clientHeight + 10 && S.hasMoreOlder) loadOlder(true);
+    }, 100);
+  }
 }
 
 // Fold a finished run's intermediate chatter into a single expandable
