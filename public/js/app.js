@@ -901,11 +901,11 @@ function prependHistoryBatch(msgs) {
   // logs when something later re-folds the whole list.
   for (const seg of splitRuns([...frag.children])) foldRunSegment(seg, S.liveIds);
   box.insertBefore(frag, ensureOlderSpinner().nextSibling);
-  // Pinned to the top: stay pinned, so the sentinel stays visible and the
-  // observer keeps paging in history without the user having to re-scroll.
-  // Otherwise preserve the reading position.
-  if (prevTop < 100) setScrollTopInstant(box, 0);
-  else setScrollTopInstant(box, prevTop + (box.scrollHeight - prevHeight));
+  // Maintain the user's visual position: the new content is above, so
+  // shift scrollTop down by the height added. This leaves the user NOT at
+  // the very top, so they can continue scrolling up for more. (Pinning to
+  // 0 left them stuck with nowhere to scroll.)
+  setScrollTopInstant(box, prevTop + (box.scrollHeight - prevHeight));
 }
 
 // Re-attach messages that are loaded in S.messages but missing from the DOM
