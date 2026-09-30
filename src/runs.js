@@ -173,6 +173,7 @@ export async function runConversation(
   const controller = new AbortController();
   controllers.set(id, controller);
   let runStatus = 'done';
+  let loopStopReason = null;
 
   // If the run is still going after 12s with nothing said yet, drop a brief
   // acknowledgment so the user isn't staring at a bare "Working...". Only
@@ -218,6 +219,7 @@ export async function runConversation(
       onExecEnd: (execId) => trackExecEnd(id, execId),
     });
     if (r?.status) runStatus = r.status;
+    if (r?.stopReason) loopStopReason = r.stopReason;
   } catch (e) {
     // runAgentLoop only throws on unexpected internal errors; the agent
     // already published run_ended for handled outcomes (done/error/stopped).
@@ -267,9 +269,15 @@ export async function runConversation(
           .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1")
           .get(id);
         const snippet = String(last?.content || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+        // A fizzled run (model went quiet through every recovery nudge) is
+        // not a finish — say so plainly instead of reusing a stale snippet
+        // or falling back to a bare "finished".
+        const body = loopStopReason === 'fizzled'
+          ? `${conv.title || 'Chat'}: the run went quiet before finishing — say continue and I'll pick up where I left off`
+          : `${conv.title || 'Chat'}${runStatus !== 'done' ? ` (${runStatus})` : ''}: ${snippet || 'finished'}`;
         await notifyConversation(userId, id, {
           title: 'Orion',
-          body: `${conv.title || 'Chat'}${runStatus !== 'done' ? ` (${runStatus})` : ''}: ${snippet || 'finished'}`,
+          body,
         });
       }
     } catch (e) {

@@ -2064,6 +2064,12 @@ async function runToolLoop({
         emptyRetries++;
         continue;
       }
+      if (!(content || '').trim() && (summaryNudges > 0 || emptyRetries > 0)) {
+        // The model went quiet and stayed quiet through every recovery nudge.
+        // Mark the fizzle so the run-end push doesn't present a stale progress
+        // note (or a bare "finished") as a clean completion.
+        stopReason = 'fizzled';
+      }
       break; // final answer
     }
 
@@ -2562,7 +2568,7 @@ export async function runAgentLoop({
       throw new Error('The AI model returned no output after multiple attempts.');
     }
 
-    return { finalText, status };
+    return { finalText, status, stopReason };
   } catch (e) {
     // Whatever text streamed before the failure is already in the DB for
     // finished iterations; e.partialContent covers the in-flight one.
