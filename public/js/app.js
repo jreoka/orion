@@ -944,6 +944,9 @@ async function loadOlder() {
   // before jumpToBottom() settles, and then the "stay pinned to top"
   // logic loads the entire history and leaves the user at the top.
   if (S.switching) return;
+  // Also suppress for 1.5s after the switch completes: the observer fires
+  // async and can still beat the scroll/layout settling.
+  if (S.switchSettledAt && Date.now() - S.switchSettledAt < 1500) return;
   // Re-attach trimmed nodes first — even when the server has nothing older
   // left (hasMoreOlder false), or scrolling up dead-ends on messages the
   // client already has but can't see.
@@ -3081,6 +3084,11 @@ async function switchConversation(id) {
     if (S.doneByConv[id]) { delete S.doneByConv[id]; saveDoneFlags(); }
     renderSidebar();
     renderMessages();
+    // Suppress the older-messages observer for a beat after switching:
+    // the IntersectionObserver fires asynchronously, and if it runs before
+    // the scroll-to-bottom settles (or before images size the content), it
+    // pages in history and the "stay pinned" logic sticks the user at top.
+    S.switchSettledAt = Date.now();
     loadTurns();
     openEventStream(id);
     // Clear the composer before restoring this chat's draft — otherwise a
