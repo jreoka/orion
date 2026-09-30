@@ -4702,7 +4702,7 @@ async function resetEverythingModal() {
   try { need2fa = !!(await api('/api/auth/2fa/status')).enabled; } catch {}
   const bd = openModal(`
     <h3>Reset everything?</h3>
-    <p class="muted">This erases <b>all chats</b> — every message in every conversation — <b>everything</b> in the agent's sandbox — files, installed tools, the agent's memory (SOUL.md / MEMORY.md) — and <b>everything in the vault</b> — all stored secrets. The sandbox starts over fresh. This can't be undone.</p>
+    <p class="muted">This erases <b>all chats</b> — every message in every conversation — and <b>everything</b> in the agent's sandbox — files, installed tools, the agent's memory (SOUL.md / MEMORY.md). The sandbox starts over fresh. Your <b>vault is kept</b> — stored secrets are not touched. This can't be undone.</p>
     <form id="reset-form">
       <label class="field"><span>Your password</span>
         <input id="reset-password" type="password" autocomplete="current-password" required>
@@ -4801,7 +4801,7 @@ async function deleteAllChatsModal() {
   try { need2fa = !!(await api('/api/auth/2fa/status')).enabled; } catch {}
   const bd = openModal(`
     <h3>Delete all chats?</h3>
-    <p class="muted">This erases <b>every chat transcript</b> — all messages in all conversations. The agent's <b>sandbox and memory are kept</b>: files, installed tools, SOUL.md / MEMORY.md, and scheduled tasks all survive. This can't be undone.</p>
+    <p class="muted">This erases <b>every chat transcript</b> — all messages in all conversations. The agent's <b>sandbox and memory are kept</b>: files, installed tools, SOUL.md / MEMORY.md, and scheduled tasks all survive. Your <b>vault is kept</b> too. This can't be undone.</p>
     <form id="delchats-form">
       <label class="field"><span>Your password</span>
         <input id="delchats-password" type="password" autocomplete="current-password" required>
