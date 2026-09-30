@@ -187,12 +187,12 @@
         </header>
 
         <nav class="auth-tabs admin-tabs" id="admin-tabs">
-          <button type="button" class="auth-tab active" data-atab="provider">AI provider</button>
+          <button type="button" class="auth-tab active" data-atab="users">Users</button>
+          <button type="button" class="auth-tab" data-atab="provider">AI provider</button>
           <button type="button" class="auth-tab" data-atab="limits">Limits</button>
-          <button type="button" class="auth-tab" data-atab="users">Users</button>
         </nav>
 
-        <div class="card" id="admin-card-provider">
+        <div class="card" id="admin-card-provider" hidden>
           <h2>AI provider</h2>
           <p class="muted small">One model and key for everyone. Users never see the key.</p>
           <form id="provider-form">
@@ -251,7 +251,7 @@
           </form>
         </div>
 
-        <div class="card" id="admin-card-users" hidden>
+        <div class="card" id="admin-card-users">
           <h2>Users</h2>
           <div class="table-wrap">
             <table class="users-table">
