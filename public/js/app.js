@@ -1540,9 +1540,13 @@ function renderMessages() {
   // ensures the chat is scrollable so the user can scroll up for more.
   // (Bypasses the 1.5s switch suppression — this is intentional, not the
   // observer firing early.)
-  if (S.hasMoreOlder && S.messages.length < 200) {
+  // Auto-fill: if we have no visible content (e.g. a run of empty tool-call
+  // placeholders), keep loading older batches until there's something to
+  // see, or we hit the cap. Count visible, not total.
+  const visibleCount = () => S.messages.filter((m) => !isEmptyPlaceholder(m)).length;
+  if (S.hasMoreOlder && visibleCount() < 20) {
     (async () => {
-      for (let i = 0; i < 5 && S.hasMoreOlder && S.messages.length < 200; i++) {
+      for (let i = 0; i < 10 && S.hasMoreOlder && visibleCount() < 20; i++) {
         // Temporarily clear the suppression for this intentional fill.
         const saved = S.switchSettledAt;
         S.switchSettledAt = 0;
