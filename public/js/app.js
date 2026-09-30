@@ -1078,15 +1078,35 @@ async function jumpToTurn(mid) {
     const el = msgElById(mid);
     if (!el) { toast('Could not find that turn', 'error'); return; }
     // Same highlight as clicking a reply quote: center the message and
-    // flash the bubble with the accent ring. Delay the flash until the
-    // smooth scroll has landed, otherwise it's over before the message
-    // is in view.
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(() => {
+    // flash the bubble with the accent ring. Wait for the smooth scroll
+    // to actually land before flashing — for long jumps the scroll takes
+    // well over 500ms.
+    const box = $('#messages');
+    const flash = () => {
       el.classList.remove('quote-flash');
       void el.offsetWidth; // restart the highlight animation
       el.classList.add('quote-flash');
-    }, 500);
+    };
+    // If already in view, flash immediately. Otherwise scroll and flash
+    // on scrollend (fallback: timeout).
+    const r = el.getBoundingClientRect();
+    const br = box.getBoundingClientRect();
+    const inView = r.top >= br.top && r.bottom <= br.bottom;
+    if (inView) {
+      flash();
+    } else {
+      let done = false;
+      const onEnd = () => {
+        if (done) return;
+        done = true;
+        box.removeEventListener('scrollend', onEnd);
+        flash();
+      };
+      box.addEventListener('scrollend', onEnd, { once: true });
+      // Fallback in case scrollend doesn't fire (e.g. instant scroll).
+      setTimeout(onEnd, 1500);
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
     // If we're already there, no scroll event fires — paint directly.
     // Also re-paint after the smooth scroll lands.
     schedulePaintRail();
@@ -1793,13 +1813,29 @@ $('#reply-cancel')?.addEventListener('click', clearReply);
 function jumpToMessage(id) {
   const el = document.querySelector(`.msg[data-mid="${CSS.escape(String(id))}"]`);
   if (!el) { toast('Original message is not loaded', 'error'); return; }
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  // Delay the flash until the scroll lands.
-  setTimeout(() => {
+  const box = $('#messages');
+  const flash = () => {
     el.classList.remove('quote-flash');
     void el.offsetWidth; // restart the highlight animation
     el.classList.add('quote-flash');
-  }, 500);
+  };
+  const r = el.getBoundingClientRect();
+  const br = box.getBoundingClientRect();
+  const inView = r.top >= br.top && r.bottom <= br.bottom;
+  if (inView) {
+    flash();
+  } else {
+    let done = false;
+    const onEnd = () => {
+      if (done) return;
+      done = true;
+      box.removeEventListener('scrollend', onEnd);
+      flash();
+    };
+    box.addEventListener('scrollend', onEnd, { once: true });
+    setTimeout(onEnd, 1500);
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
 
 /* ---------- reactions ---------- */
