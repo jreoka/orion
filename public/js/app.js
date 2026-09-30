@@ -940,6 +940,10 @@ async function loadOlder() {
     S.loadingOlder = false;
   }
   if (S.loadingOlder || !S.messages.length || !S.activeId) return;
+  // Don't page in history during a chat switch — the observer can fire
+  // before jumpToBottom() settles, and then the "stay pinned to top"
+  // logic loads the entire history and leaves the user at the top.
+  if (S.switching) return;
   // Re-attach trimmed nodes first — even when the server has nothing older
   // left (hasMoreOlder false), or scrolling up dead-ends on messages the
   // client already has but can't see.
@@ -950,8 +954,12 @@ async function loadOlder() {
   // IntersectionObserver only fires on intersection CHANGES, so it won't
   // re-trigger while the sentinel stays continuously visible — without
   // this the user has to nudge the scroll to load each batch.
+  // But only if the content is actually scrollable: if the chat is shorter
+  // than the viewport, scrollTop is 0 because there's nowhere to scroll,
+  // not because the user is pinned to the top — auto-paging here would
+  // load the entire history on every chat switch.
   const box = $('#messages');
-  if (S.hasMoreOlder && box.scrollTop < 100) {
+  if (S.hasMoreOlder && box.scrollTop < 100 && box.scrollHeight > box.clientHeight + 100) {
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     if (box.scrollTop < 100 && S.activeId) loadOlder();
   }
