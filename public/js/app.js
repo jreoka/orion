@@ -727,22 +727,17 @@ function wireGlobal() {
     if (document.hidden) { hiddenAt = Date.now(); return; }
     if (S.me && Date.now() - hiddenAt > 10000) refreshMe().catch(() => {});
   });
-  // Appearance picker (Settings → Appearance): Light / Dark / Auto.
+  // Appearance dropdown (Settings → Appearance): Light / Dark / Auto.
   // applyTheme() persists locally and pushes to the server so the choice
   // syncs across devices; 'auto' also follows the OS setting live.
-  const themeSeg = $('#theme-seg');
-  if (themeSeg) {
+  const themeSel = $('#theme-select');
+  if (themeSel) {
     let pref = 'auto';
     try { const l = localStorage.getItem('orion-theme'); if (themePrefValid(l)) pref = l; } catch (e) {}
     if (S.me && themePrefValid(S.me.theme)) pref = S.me.theme;
-    themeSeg.querySelectorAll('button').forEach(b => {
-      const on = b.dataset.themePref === pref;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-checked', on ? 'true' : 'false');
-    });
-    themeSeg.addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-theme-pref]');
-      if (b && themePrefValid(b.dataset.themePref)) applyTheme(b.dataset.themePref);
+    themeSel.value = pref;
+    themeSel.addEventListener('change', () => {
+      if (themePrefValid(themeSel.value)) applyTheme(themeSel.value);
     });
   }
   wireThemeMqOnce();
@@ -2262,12 +2257,8 @@ function applyTheme(pref, save = true) {
   try { localStorage.setItem('orion-theme', pref); } catch (e) {}
   const m = document.querySelector('meta[name="theme-color"]');
   if (m) m.setAttribute('content', dark ? '#171310' : '#faf7f0');
-  const seg = $('#theme-seg');
-  if (seg) seg.querySelectorAll('button').forEach(b => {
-    const on = b.dataset.themePref === pref;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-checked', on ? 'true' : 'false');
-  });
+  const sel = $('#theme-select');
+  if (sel) sel.value = pref;
   S.themePref = pref;
   // Push the choice to the server so the user's other devices follow.
   if (save && S.me) {
