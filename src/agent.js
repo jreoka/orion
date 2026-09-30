@@ -1677,9 +1677,16 @@ export async function loadHistory(conversationId, limit) {
           // id (run interrupted after the calls were made) makes some
           // providers return empty completions. Synthesize a placeholder
           // result for any id the stored history never answered.
-          const answered = new Set(tools.map(t => t.tool_call_id));
           let calls = [];
           try { calls = JSON.parse(r.tool_calls || '[]'); } catch { calls = []; }
+          const callIds = new Set(calls.map(tc => tc.id));
+          // Drop orphan tool rows: a result whose tool_call id was never
+          // stored (lost write, crashed turn) has no matching assistant
+          // tool_call, and providers return empty completions for the
+          // orphaned sequence. This is the mirror image of the dangling-id
+          // case above.
+          const matched = tools.filter(t => callIds.has(t.tool_call_id));
+          const answered = new Set(matched.map(t => t.tool_call_id));
           const synth = calls
             .filter(tc => !answered.has(tc.id))
             .map(tc => ({
@@ -1688,7 +1695,7 @@ export async function loadHistory(conversationId, limit) {
               name: tc.function?.name || tc.name || 'unknown',
               content: '[Tool result unavailable — the run was interrupted before this tool returned.]',
             }));
-          repaired.push(r, ...tools, ...synth, ...deferredCards, ...deferredUsers);
+          repaired.push(r, ...matched, ...synth, ...deferredCards, ...deferredUsers);
         } else {
           const { tool_calls: _dropped, ...rest } = r;
           repaired.push(rest, ...deferredCards, ...deferredUsers);
