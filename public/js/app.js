@@ -727,13 +727,25 @@ function wireGlobal() {
     if (document.hidden) { hiddenAt = Date.now(); return; }
     if (S.me && Date.now() - hiddenAt > 10000) refreshMe().catch(() => {});
   });
-  // Theme toggle (Settings → Appearance). applyTheme() persists locally
-  // and pushes to the server so the choice syncs across devices.
-  const themeToggle = $('#theme-toggle');
-  if (themeToggle) {
-    themeToggle.checked = document.documentElement.dataset.theme === 'dark';
-    themeToggle.addEventListener('change', () => applyTheme(themeToggle.checked));
+  // Appearance picker (Settings → Appearance): Light / Dark / Auto.
+  // applyTheme() persists locally and pushes to the server so the choice
+  // syncs across devices; 'auto' also follows the OS setting live.
+  const themeSeg = $('#theme-seg');
+  if (themeSeg) {
+    let pref = 'auto';
+    try { const l = localStorage.getItem('orion-theme'); if (themePrefValid(l)) pref = l; } catch (e) {}
+    if (S.me && themePrefValid(S.me.theme)) pref = S.me.theme;
+    themeSeg.querySelectorAll('button').forEach(b => {
+      const on = b.dataset.themePref === pref;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    themeSeg.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-theme-pref]');
+      if (b && themePrefValid(b.dataset.themePref)) applyTheme(b.dataset.themePref);
+    });
   }
+  wireThemeMqOnce();
   // Haptics toggle (Settings → Appearance), persisted across visits. On by
   // default; flipping it on gives a tick so the new setting can be felt.
   const hapticsToggle = $('#haptics-toggle');
@@ -2233,20 +2245,46 @@ function saveDoneFlags() {
 // disturbing the open chat. Called on every run end, on window focus, and
 // after create/rename/delete. (This is the function setRunActive always
 // expected — its absence used to crash run cleanup.)
-// ---- theme: synced across devices via the server (users.theme) --------
-function applyTheme(dark, save = true) {
+// ---- theme: light / dark / auto, synced across devices via users.theme --
+// The stored preference is 'light', 'dark', or 'auto'; the effective theme
+// resolves 'auto' against the device's prefers-color-scheme.
+function themePrefValid(p) { return p === 'light' || p === 'dark' || p === 'auto'; }
+function deviceDark() {
+  try { return matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { return false; }
+}
+function effectiveDark(pref) { return pref === 'dark' || (pref === 'auto' && deviceDark()); }
+
+function applyTheme(pref, save = true) {
+  if (!themePrefValid(pref)) pref = 'auto';
+  const dark = effectiveDark(pref);
   if (dark) document.documentElement.dataset.theme = 'dark';
   else document.documentElement.removeAttribute('data-theme');
-  try { localStorage.setItem('orion-theme', dark ? 'dark' : 'light'); } catch (e) {}
+  try { localStorage.setItem('orion-theme', pref); } catch (e) {}
   const m = document.querySelector('meta[name="theme-color"]');
   if (m) m.setAttribute('content', dark ? '#171310' : '#faf7f0');
-  const t = $('#theme-toggle');
-  if (t) t.checked = dark;
+  const seg = $('#theme-seg');
+  if (seg) seg.querySelectorAll('button').forEach(b => {
+    const on = b.dataset.themePref === pref;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  S.themePref = pref;
   // Push the choice to the server so the user's other devices follow.
   if (save && S.me) {
     S.themePushedAt = Date.now();
-    api('/api/auth/me', { method: 'PATCH', body: { theme: dark ? 'dark' : 'light' } }).catch(() => {});
+    api('/api/auth/me', { method: 'PATCH', body: { theme: pref } }).catch(() => {});
   }
+}
+
+// Follow the device's light/dark setting while the preference is 'auto'.
+let themeMqWired = false;
+function wireThemeMqOnce() {
+  if (themeMqWired) return; themeMqWired = true;
+  try {
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if ((S.themePref || 'auto') === 'auto') applyTheme('auto', false);
+    });
+  } catch (e) {}
 }
 
 // Single post-login landing: re-fetch the authoritative user record
@@ -2328,14 +2366,15 @@ function startUsageTimer() {
 }
 
 // Boot: the server copy wins when set; otherwise adopt this device's
-// local choice and push it up so all devices converge on it.
+// local choice and push it up so all devices converge on it. When nothing
+// was ever chosen, 'auto' follows the device's light/dark setting.
 function adoptTheme() {
-  const server = S.me && (S.me.theme === 'dark' || S.me.theme === 'light') ? S.me.theme : null;
-  if (server) { applyTheme(server === 'dark', false); return; }
+  const server = S.me && themePrefValid(S.me.theme) ? S.me.theme : null;
+  if (server) { applyTheme(server, false); return; }
   let local = null;
   try { local = localStorage.getItem('orion-theme'); } catch (e) {}
-  if (local === 'dark' || local === 'light') applyTheme(local === 'dark', true);
-  else applyTheme(false, false);
+  if (themePrefValid(local)) applyTheme(local, true);
+  else applyTheme('auto', false);
 }
 
 // Returning to the tab / focusing the window: pick up a theme change
@@ -2346,11 +2385,9 @@ async function syncThemeFromServer() {
   if (Date.now() - (S.themePushedAt || 0) < 5000) return;
   try {
     const me = await api('/api/auth/me');
-    S.me.theme = me.theme;
-    if (me.theme === 'dark' || me.theme === 'light') {
-      const dark = me.theme === 'dark';
-      if ((document.documentElement.dataset.theme === 'dark') !== dark) applyTheme(dark, false);
-    }
+    const pref = themePrefValid(me.theme) ? me.theme : 'auto';
+    S.me.theme = pref;
+    applyTheme(pref, false);
   } catch { /* best-effort */ }
 }
 

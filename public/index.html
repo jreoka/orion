@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#faf7f0" id="meta-theme">
-  <script>try{if(localStorage.getItem('orion-theme')==='dark'){document.documentElement.dataset.theme='dark';var m=document.getElementById('meta-theme');if(m)m.content='#171310';}}catch(e){}</script>
+  <script>try{var t=localStorage.getItem('orion-theme');if(t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.dataset.theme='dark';var m=document.getElementById('meta-theme');if(m)m.content='#171310';}}catch(e){}</script>
   <meta name="description" content="Orion — your own sandboxed AI agent. Chat, build, browse.">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -344,10 +344,12 @@
         <div class="card">
           <h2>Appearance</h2>
           <p class="muted small">Paper by day, ink by night.</p>
-          <label class="toggle-row">
-            <span>Dark mode</span>
-            <span class="toggle"><input id="theme-toggle" type="checkbox"><span class="knob"></span></span>
-          </label>
+          <div class="seg" id="theme-seg" role="radiogroup" aria-label="Appearance">
+            <button type="button" data-theme-pref="light" role="radio" aria-checked="false">Light</button>
+            <button type="button" data-theme-pref="dark" role="radio" aria-checked="false">Dark</button>
+            <button type="button" data-theme-pref="auto" role="radio" aria-checked="false">Auto</button>
+          </div>
+          <p class="muted small" style="margin:8px 0 0">Auto follows your device's light / dark setting.</p>
           <label class="toggle-row" style="margin-bottom:0">
             <span>Haptic feedback</span>
             <span class="toggle"><input id="haptics-toggle" type="checkbox" checked><span class="knob"></span></span>

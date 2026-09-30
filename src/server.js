@@ -335,9 +335,11 @@ app.patch('/api/auth/me', requireAuth, asyncRoute(async (req, res) => {
     revokeOtherSessions(req.user.id, req.sessionId);
   }
   if (theme !== undefined) {
-    // Cross-device theme sync: the toggle writes through here; other
-    // devices pick it up on focus/visible.
-    if (theme !== 'light' && theme !== 'dark') throw httpError(400, 'Invalid theme.');
+    // Cross-device theme sync: the Appearance picker writes through here;
+    // other devices pick the change up via syncThemeFromServer(). The stored
+    // value is the preference ('light' | 'dark' | 'auto'), not the resolved
+    // effective theme.
+    if (theme !== 'light' && theme !== 'dark' && theme !== 'auto') throw httpError(400, 'Invalid theme.');
     db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, req.user.id);
   }
   res.json({ ok: true });
