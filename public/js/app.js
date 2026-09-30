@@ -877,7 +877,26 @@ function wireOlderObserver() {
   if (olderObserver) olderObserver.disconnect();
   olderObserver = new IntersectionObserver((entries) => {
     for (const e of entries) {
-      if (e.isIntersecting) loadOlder();
+      if (e.isIntersecting) {
+        // Load, then keep loading while the sentinel is still visible.
+        // The observer won't re-fire if visibility doesn't change (e.g.
+        // after a prepend when the user hasn't scrolled), so we chain
+        // manually. Cap at 3 chained loads to avoid runaway.
+        (async () => {
+          for (let i = 0; i < 3; i++) {
+            const before = S.messages.length;
+            await loadOlder();
+            if (S.messages.length === before) break; // nothing loaded
+            if (!S.hasMoreOlder) break;
+            // Check if sentinel is still visible — if not, stop chaining
+            // and wait for the user to scroll.
+            const r = ensureOlderSentinel().getBoundingClientRect();
+            const br = box.getBoundingClientRect();
+            const visible = r.bottom > br.top && r.top < br.bottom;
+            if (!visible) break;
+          }
+        })();
+      }
     }
     // Viewport root: fires whether #messages or an ancestor scrolls.
     // No rootMargin: only fire when the sentinel is actually visible, not
