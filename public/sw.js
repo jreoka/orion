@@ -1,7 +1,7 @@
 // Orion service worker — offline-capable app shell, never caches the API.
 'use strict';
 
-const VERSION = 'orion-v7';
+const VERSION = 'orion-v8';
 const SHELL = [
   '/',
   '/index.html',
@@ -15,7 +15,10 @@ const SHELL = [
 // App code: always try the network first so deploys land without a hard
 // refresh; fall back to cache when offline. Icons are immutable blobs,
 // so they stay cache-first.
-const NETWORK_FIRST = new Set(['/', '/index.html', '/css/app.css', '/js/app.js', '/js/dictation.js', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png']);
+const NETWORK_FIRST = new Set(['/', '/index.html', '/login', '/chat', '/admin', '/settings', '/pending', '/css/app.css', '/js/app.js', '/js/dictation.js', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png']);
+// Client routes with an id segment (e.g. /chat/123) — same network-first
+// treatment as the app shell, so a reloaded tab never renders stale markup.
+const NETWORK_FIRST_PREFIX = ['/s/', '/chat/'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -45,7 +48,7 @@ self.addEventListener('fetch', (event) => {
   // first like the app shell, so reloading a link never renders stale markup.
   // (Each /s/<token> URL caches separately; without this the service
   // worker would keep serving the old page for a revisited link.)
-  if (NETWORK_FIRST.has(url.pathname) || url.pathname.startsWith('/s/')) {
+  if (NETWORK_FIRST.has(url.pathname) || NETWORK_FIRST_PREFIX.some((p) => url.pathname.startsWith(p))) {
     event.respondWith(
       fetch(event.request).then((res) => {
         if (res && res.ok) {

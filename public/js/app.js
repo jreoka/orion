@@ -1,6 +1,6 @@
 /* ============================================================
    Orion — single-page app
-   Vanilla JS. Hash routing: #/login, #/chat, #/admin, #/settings.
+   Vanilla JS. History routing: /login, /chat, /admin, /settings.
    All server state flows through the /api/* contract.
    ============================================================ */
 'use strict';
@@ -247,12 +247,15 @@ function formatTokenLimit(v) {
 const ROUTES = ['login', 'chat', 'admin', 'settings', 'pending'];
 const VIEW_ID = { login: 'view-auth', chat: 'view-chat', admin: 'view-admin', settings: 'view-settings', pending: 'view-pending' };
 function route() {
-  const h = (location.hash || '').replace(/^#\/?/, '');
-  // Old push-notification deep links (#/chat/123) land on the single chat.
-  if (/^chat\/\d+$/.test(h)) return 'chat';
-  return ROUTES.includes(h) ? h : 'chat';
+  const p = location.pathname.replace(/^\/+|\/+$/g, '');
+  // Push-notification deep links (/chat/123) land on the single chat.
+  if (/^chat\/\d+$/.test(p)) return 'chat';
+  return ROUTES.includes(p) ? p : 'chat';
 }
-function go(r) { location.hash = '#/' + r; }
+function go(r) {
+  history.pushState({}, '', '/' + r);
+  render();
+}
 
 async function render() {
   const r = route();
@@ -267,12 +270,9 @@ async function render() {
   else if (r === 'settings') renderSettings();
   else if (r === 'pending') renderPending();
 }
-// Boot navigates to the chat route itself; the resulting hashchange must not
-// re-run render() concurrently with the boot render — two interleaved
-// renderChat() calls corrupt the empty-state layout on mobile.
-let suppressHashRender = false;
-window.addEventListener('hashchange', () => {
-  if (suppressHashRender) { suppressHashRender = false; return; }
+// pushState fires no event, so go() renders explicitly; back/forward buttons
+// arrive here.
+window.addEventListener('popstate', () => {
   render();
 });
 
@@ -289,14 +289,14 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     // focuses it and asks it to navigate to the conversation.
     navigator.serviceWorker.addEventListener('message', (event) => {      const data = event.data || {};
       if (data.type === 'orion-navigate') {
-        // The service worker posts the push deep-link (e.g. '#/chat/123').
+        // The service worker posts the push deep-link (e.g. '/chat/123').
         // Honor it instead of always landing on the most recent chat.
-        const m = /^#\/chat\/(\d+)$/.exec(String(data.url || ''));
+        const m = /^\/chat\/(\d+)$/.exec(String(data.url || ''));
         const target = m ? Number(m[1]) : null;
         if (target && target !== S.activeId) {
-          if (route() !== 'chat') location.hash = '#/chat'; // show the chat view first
+          if (route() !== 'chat') go('chat'); // show the chat view first
           switchConversation(target);
-        } else if (route() !== 'chat') location.hash = '#/chat';
+        } else if (route() !== 'chat') go('chat');
         else renderChat();
       }
     });
@@ -364,6 +364,9 @@ const hConfirm = () => haptic([14, 40, 22]); // message sent / run stopped: a tw
 
 /* ---------- boot ---------- */
 async function boot() {
+  // Old #/ links (bookmarks, old push taps): convert to the path once.
+  const hm = /^#\/([a-z]+(?:\/\d+)?)\/?$/.exec(location.hash || '');
+  if (hm) history.replaceState({}, '', '/' + hm[1]);
   onUnauthorized = () => {
     // Session died (or was revoked): scrub every trace of the previous
     // user's state before showing login, so a different user signing in on
@@ -388,10 +391,10 @@ async function boot() {
   try {
     S.me = await api('/api/auth/me');
   } catch { S.me = null; }
-  if (!S.me) { if (route() !== 'login') go('login'); }
-  else if (!location.hash || location.hash === '#/' || route() === 'login') {
-    suppressHashRender = true;
-    go('chat');
+  // Not signed in: only the login and pending routes are reachable.
+  if (!S.me && route() !== 'login' && route() !== 'pending') go('login');
+  else if (S.me && (location.pathname === '/' || route() === 'login')) {
+    history.replaceState({}, '', '/chat');
   }
   if (S.me) adoptTheme(); // server theme wins; else push up this device's choice
   wireGlobal();
@@ -576,6 +579,10 @@ async function doAuth() {
     if (res && res.pending) {
       // Approval required: no session — park the request token and go wait.
       sessionStorage.setItem('orion_pending', JSON.stringify({ token: res.request_token, username }));
+      // Memory only (never stored): lets the waiting screen sign the user in
+      // automatically the moment an admin approves.
+      S.pendingUsername = username;
+      S.pendingPassword = password;
       $('#auth-password').value = '';
       $('#auth-confirm').value = '';
       go('pending');
@@ -664,6 +671,20 @@ function renderPending() {
     if (st.status === 'approved') {
       clearPendingPoll();
       sessionStorage.removeItem('orion_pending');
+      // Still on the waiting screen with the password in memory: sign straight
+      // in instead of making them type it again. (After a refresh the password
+      // is gone, so fall through to the manual sign-in button.)
+      const pw = S.pendingPassword;
+      const un = S.pendingUsername || info.username;
+      S.pendingPassword = null;
+      S.pendingUsername = null;
+      if (pw && un) {
+        $('#pending-status').textContent = 'Approved — signing you in…';
+        try {
+          const lr = await api('/api/auth/login', { method: 'POST', body: { username: un, password: pw } });
+          if (lr && !lr.need_2fa) { await afterLogin(); return; }
+        } catch { /* fall through to the manual button */ }
+      }
       $('#pending-status').textContent = 'Approved — welcome in.';
       const btn = $('#pending-signin');
       btn.hidden = false;
@@ -682,6 +703,20 @@ function wireGlobal() {
   wirePushNudge();
   wireLongPress();
   wireComposerGlobalKeys();
+  // History routing: same-origin links to app routes navigate in place
+  // instead of doing a full page load.
+  document.addEventListener('click', (e) => {
+    const a = e.target && e.target.closest ? e.target.closest('a[href^="/"]') : null;
+    if (!a || a.target === '_blank' || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    let p = '';
+    try {
+      p = new URL(a.getAttribute('href'), location.origin).pathname.replace(/^\/+|\/+$/g, '');
+    } catch { return; }
+    if (ROUTES.includes(p) || /^chat\/\d+$/.test(p)) {
+      e.preventDefault();
+      go(p || 'chat');
+    }
+  });
   // Profile (incl. avatar) is fetched once at boot; re-fetch when the tab
   // becomes visible again so changes made on another device appear
   // without a manual reload.

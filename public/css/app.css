@@ -213,7 +213,8 @@ textarea.input, .field textarea { resize: vertical; min-height: 84px; line-heigh
 /* ============================================================
    Auth view
    ============================================================ */
-#view-auth {
+#view-auth,
+#view-pending {
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
   overflow-y: auto;

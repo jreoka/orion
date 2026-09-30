@@ -130,7 +130,7 @@ export async function notifyUser(userId, { title, body, convId } = {}) {
   }
   const subs = listSubscriptions(userId);
   if (!subs.length) return { sent: 0 };
-  const url = convId ? `/#/chat/${convId}` : '/#/chat';
+  const url = convId ? `/chat/${convId}` : '/chat';
   const payload = JSON.stringify({
     title: title || 'Orion',
     body: body || '',

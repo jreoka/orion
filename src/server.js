@@ -1853,6 +1853,14 @@ app.get('/s/:token', (req, res) => {
   res.type('html').send(html);
 });
 
+// History-API routing: serve the app shell for client routes so refreshes
+// and direct links work without the old #/ hash. (express.static already
+// serves / itself; /api/*, /s/* and /vault/* are matched above and never
+// reach this fallback.)
+app.get(['/login', '/chat', '/chat/:id', '/admin', '/settings', '/pending'], (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
 // ---- admin ----------------------------------------------------------------
 
 // Token-limit shorthand parsing lives in usage.js (imported above).
