@@ -1545,21 +1545,25 @@ function renderMessages() {
   // see, or we hit the cap. Count visible, not total.
   const visibleCount = () => S.messages.filter((m) => !isEmptyPlaceholder(m)).length;
   if (S.hasMoreOlder && visibleCount() < 20) {
+    const fillId = S.activeId;
     (async () => {
       for (let i = 0; i < 10 && S.hasMoreOlder && visibleCount() < 20; i++) {
+        // Abort if the user switched chats mid-fill.
+        if (S.activeId !== fillId) break;
         // Temporarily clear the switch guards for this intentional fill —
         // renderMessages runs inside switchConversation while S.switching
-        // is still true, which would make loadOlder() bail out.
-        const savedSwitching = S.switching;
+        // is still true, which would make loadOlder() bail out. Do NOT
+        // restore S.switching: switchConversation's finally already clears
+        // it, and restoring the stale `true` would wedge all future
+        // switches.
         const savedSettled = S.switchSettledAt;
         S.switching = false;
         S.switchSettledAt = 0;
         await loadOlder();
-        S.switching = savedSwitching;
         S.switchSettledAt = savedSettled;
         if (!S.hasMoreOlder) break;
       }
-      jumpToBottom();
+      if (S.activeId === fillId) jumpToBottom();
     })();
   }
 }
