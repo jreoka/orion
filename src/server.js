@@ -703,6 +703,10 @@ app.post('/api/conversations', requireAuth, (req, res) => {
 app.get('/api/conversations/:id', requireAuth, (req, res) => {
   const conv = getConv(req.params.id, req.user.id);
   if (!conv) return res.status(404).json({ error: 'Not found' });
+  // User opened the chat — clear the unseen-finish flag (sidebar green check).
+  try {
+    db.prepare('DELETE FROM unseen_finishes WHERE user_id = ? AND conversation_id = ?').run(req.user.id, conv.id);
+  } catch {}
   res.json(conversationPayload(conv));
 });
 
