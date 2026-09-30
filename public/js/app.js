@@ -937,6 +937,8 @@ async function fetchOlderBatch() {
 }
 
 async function loadOlder() {
+  // DEBUG: trace when loadOlder is called
+  console.log('[orion-debug] loadOlder called: switching=' + S.switching + ' settledMs=' + (S.switchSettledAt ? Date.now() - S.switchSettledAt : 'n/a') + ' scrollTop=' + ($('#messages') ? $('#messages').scrollTop : 'n/a'));
   // Safety: if a previous fetch never settled (network hang, unhandled
   // rejection), don't let the guard flag block loading forever.
   if (S.loadingOlder && Date.now() - (S.loadingOlderSince || 0) > 30000) {
@@ -1118,6 +1120,8 @@ function jumpToBottom() {
   S.stick = true; // an explicit jump (re)pins follow mode
   setScrollTopInstant(box, box.scrollHeight);
   hideJump();
+  // DEBUG: trace scroll position after jump
+  console.log('[orion-debug] jumpToBottom: scrollHeight=' + box.scrollHeight + ' scrollTop=' + box.scrollTop + ' clientHeight=' + box.clientHeight);
 }
 // Assign scrollTop without the CSS smooth-scroll animation: compensating
 // adjustments (trim, history prepend) must apply instantly — a bare
