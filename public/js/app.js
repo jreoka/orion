@@ -937,6 +937,11 @@ async function fetchOlderBatch() {
 }
 
 async function loadOlder() {
+  // Don't page in history if the content isn't scrollable — the user is
+  // seeing everything, not "stuck at the top". Loading here just makes
+  // the chat scrollable and leaves them at the top.
+  const box0 = $('#messages');
+  if (box0 && box0.scrollHeight <= box0.clientHeight + 10) return;
   // DEBUG: trace when loadOlder is called
   console.log('[orion-debug] loadOlder called: switching=' + S.switching + ' settledMs=' + (S.switchSettledAt ? Date.now() - S.switchSettledAt : 'n/a') + ' scrollTop=' + ($('#messages') ? $('#messages').scrollTop : 'n/a'));
   // Safety: if a previous fetch never settled (network hang, unhandled
