@@ -2046,6 +2046,7 @@ app.patch('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
  * and the sandbox. Shared by the admin delete route and self-service
  * account deletion. */
 async function deleteUserAccount(id) {
+  const uname = db.prepare('SELECT username FROM users WHERE id = ?').get(id);
   for (const conv of db.prepare('SELECT id FROM conversations WHERE user_id = ?').all(id)) {
     deleteConversation(conv.id);
   }
@@ -2070,6 +2071,11 @@ async function deleteUserAccount(id) {
   db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').run(id);
   db.prepare('DELETE FROM token_usage WHERE user_id = ?').run(id);
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  // A stale signup request would otherwise keep the username reserved
+  // forever — deleting the user fully frees it for re-signup.
+  if (uname && uname.username) {
+    db.prepare('DELETE FROM signup_requests WHERE username = ?').run(uname.username);
+  }
 
   // Best-effort: Docker may be down; the user row is already gone.
   try {
