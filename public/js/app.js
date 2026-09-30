@@ -1547,11 +1547,16 @@ function renderMessages() {
   if (S.hasMoreOlder && visibleCount() < 20) {
     (async () => {
       for (let i = 0; i < 10 && S.hasMoreOlder && visibleCount() < 20; i++) {
-        // Temporarily clear the suppression for this intentional fill.
-        const saved = S.switchSettledAt;
+        // Temporarily clear the switch guards for this intentional fill —
+        // renderMessages runs inside switchConversation while S.switching
+        // is still true, which would make loadOlder() bail out.
+        const savedSwitching = S.switching;
+        const savedSettled = S.switchSettledAt;
+        S.switching = false;
         S.switchSettledAt = 0;
         await loadOlder();
-        S.switchSettledAt = saved;
+        S.switching = savedSwitching;
+        S.switchSettledAt = savedSettled;
         if (!S.hasMoreOlder) break;
       }
       jumpToBottom();
