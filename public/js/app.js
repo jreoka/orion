@@ -854,38 +854,32 @@ function ensureOlderSentinel() {
   return olderSentinel;
 }
 let olderObserver = null;
+let scrollLoadThrottle = 0;
 function wireOlderObserver() {
   const box = $('#messages');
+  // The observer is a fallback; the primary trigger is the scroll listener
+  // in the main scroll handler (see below). The observer doesn't re-fire
+  // when the sentinel stays visible after a prepend, forcing the user to
+  // scroll down and up again.
   if (olderObserver) olderObserver.disconnect();
   olderObserver = new IntersectionObserver((entries) => {
     for (const e of entries) {
-      if (e.isIntersecting) {
-        // Load, then keep loading while the sentinel is still visible.
-        // The observer won't re-fire if visibility doesn't change (e.g.
-        // after a prepend when the user hasn't scrolled), so we chain
-        // manually. Cap at 3 chained loads to avoid runaway.
-        (async () => {
-          for (let i = 0; i < 3; i++) {
-            const before = S.messages.length;
-            await loadOlder();
-            if (S.messages.length === before) break; // nothing loaded
-            if (!S.hasMoreOlder) break;
-            // Check if sentinel is still visible — if not, stop chaining
-            // and wait for the user to scroll.
-            const r = ensureOlderSentinel().getBoundingClientRect();
-            const br = box.getBoundingClientRect();
-            const visible = r.bottom > br.top && r.top < br.bottom;
-            if (!visible) break;
-          }
-        })();
-      }
+      if (e.isIntersecting) loadOlder();
     }
-    // Viewport root: fires whether #messages or an ancestor scrolls.
-    // No rootMargin: only fire when the sentinel is actually visible, not
-    // 400px before — the aggressive margin caused history to load during
-    // chat switches before the scroll-to-bottom settled.
   }, { root: null, rootMargin: '0px 0px 0px 0px', threshold: 0 });
   olderObserver.observe(ensureOlderSentinel());
+}
+// Called from the main #messages scroll handler: when near the top, load
+// older messages. Throttled to avoid excessive calls.
+function maybeLoadOlderOnScroll() {
+  const box = $('#messages');
+  if (box.scrollTop < 200) {
+    const now = Date.now();
+    if (now - scrollLoadThrottle > 500) {
+      scrollLoadThrottle = now;
+      loadOlder();
+    }
+  }
 }
 function showOlderSpinner(on) {
   ensureOlderSpinner().hidden = !on;
@@ -1201,8 +1195,9 @@ function wireJumpPill() {
     if (nearBottom()) hideJump();
     else paintJump();
     schedulePaintRail();
-    // Older-history paging is driven by the IntersectionObserver on
-    // #older-sentinel (see wireOlderObserver), not a scrollTop threshold.
+    // Older-history paging: when near the top, load more. (The
+    // IntersectionObserver is a fallback; scroll events are more reliable.)
+    maybeLoadOlderOnScroll();
   }, { passive: true });
   // If an ancestor (or the window) is the actual scroller, #messages never
   // fires scroll — keep the rail highlight in sync anyway. Scroll events
