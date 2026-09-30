@@ -2449,6 +2449,9 @@ export async function runAgentLoop({
     try {
       const base = partial || '';
       const marker = note || stoppedNoteText();
+      // Don't stack duplicate interruption notes (e.g. rapid redeploys
+      // interrupting the same run multiple times) — one is enough.
+      if (base.trimEnd().endsWith(marker)) return;
       const content = base ? base + '\n\n' + marker : marker;
       if (assistantId) {
         db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, assistantId);
