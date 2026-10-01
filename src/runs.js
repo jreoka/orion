@@ -217,6 +217,7 @@ export async function runConversation(
       systemExtra: opts.systemExtra,
       onExecStart: (execId) => trackExecStart(id, userId, execId),
       onExecEnd: (execId) => trackExecEnd(id, execId),
+      trigger: opts.trigger,
     });
     if (r?.status) runStatus = r.status;
     if (r?.stopReason) loopStopReason = r.stopReason;

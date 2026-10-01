@@ -2353,9 +2353,9 @@ export async function runAgent({
 export async function runAgentContinuation({
   userId, conversationId, userText, settings,
   shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle,
-  noUsageCharge, attachmentNames,
+  noUsageCharge, attachmentNames, trigger,
 }) {
-  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle, noUsageCharge, attachmentNames });
+  return runAgentLoop({ userId, conversationId, userText, settings, shouldAbort, isShutdownAbort, signal, systemExtra, historyLimit, onExecStart, onExecEnd, noAutoTitle, noUsageCharge, attachmentNames, trigger });
 }
 
 /**
@@ -2465,6 +2465,7 @@ export async function runAgentLoop({
   noAutoTitle, // system-injected prompts (heartbeat, tasks) must never title a chat
   noUsageCharge, // system-initiated runs (heartbeat) neither count toward nor are gated by the weekly quota
   attachmentNames, // filenames of attachments on the triggering message (for titling photo-only messages)
+  trigger, // 'boot-recovery' for resumed runs — continuation, not a new run
 }) {
   const deadlineAt = null; // parent runs have no wall-clock cap
   // Default replay cap: the whole conversation is unbounded and callers
@@ -2644,7 +2645,7 @@ export async function runAgentLoop({
       conversationId,
       getAssistantId: () => assistantId,
       onTurnStart: () => {
-        const firstTurn = !runStartMarked;
+        let firstTurn = !runStartMarked;
         assistantId = Number(
           db
             .prepare('INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)')
@@ -2654,8 +2655,15 @@ export async function runAgentLoop({
           // Mark the run's first row so work-log folding never treats a
           // previous run's final answer as intermediate when a new run's
           // rows arrive without an intervening user message.
+          // Boot-recovery resumes are continuations, not new runs — skip
+          // the marker so their work logs fold into one.
           runStartMarked = true;
-          try { db.prepare('UPDATE messages SET run_start = 1 WHERE id = ?').run(assistantId); } catch { /* best-effort */ }
+          const isResume = trigger === 'boot-recovery' || trigger === 'boot-recovery-stranded';
+          if (!isResume) {
+            try { db.prepare('UPDATE messages SET run_start = 1 WHERE id = ?').run(assistantId); } catch { /* best-effort */ }
+          } else {
+            firstTurn = false;
+          }
         }
         publish(conversationId, {
           type: 'message',
