@@ -3857,8 +3857,22 @@ function onVaultEvent(d) {
   const safeId = CSS.escape(String(d.request_id));
   const wrapEl = document.querySelector(`[data-vault-request="${safeId}"]`);
   if (wrapEl) {
+    const box = $('#messages');
+    // Preserve scroll position across the height change (iframe -> short
+    // "Saved" line). If the user was at the bottom, stay at the bottom;
+    // otherwise keep the same element under the viewport.
+    const wasAtBottom = box && (box.scrollHeight - box.scrollTop - box.clientHeight < 40);
+    const rectBefore = wrapEl.getBoundingClientRect();
     const body = wrapEl.querySelector('.vault-body');
     if (body) body.innerHTML = '<div class="vault-done">Saved to your vault ✓</div>';
+    if (box) {
+      if (wasAtBottom) {
+        box.scrollTop = box.scrollHeight;
+      } else {
+        const rectAfter = wrapEl.getBoundingClientRect();
+        box.scrollTop += (rectAfter.top - rectBefore.top);
+      }
+    }
   }
   const msg = S.messages.find((x) => {
     if (x.kind !== 'vault_request') return false;
