@@ -1535,13 +1535,13 @@ function vaultFormPage(rq, title, message, done, embed = false) {
   .note { margin-top: 18px; font-size: 12.5px; color: #8a8175; line-height: 1.5; }
   @media (prefers-color-scheme: dark) { .note { color: #6f6656; } }
 </style></head><body><div class="card">
-  <div class="lock">🔒</div>
+  ${embed ? `` : `<div class="lock">🔒</div>
   <h1>${vaultEsc(heading)}</h1>
-  ${label ? `<div class="label-name">${vaultEsc(label)}</div>` : ''}
+  ${label ? `<div class="label-name">${vaultEsc(label)}</div>` : ''}`}
   ${done
     ? `<p class="ok">${vaultEsc(message)}</p>`
     : `
-  ${hint ? `<p class="hint">${vaultEsc(hint)}</p>` : ''}
+  ${(!embed && hint) ? `<p class="hint">${vaultEsc(hint)}</p>` : ''}
   <form id="f">
     ${fieldsHtml}
     <div class="row">
@@ -1550,8 +1550,8 @@ function vaultFormPage(rq, title, message, done, embed = false) {
     </div>
     <div class="err" id="e"></div>
   </form>
-  <p class="note">This goes straight into the encrypted vault in your VM. It is never shown to the AI model —
-  not in chat, not in any log. Only this server can use it, when the agent explicitly asks for it by name.</p>
+  ${embed ? `` : `<p class="note">This goes straight into the encrypted vault in your VM. It is never shown to the AI model —
+  not in chat, not in any log. Only this server can use it, when the agent explicitly asks for it by name.</p>`}
   <script>
     ${submitScript}
     // Report the content height to the embedding page (the chat widget) so
