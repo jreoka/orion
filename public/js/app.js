@@ -3138,7 +3138,7 @@ async function vaultModal() {
       let fieldNames = '';
       try {
         const f = i.fields ? JSON.parse(i.fields) : null;
-        if (Array.isArray(f) && f.length) fieldNames = f.map((x) => x.label || x.name).join(', ');
+        if (Array.isArray(f) && f.length) fieldNames = `${f.length} field${f.length === 1 ? '' : 's'} (${f.map((x) => x.name).join(', ')})`;
       } catch { /* ignore */ }
       return `
       <div class="shared-row">
