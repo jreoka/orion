@@ -1531,6 +1531,7 @@ function vaultFormPage(rq, title, message, done, embed = false) {
   .show { font-size: 13px; background: none; border: 1px solid #d8d0c0; border-radius: 8px; padding: 10px 12px;
     cursor: pointer; color: inherit; font-family: inherit; }
   .err { color: #b3261e; font-size: 14px; margin-top: 10px; min-height: 20px; }
+  ${embed ? `.err { margin-top: 6px; min-height: 0; } .err:empty { display: none; }` : ``}
   .ok { color: #2e7d32; font-size: 15px; line-height: 1.6; }
   .note { margin-top: 18px; font-size: 12.5px; color: #8a8175; line-height: 1.5; }
   @media (prefers-color-scheme: dark) { .note { color: #6f6656; } }
@@ -1561,7 +1562,7 @@ function vaultFormPage(rq, title, message, done, embed = false) {
     const reportH = () => {
       const card = document.querySelector('.card');
       if (!card || window.parent === window) return;
-      const h = Math.ceil(card.getBoundingClientRect().height) + 56; // body padding + slack
+      const h = Math.ceil(card.getBoundingClientRect().height) + 8; // body padding + tiny slack
       if (h !== lastH) {
         lastH = h;
         try { window.parent.postMessage({ type: 'orion-vault-form-height', height: h }, window.location.origin); } catch {}
