@@ -5452,14 +5452,27 @@ async function renderVaultTab() {
     box.innerHTML = '<p class="muted">No secrets stored. When the agent needs a credential, it will offer you a secure form right in the chat.</p>';
     return;
   }
-  box.innerHTML = items.map((i) => `
+  box.innerHTML = items.map((i) => {
+    // For multi-field entries, show a concise "N fields" summary, not the
+    // full verbose labels.
+    let fieldSummary = '';
+    if (i.fields) {
+      try {
+        const f = JSON.parse(i.fields);
+        if (Array.isArray(f) && f.length) {
+          fieldSummary = ` · ${f.length} field${f.length === 1 ? '' : 's'} (${f.map((x) => x.name).join(', ')})`;
+        }
+      } catch { /* ignore */ }
+    }
+    return `
     <div class="row-between vault-item">
       <div>
         <div><span aria-hidden="true">🔒</span> <strong>${esc(i.label)}</strong></div>
-        <div class="muted small">Added ${esc(new Date(i.created_at).toLocaleDateString())}</div>
+        <div class="muted small">Added ${esc(new Date(i.created_at).toLocaleDateString())}${esc(fieldSummary)}</div>
       </div>
       <button class="btn danger-ghost" data-vault-del="${esc(i.id)}" data-vault-label="${esc(i.label)}">Delete</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   box.querySelectorAll('[data-vault-del]').forEach((b) => {
     b.onclick = async () => {
       const ok = await confirmDialog({
