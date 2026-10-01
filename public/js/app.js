@@ -4298,7 +4298,7 @@ function renderAdminUsers() {
     return;
   }
   if (!filtered.length) {
-    body.innerHTML = `<tr><td colspan="6" class="muted">No users match “${esc(S.userSearch)}”.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="5" class="muted">No users match “${esc(S.userSearch)}”.</td></tr>`;
     renderUsersPager(0);
     return;
   }
@@ -4325,7 +4325,6 @@ function renderAdminUsers() {
         ${u.disabled ? '<span class="pill off">disabled</span>' : ''}
         ${u.abuse_locked ? `<span class="pill danger" title="${esc(u.abuse_reason || 'locked for abuse')}">locked</span>` : ''}
       </td>
-      <td class="muted">${Number(u.message_count) || 0}</td>
       ${usageCell(used, lim)}
       <td class="muted">${esc(fmtDate(u.created_at))}</td>
       <td><div class="u-actions"></div></td>`;
