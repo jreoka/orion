@@ -398,7 +398,9 @@
 
         <div class="card danger-zone">
           <h2>Reset</h2>
-          <p class="muted small">Deletes every chat transcript but keeps the agent's sandbox and memory (SOUL.md / MEMORY.md) intact. Scheduled tasks are kept.</p>
+          <p class="muted small">Wipes the agent's sandbox workspace — files, downloads, installed tools — but keeps chats, the agent's memory (SOUL.md / MEMORY.md), and the vault intact. Useful when the workspace gets cluttered.</p>
+          <button class="btn danger-ghost" id="clean-sandbox">Clean sandbox…</button>
+          <p class="muted small" style="margin-top:1em">Deletes every chat transcript but keeps the agent's sandbox and memory (SOUL.md / MEMORY.md) intact. Scheduled tasks are kept.</p>
           <button class="btn danger-ghost" id="delete-all-chats">Delete all chats…</button>
           <p class="muted small" style="margin-top:1em">Wipes everything — all chats, the agent's sandbox (files, memory, installed tools), and the vault (stored secrets). Starts completely fresh. This can't be undone.</p>
           <button class="btn danger-ghost" id="reset-everything">Reset everything…</button>

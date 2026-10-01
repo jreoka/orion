@@ -473,6 +473,60 @@ export async function sandboxReset(userId) {
   return ensureSandbox(userId);
 }
 
+// Clean the sandbox workspace but preserve the agent's identity and memory.
+// Keeps: SOUL.md, MEMORY.md, USER.md, IDENTITY.md, AGENTS.md, memory/.
+// Wipes everything else. Chats and vault live in the main DB and are
+// untouched. The container itself is kept running.
+export async function sandboxClean(userId) {
+  const docker = getDocker();
+  const { container: cname } = names(userId);
+  const container = docker.getContainer(cname);
+  // Move preserved files aside, wipe the workspace, move them back.
+  // Using a shell script with explicit file list (not globs) for safety.
+  const preserved = ['SOUL.md', 'MEMORY.md', 'USER.md', 'IDENTITY.md', 'AGENTS.md', 'memory'];
+  const script = `
+set -e
+cd "${WORKDIR}"
+mkdir -p .clean_backup
+for f in ${preserved.map((f) => `"${f}"`).join(' ')}; do
+  if [ -e "$f" ]; then mv "$f" .clean_backup/; fi
+done
+# Wipe everything except .clean_backup
+find . -mindepth 1 -maxdepth 1 ! -name '.clean_backup' -exec rm -rf {} +
+# Restore preserved files
+for f in ${preserved.map((f) => `"${f}"`).join(' ')}; do
+  if [ -e ".clean_backup/$f" ]; then mv ".clean_backup/$f" ./; fi
+done
+rmdir .clean_backup
+echo "cleaned"
+  `.trim();
+  const exec = await container.exec({
+    Cmd: ['sh', '-c', script],
+    WorkingDir: WORKDIR,
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+  });
+  const stream = await exec.start({ hijack: true, stdin: false });
+  const chunks = [];
+  const sink = new Writable({
+    write(chunk, _enc, cb) {
+      chunks.push(chunk);
+      cb();
+    },
+  });
+  await new Promise((resolve, reject) => {
+    stream.on('end', resolve);
+    stream.on('error', reject);
+    stream.pipe(sink);
+  });
+  const output = Buffer.concat(chunks).toString('utf8');
+  if (!output.includes('cleaned')) {
+    throw new Error('Sandbox clean failed: ' + output.slice(0, 200));
+  }
+  return { ok: true };
+}
+
 export async function sandboxStatus(userId) {
   const docker = getDocker();
   const { container: cname } = names(userId);

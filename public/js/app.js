@@ -4803,6 +4803,7 @@ function wireSettings() {
   $('#reset-everything').onclick = resetEverythingModal;
   $('#delete-account').onclick = deleteAccountModal;
   $('#delete-all-chats').onclick = deleteAllChatsModal;
+  $('#clean-sandbox').onclick = cleanSandboxModal;
 }
 
 /* ---------- full reset: chats + sandbox + vault, password + 2FA confirmed ---------- */
@@ -4900,6 +4901,50 @@ async function deleteAccountModal() {
       err.hidden = false;
       btn.disabled = false;
       btn.textContent = 'Delete my account';
+    }
+  });
+}
+
+/* ---------- clean sandbox: workspace wiped, chats + memory + vault kept ---------- */
+async function cleanSandboxModal() {
+  let need2fa = false;
+  try { need2fa = !!(await api('/api/auth/2fa/status')).enabled; } catch {}
+  const bd = openModal(`
+    <h3>Clean sandbox?</h3>
+    <p class="muted">This wipes the agent's <b>sandbox workspace</b> — all files, downloads, build artifacts, and installed tools. Kept: <b>all chats</b>, the agent's <b>memory</b> (SOUL.md / MEMORY.md), and your <b>vault</b>. This can't be undone.</p>
+    <form id="cleansandbox-form">
+      <label class="field"><span>Your password</span>
+        <input id="cleansandbox-password" type="password" autocomplete="current-password" required>
+      </label>
+      ${need2fa ? `<label class="field"><span>Two-factor code</span>
+        <input id="cleansandbox-totp" type="text" inputmode="numeric" autocomplete="one-time-code" required maxlength="8">
+      </label>` : ''}
+      <p id="cleansandbox-error" class="form-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-x="cancel">Cancel</button>
+        <button type="submit" class="btn danger-ghost" id="cleansandbox-submit">Clean sandbox</button>
+      </div>
+    </form>`);
+  bd.querySelector('[data-x=cancel]').onclick = closeModal;
+  bd.querySelector('#cleansandbox-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = bd.querySelector('#cleansandbox-error');
+    const btn = bd.querySelector('#cleansandbox-submit');
+    err.hidden = true;
+    btn.disabled = true;
+    btn.textContent = 'Cleaning…';
+    try {
+      await api('/api/sandbox/clean', { method: 'POST', body: {
+        password: bd.querySelector('#cleansandbox-password').value,
+        totp_code: need2fa ? bd.querySelector('#cleansandbox-totp').value : undefined
+      }});
+      closeModal();
+      toast('Sandbox cleaned');
+    } catch (ex) {
+      err.textContent = ex.message || 'Clean failed.';
+      err.hidden = false;
+      btn.disabled = false;
+      btn.textContent = 'Clean sandbox';
     }
   });
 }

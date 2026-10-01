@@ -69,7 +69,7 @@ import {
 import {
   initHeartbeat,
 } from './heartbeat.js';
-import { ensureImage, sandboxStatus, sandboxReset, removeSandbox } from './sandbox.js';
+import { ensureImage, sandboxStatus, sandboxReset, sandboxClean, removeSandbox } from './sandbox.js';
 import { checkUserMessage } from './abuse.js';
 import {
   getVapidPublicKey,
@@ -1089,6 +1089,28 @@ app.post('/api/reset', requireAuth, asyncRoute(async (req, res) => {
 // agent's files, installed tools, and persistent memory (SOUL.md / MEMORY.md)
 // survive. Same password (+2FA) gate as the full reset: this is destructive.
 // Task definitions are kept; only their chat transcripts go.
+// Clean the sandbox workspace: wipes files but preserves the agent's
+// identity and memory (SOUL.md, MEMORY.md, USER.md, IDENTITY.md, AGENTS.md,
+// memory/). Chats and vault are untouched (they live in the main DB).
+// Blocked while any run is active for this user.
+app.post('/api/sandbox/clean', requireAuth, asyncRoute(async (req, res) => {
+  const { password, totp_code } = req.body || {};
+  if (!verifyPassword(req.user.id, password || '')) {
+    return res.status(403).json({ error: 'Wrong password.' });
+  }
+  if (totpEnabled(req.user.id) && !verifySecondFactor(req.user.id, totp_code || '')) {
+    return res.status(403).json({ error: 'Wrong two-factor code.' });
+  }
+  // Block while any of this user's runs are active.
+  const userConvs = db.prepare('SELECT id FROM conversations WHERE user_id = ?').all(req.user.id).map((c) => c.id);
+  const active = activeRunIds().filter((id) => userConvs.includes(id));
+  if (active.length > 0) {
+    return res.status(409).json({ error: 'A run is active. Wait for it to finish before cleaning the sandbox.' });
+  }
+  await sandboxClean(req.user.id);
+  res.json({ ok: true });
+}));
+
 app.post('/api/chats/delete-all', requireAuth, asyncRoute(async (req, res) => {
   const { password, totp_code } = req.body || {};
   if (!verifyPassword(req.user.id, password || '')) {
