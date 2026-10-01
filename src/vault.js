@@ -93,8 +93,20 @@ export function cleanVaultFields(fields) {
     if (seen.has(name)) throw new Error(`vault_request: duplicate field name "${name}"`);
     seen.add(name);
     if (!label) throw new Error(`vault_request: fields[${i}].label is required`);
-    return { name, label };
+    const type = String(f?.type ?? 'password').trim().toLowerCase();
+    if (!['password', 'text', 'textarea'].includes(type)) {
+      throw new Error(`vault_request: fields[${i}].type must be "password", "text", or "textarea"`);
+    }
+    return { name, label, type };
   });
+}
+
+export function cleanFieldType(t) {
+  const type = String(t ?? 'password').trim().toLowerCase();
+  if (!['password', 'text', 'textarea'].includes(type)) {
+    throw new Error('vault_request: field_type must be "password", "text", or "textarea"');
+  }
+  return type;
 }
 
 /** Parse the stored fields JSON for a request/item row (null = single value). */
@@ -109,17 +121,18 @@ export function parseVaultFields(row) {
 }
 
 /** Create a pending secret request. Returns the request id (unguessable). */
-export function createVaultRequest(userId, conversationId, label, hint = '', fields = null, targetItemId = null) {
+export function createVaultRequest(userId, conversationId, label, hint = '', fields = null, targetItemId = null, fieldType = 'password') {
   const cleanLabel = String(label ?? '').trim().slice(0, 120);
   if (!cleanLabel) throw new Error('vault_request: label is required');
   const cleanHint = String(hint ?? '').trim().slice(0, 500);
   const cleanFields = cleanVaultFields(fields);
+  const cleanFieldType = cleanFieldType(fieldType);
   const id = crypto.randomUUID();
   const now = Date.now();
   db.prepare(
-    `INSERT INTO vault_requests (id, user_id, conversation_id, label, hint, fields, target_item_id, status, created_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
-  ).run(id, userId, conversationId, cleanLabel, cleanHint, cleanFields ? JSON.stringify(cleanFields) : null, targetItemId, now, now + REQUEST_TTL_MS);
+    `INSERT INTO vault_requests (id, user_id, conversation_id, label, hint, fields, target_item_id, field_type, status, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+  ).run(id, userId, conversationId, cleanLabel, cleanHint, cleanFields ? JSON.stringify(cleanFields) : null, targetItemId, cleanFieldType, now, now + REQUEST_TTL_MS);
   return id;
 }
 

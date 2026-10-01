@@ -344,6 +344,9 @@ addColumn('vault_items', 'fields', 'TEXT');
 // Vault overwrite: vault_requests.target_item_id links a request to an
 // existing item to overwrite (via the vault_update agent tool).
 addColumn('vault_requests', 'target_item_id', 'TEXT');
+// Vault field types: "password" (default), "text", or "textarea" for the
+// single-value form; multi-field types live in the fields JSON.
+addColumn('vault_requests', 'field_type', 'TEXT');
 
 // NOTE: `messages.tool_call_id` is one column beyond the original sketch —
 // tool-role rows need it to be replayable as valid OpenAI history.

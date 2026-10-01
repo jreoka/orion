@@ -70,7 +70,7 @@ Your tools:
 - schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in the main chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
   - Waiting on the user to do something OUTSIDE chat (OAuth device approval, clicking a confirmation link, etc.): never tell them to reply "done" or send a message to resume you. Schedule a one-shot task that polls for completion — its prompt must say: if complete, finish the work and tell the user; if not, reschedule itself (schedule_task again) until it succeeds or the window expires, then report the outcome either way. The task's output lands in the chat and notifies them on its own.
 
-- vault_request / vault_list / vault_delete / vault_rename / vault_update: the encrypted vault. NEVER ask the user to paste secrets (API keys, tokens, passwords) into chat — anything typed in chat is visible to the underlying AI model. When you need a credential, call vault_request with a label and a short hint; it shows the user a secure in-chat form whose contents go straight into the encrypted vault in the VM. To overwrite an existing entry (e.g. rotating a key), call vault_update with the item id — same secure form, updates in place. For multi-part credentials pass fields: [{name: "username", label: "Username"}, {name: "password", label: "Password"}] — the form shows one labeled box per field, all stored under ONE vault entry. You never see any value — only handles: "vault:<id>" for single-value entries, "vault:<id>:<field_name>" per field of a multi-field entry. Use them through exec's env param ({"SOME_KEY": "vault:<id>"}): the value is injected server-side and scrubbed from all command output, so it never enters your context. Never echo, print, or write a vault value anywhere (no echo $KEY, no writing it to files, no putting it in task prompts).
+- vault_request / vault_list / vault_delete / vault_rename / vault_update: the encrypted vault. NEVER ask the user to paste secrets (API keys, tokens, passwords) into chat — anything typed in chat is visible to the underlying AI model. When you need a credential, call vault_request with a label and a short hint; it shows the user a secure in-chat form whose contents go straight into the encrypted vault in the VM. To overwrite an existing entry (e.g. rotating a key), call vault_update with the item id — same secure form, updates in place. For multi-part credentials pass fields: [{name: "username", label: "Username", type: "text"}, {name: "password", label: "Password"}] — the form shows one labeled box per field, all stored under ONE vault entry. Field type is "password" (default, masked), "text" (unmasked single-line), or "textarea" (multi-line, e.g. SSH private keys); for single-value forms use the top-level field_type the same way. You never see any value — only handles: "vault:<id>" for single-value entries, "vault:<id>:<field_name>" per field of a multi-field entry. Use them through exec's env param ({"SOME_KEY": "vault:<id>"}): the value is injected server-side and scrubbed from all command output, so it never enters your context. Never echo, print, or write a vault value anywhere (no echo $KEY, no writing it to files, no putting it in task prompts).
 
 Guidelines:
 - Work quietly: never narrate your plan, progress, or tool steps in chat text. No "I'll look that up…", no "Let me try a different approach…", no "That didn't work, trying…". The user already sees live activity indicators while you work, and everything you write becomes a chat message they have to read. Just do the work silently with your tools.
@@ -444,15 +444,21 @@ export const TOOLS = [
           hint: { type: 'string', description: 'One-line hint for the user, e.g. "Create one at github.com/settings/tokens with repo scope" (max 500 chars)' },
           fields: {
             type: 'array',
-            description: 'Optional: one labeled input box per field, all saved under a single vault entry. Omit for the classic single-value form.',
+            description: 'Optional: one labeled input box per field, all saved under a single vault entry. Omit for the classic single-value form. Each field can set type: "password" (default, masked single-line), "text" (unmasked single-line, e.g. username), or "textarea" (multi-line, e.g. SSH private key).',
             items: {
               type: 'object',
               properties: {
                 name: { type: 'string', description: 'Machine name, lowercase letters/digits/underscore, e.g. "username"' },
                 label: { type: 'string', description: 'Human label shown above the box, e.g. "Username"' },
+                type: { type: 'string', description: '"password" (default), "text", or "textarea" for multi-line values like SSH keys', enum: ['password', 'text', 'textarea'] },
               },
               required: ['name', 'label'],
             },
+          },
+          field_type: {
+            type: 'string',
+            description: 'For single-value forms: "password" (default, masked), "text" (unmasked), or "textarea" (multi-line, e.g. SSH key)',
+            enum: ['password', 'text', 'textarea'],
           },
         },
         required: ['label'],
@@ -509,14 +515,20 @@ export const TOOLS = [
           hint: { type: 'string', description: 'Short hint shown on the form (e.g. "Enter the new API key")' },
           fields: {
             type: 'array',
-            description: 'For multi-field entries: [{name, label}] matching the original entry\'s fields',
+            description: 'For multi-field entries: [{name, label, type}] matching the original entry\'s fields. Type is "password" (default), "text", or "textarea".',
             items: {
               type: 'object',
               properties: {
                 name: { type: 'string' },
                 label: { type: 'string' },
+                type: { type: 'string', enum: ['password', 'text', 'textarea'] },
               },
             },
+          },
+          field_type: {
+            type: 'string',
+            description: 'For single-value entries: "password" (default), "text", or "textarea"',
+            enum: ['password', 'text', 'textarea'],
           },
         },
         required: ['id'],
@@ -1554,7 +1566,7 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       if (!label) throw new Error('vault_request: label is required');
       const hint = String(args.hint ?? '').trim();
       const cleanFields = cleanVaultFields(args.fields ?? null);
-      const requestId = createVaultRequest(userId, conversationId, label, hint, args.fields ?? null);
+      const requestId = createVaultRequest(userId, conversationId, label, hint, args.fields ?? null, null, args.field_type);
       // A widget message the client renders as a secure input form. The
       // content carries only metadata — the secret itself never appears.
       const content = JSON.stringify({
@@ -1622,7 +1634,7 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
         try { fields = JSON.parse(item.fields); } catch { fields = null; }
       }
       const cleanFields = cleanVaultFields(fields);
-      const requestId = createVaultRequest(userId, conversationId, item.label, hint, args.fields ?? null, vid);
+      const requestId = createVaultRequest(userId, conversationId, item.label, hint, args.fields ?? null, vid, args.field_type);
       const content = JSON.stringify({
         vault_request_id: requestId, label: item.label, hint, status: 'pending',
         fields: cleanFields ? cleanFields.map((f) => f.label) : null,

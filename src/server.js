@@ -1395,24 +1395,48 @@ function vaultFormPage(rq, title, message, done) {
   const hint = rq ? rq.hint : '';
   const reqId = rq ? rq.id : '';
   const fields = rq ? parseVaultFields(rq) : null;
+  const singleType = rq?.field_type || 'password';
+  // Render one input per field: password (masked), text (plain), or textarea
+  // (multi-line, e.g. SSH keys).
+  const fieldInput = (f, i) => {
+    const type = f.type || 'password';
+    const attrs = `id="v-${i}" data-name="${vaultEsc(f.name)}" data-label="${vaultEsc(f.label)}" autocomplete="off" autocapitalize="off" spellcheck="false"`;
+    if (type === 'textarea') {
+      return `<textarea ${attrs} rows="6" placeholder="Paste the full value, newlines included"></textarea>`;
+    }
+    const inputType = type === 'text' ? 'text' : 'password';
+    return `<input ${attrs} type="${inputType}" data-orig-type="${inputType}">`;
+  };
+  const singleInput = () => {
+    const attrs = `id="v" autocomplete="off" autocapitalize="off" spellcheck="false"`;
+    if (singleType === 'textarea') {
+      return `<textarea ${attrs} rows="6" placeholder="Paste the full value, newlines included" aria-label="Secret value"></textarea>`;
+    }
+    const inputType = singleType === 'text' ? 'text' : 'password';
+    return `<input ${attrs} type="${inputType}" data-orig-type="${inputType}" placeholder="Paste the secret here" aria-label="Secret value">`;
+  };
   // Form body: one labeled box per field, or the classic single box.
   const fieldsHtml = fields
     ? fields.map((f, i) => `
     <div class="field">
       <label for="v-${i}">${vaultEsc(f.label)}</label>
-      <input id="v-${i}" data-name="${vaultEsc(f.name)}" data-label="${vaultEsc(f.label)}" type="password"
-        autocomplete="off" autocapitalize="off" spellcheck="false">
+      ${fieldInput(f, i)}
     </div>`).join('')
-    : `<div class="field"><input id="v" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"
-      placeholder="Paste the secret here" aria-label="Secret value"></div>`;
+    : `<div class="field">${singleInput()}</div>`;
   const submitScript = fields
     ? `const f = document.getElementById('f'), e = document.getElementById('e'), go = document.getElementById('go'),
           sh = document.getElementById('sh'),
-          inputs = Array.from(document.querySelectorAll('#f input[data-name]'));
+          inputs = Array.from(document.querySelectorAll('#f [data-name]'));
+    let showing = false;
     sh.onclick = () => {
-      const show = inputs[0].type === 'password';
-      inputs.forEach((inp) => { inp.type = show ? 'text' : 'password'; });
-      sh.textContent = show ? 'Hide' : 'Show';
+      showing = !showing;
+      inputs.forEach((inp) => {
+        // Only toggle inputs that started as password; text/textareas stay.
+        if (inp.tagName === 'INPUT' && inp.dataset.origType === 'password') {
+          inp.type = showing ? 'text' : 'password';
+        }
+      });
+      sh.textContent = showing ? 'Hide' : 'Show';
     };
     f.onsubmit = async (ev) => {
       ev.preventDefault();
@@ -1438,11 +1462,17 @@ function vaultFormPage(rq, title, message, done) {
     };`
     : `const f = document.getElementById('f'), v = document.getElementById('v'),
           e = document.getElementById('e'), go = document.getElementById('go');
-    document.getElementById('sh').onclick = () => {
-      const show = v.type === 'password';
-      v.type = show ? 'text' : 'password';
-      document.getElementById('sh').textContent = show ? 'Hide' : 'Show';
-    };
+    // Show/hide only applies to password inputs; text/textareas are already visible.
+    if (v.tagName === 'INPUT' && v.dataset.origType === 'password') {
+      document.getElementById('sh').onclick = () => {
+        const show = v.type === 'password';
+        v.type = show ? 'text' : 'password';
+        document.getElementById('sh').textContent = show ? 'Hide' : 'Show';
+      };
+    } else {
+      const shEl = document.getElementById('sh');
+      if (shEl) shEl.style.display = 'none';
+    }
     f.onsubmit = async (ev) => {
       ev.preventDefault();
       e.textContent = '';
@@ -1482,6 +1512,10 @@ function vaultFormPage(rq, title, message, done) {
     font-family: ui-monospace, monospace; padding: 10px 12px; border: 1px solid #d8d0c0; border-radius: 8px;
     background: #fff; color: inherit; }
   @media (prefers-color-scheme: dark) { input[type=password], input[type=text] { background: #221d17; border-color: #3d362c; } }
+  textarea { width: 100%; box-sizing: border-box; font-size: 14px; line-height: 1.5;
+    font-family: ui-monospace, monospace; padding: 10px 12px; border: 1px solid #d8d0c0; border-radius: 8px;
+    background: #fff; color: inherit; resize: vertical; min-height: 120px; }
+  @media (prefers-color-scheme: dark) { textarea { background: #221d17; border-color: #3d362c; } }
   .row { display: flex; gap: 10px; align-items: center; }
   button.submit { flex: 1; font-size: 16px; padding: 11px; border: 0; border-radius: 8px; cursor: pointer;
     background: #1f4fd8; color: #fff; font-family: inherit; }
