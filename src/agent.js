@@ -66,6 +66,7 @@ Your tools:
 - todo_write: track multi-step tasks (3+ steps). Set it up at the start, mark steps in_progress/completed as you go. Keeps you on track and shows the user progress.
 - send_update: post a progress note mid-run. It appears as a slim status line in the chat (not a full message card), so use it for meaningful milestones during long multi-step work — a sentence or two, not a narration of every tool call.
 - send_push: buzz the user's phone with a short push notification that deep-links to this chat. Use only when the user is likely away and the news is worth an interruption — a long task finished, you need them to act (approve something, unblock you), or they asked to be notified. The chat message itself is usually enough; never for routine progress (use send_update for that). Limited to 3 per chat per 10 minutes. Skipped automatically when the user is watching this chat, and when they have no push subscription — the result tells you which.
+- post_message: post a standalone message to a chat as yourself, outside your normal turn reply. Use when something deserves its own message — posting a result to a different chat, or adding a follow-up after your main response. Defaults to the current chat; pass conversation_id to post elsewhere (must be the same user's chat). Does not trigger a new run. Use sparingly — only when the message adds real value.
 - react_to_message: add or remove an emoji reaction on a chat message. Be generous with reactions — they're a warm, human touch. When the user gives you something to do, tap 👍 on their message as you start. When you genuinely like or appreciate what they shared, ❤️ it, or pick an emoji that fits the moment (🎉 for good news, 😂 for something funny). Mark something done with ✅. React to the user's messages, never your own unless the user explicitly asks. Never react with an emoji that already appears in your reply text — that's redundant. message_id defaults to their latest message, so you usually only need to pass emoji — never guess a numeric id.
 - schedule_task / list_tasks / update_task / delete_task: schedule work for later. When the user asks you to do something in the future or on a repeating schedule ("remind me every morning", "check this nightly", "in 2 hours tell me…"), use schedule_task — do NOT try to wait, sleep, or poll yourself. A task is a name, a schedule (one-time at a date/time, or a repeating cron expression), and a self-contained prompt describing what to do when it fires; it runs automatically in the main chat and notifies the user when it produces output. Use list_tasks to see what's scheduled, update_task to pause/resume or edit one, delete_task to remove one.
   - Waiting on the user to do something OUTSIDE chat (OAuth device approval, clicking a confirmation link, etc.): never tell them to reply "done" or send a message to resume you. Schedule a one-shot task that polls for completion — its prompt must say: if complete, finish the work and tell the user; if not, reschedule itself (schedule_task again) until it succeeds or the window expires, then report the outcome either way. The task's output lands in the chat and notifies them on its own.
@@ -657,6 +658,24 @@ const SEND_PUSH_TOOL = {
   },
 };
 
+const POST_MESSAGE_TOOL = {
+  type: 'function',
+  function: {
+    name: 'post_message',
+    description:
+      'Post a standalone message to a chat as yourself. Use when something deserves its own message rather than being part of your turn reply — e.g. posting a result to a different chat, or adding a follow-up after your main response. Defaults to the current chat. The message appears immediately via live update and does NOT trigger a new run. Only post when the message adds real value; never post duplicates or chatter.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The message text (1–4000 characters, markdown supported)' },
+        conversation_id: { type: 'number', description: 'Chat ID to post to (defaults to the current chat). Must belong to the same user.' },
+        reply_to: { type: 'number', description: 'Optional message ID to reply to' },
+      },
+      required: ['text'],
+    },
+  },
+};
+
 // Human-readable activity line for the live run-status indicator, e.g.
 // "Searching files…" instead of "Running a command…". Describes what the
 // tool is doing without echoing raw commands or URLs — filenames and
@@ -689,6 +708,7 @@ function summarizeTool(name, args) {
     case 'delegate': return 'Working on a subtask…';
     case 'send_update': return null; // the update line speaks for itself
     case 'send_push': return 'Sending a notification…';
+    case 'post_message': return 'Posting a message…';
     case 'schedule_task': {
       const n = trunc(args.name, 40);
       return n ? `Scheduling ${n}…` : 'Scheduling…';
@@ -1560,6 +1580,29 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       if (!r.sent)
         return { text: 'Not sent: the user has no push subscription. Tell them to enable it in Settings → Notifications if they want buzzes.' };
       return { text: `Push notification sent to ${r.sent} device(s).` };
+    }
+    case 'post_message': {
+      const text = String(args.text ?? '').trim();
+      if (!text) throw new Error('post_message: text is required (1–4000 characters)');
+      if (text.length > 4000) throw new Error('post_message: text too long (max 4000 characters)');
+      const targetId = args.conversation_id != null ? Number(args.conversation_id) : conversationId;
+      if (!Number.isFinite(targetId)) throw new Error('post_message: invalid conversation_id');
+      // The target chat must belong to the same user.
+      const conv = db.prepare('SELECT id FROM conversations WHERE id = ? AND user_id = ?').get(targetId, userId);
+      if (!conv) throw new Error('post_message: conversation not found (or not yours)');
+      const replyTo = args.reply_to != null ? Number(args.reply_to) : null;
+      const now = Date.now();
+      const info = db
+        .prepare('INSERT INTO messages (conversation_id, role, content, reply_to, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(targetId, 'assistant', text, Number.isFinite(replyTo) ? replyTo : null, now);
+      const id = Number(info.lastInsertRowid);
+      publish(targetId, {
+        type: 'message',
+        message: { id, role: 'assistant', content: text, reply_to: Number.isFinite(replyTo) ? replyTo : null, created_at: now },
+      });
+      // Keep the conversation's updated_at fresh so it sorts to the top.
+      db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, targetId);
+      return { text: targetId === conversationId ? 'Message posted to this chat.' : `Message posted to chat #${targetId}.` };
     }
     case 'vault_request': {
       const label = String(args.label ?? '').trim();
@@ -2594,7 +2637,7 @@ export async function runAgentLoop({
     const { finalText, stopReason } = await runToolLoop({
       settings,
       convo,
-      tools: [...TOOLS, DELEGATE_TOOL, SEND_UPDATE_TOOL, SEND_PUSH_TOOL, ...MEMORY_TOOLS],
+      tools: [...TOOLS, DELEGATE_TOOL, SEND_UPDATE_TOOL, SEND_PUSH_TOOL, POST_MESSAGE_TOOL, ...MEMORY_TOOLS],
       isChild: false,
       deadlineAt,
       userId,
