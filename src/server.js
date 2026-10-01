@@ -1435,8 +1435,7 @@ function vaultFormPage(rq, title, message, done) {
           '<p class="ok">"' + ${JSON.stringify(label)}.replace(/</g, '\\u003c') + '" is in your vault. ' +
           'You can close this tab and tell the agent to continue.</p>';
       } catch (err) { e.textContent = err.message; go.disabled = false; }
-    };
-    inputs[0].focus();`
+    };`
     : `const f = document.getElementById('f'), v = document.getElementById('v'),
           e = document.getElementById('e'), go = document.getElementById('go');
     document.getElementById('sh').onclick = () => {
@@ -1461,8 +1460,7 @@ function vaultFormPage(rq, title, message, done) {
           '<p class="ok">"' + ${JSON.stringify(label)}.replace(/</g, '\\u003c') + '" is in your vault. ' +
           'You can close this tab and tell the agent to continue.</p>';
       } catch (err) { e.textContent = err.message; go.disabled = false; }
-    };
-    v.focus();`;
+    };`;
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${vaultEsc(heading)} — Orion vault</title>
