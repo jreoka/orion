@@ -1782,10 +1782,22 @@ function messageEl(m) {
         <div class="vault-body">${
           done
             ? `<div class="vault-done">Saved to your vault ✓</div>`
-            : `<iframe class="vault-frame" title="Secure secret input" src="/vault/form/${encodeURIComponent(reqId)}" sandbox="allow-forms allow-scripts allow-same-origin" loading="lazy"></iframe>
-               <div class="vault-note">Enter it above — it goes straight to the encrypted vault, never into chat. Then tell the agent you're done.</div>`
+            : `<button type="button" class="btn primary vault-open-btn" data-vault-open="${esc(reqId)}">Fill in securely</button>
+               <div class="vault-note">It goes straight to the encrypted vault, never into chat. Then tell the agent you're done.</div>`
         }</div>
       </div>`;
+    if (!done) {
+      const btn = wrap.querySelector('[data-vault-open]');
+      if (btn) {
+        btn.onclick = () => {
+          const body = wrap.querySelector('.vault-body');
+          if (body) {
+            body.innerHTML = `<iframe class="vault-frame" title="Secure secret input" src="/vault/form/${encodeURIComponent(reqId)}" sandbox="allow-forms allow-scripts allow-same-origin"></iframe>
+               <div class="vault-note">Enter it above — it goes straight to the encrypted vault, never into chat. Then tell the agent you're done.</div>`;
+          }
+        };
+      }
+    }
     return wrap;
   }
   if (m.role === 'user') {
