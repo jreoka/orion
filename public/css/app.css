@@ -1233,7 +1233,17 @@ button.avatar.lg:hover { opacity: .85; }
   background: var(--paper);
   display: block;
 }
+/* Seamless embed: the form blends into the card — no border, no inner scrollbar. */
+.vault-frame-seamless {
+  width: 100%;
+  height: 120px;
+  border: 0;
+  display: block;
+  background: transparent;
+  overflow: hidden;
+}
 .vault-note { color: var(--ink-3); font-size: 12.5px; margin-top: 8px; line-height: 1.5; }
+.vault-open-btn { margin-top: 2px; }
 .vault-done { color: var(--success); font-size: 14.5px; padding: 6px 0; }
 .vault-item { padding: 10px 0; border-bottom: 1px solid var(--hairline); }
 .vault-item:last-child { border-bottom: 0; }

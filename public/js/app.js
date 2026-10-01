@@ -1791,10 +1791,31 @@ function messageEl(m) {
       if (btn) {
         btn.onclick = () => {
           const body = wrap.querySelector('.vault-body');
-          if (body) {
-            body.innerHTML = `<iframe class="vault-frame" title="Secure secret input" src="/vault/form/${encodeURIComponent(reqId)}" sandbox="allow-forms allow-scripts allow-same-origin"></iframe>
-               <div class="vault-note">Enter it above — it goes straight to the encrypted vault, never into chat. Then tell the agent you're done.</div>`;
-          }
+          if (!body) return;
+          // Seamless embed: borderless iframe, auto-heights via postMessage
+          // from the form page — no inner scrollbar, no box-in-a-box.
+          const frame = document.createElement('iframe');
+          frame.className = 'vault-frame-seamless';
+          frame.title = 'Secure secret input';
+          frame.src = `/vault/form/${encodeURIComponent(reqId)}?embed=1`;
+          frame.setAttribute('sandbox', 'allow-forms allow-scripts allow-same-origin');
+          const onMsg = (e) => {
+            if (e.origin !== window.location.origin) return;
+            const d = e.data;
+            if (d && d.type === 'orion-vault-form-height' && typeof d.height === 'number') {
+              frame.style.height = Math.min(Math.max(d.height, 80), 600) + 'px';
+            }
+          };
+          window.addEventListener('message', onMsg);
+          new MutationObserver((_, obs) => {
+            if (!document.contains(frame)) { window.removeEventListener('message', onMsg); obs.disconnect(); }
+          }).observe(document.body, { childList: true, subtree: true });
+          body.innerHTML = '';
+          body.appendChild(frame);
+          const note = document.createElement('div');
+          note.className = 'vault-note';
+          note.textContent = "It goes straight to the encrypted vault, never into chat. Then tell the agent you're done.";
+          body.appendChild(note);
         };
       }
     }

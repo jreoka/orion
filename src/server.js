@@ -1374,21 +1374,22 @@ const vaultEsc = (s) =>
 app.get('/vault/form/:requestId', (req, res) => {
   const user = getUserBySession(req.cookies?.[COOKIE_NAME]);
   const rq = getVaultRequest(req.params.requestId);
+  const embed = req.query.embed === '1';
   if (!user || !rq || rq.user_id !== user.id) {
-    return res.status(404).type('html').send(vaultFormPage(null, 'Not found', 'This secure form link is invalid or belongs to a different account.'));
+    return res.status(404).type('html').send(vaultFormPage(null, 'Not found', 'This secure form link is invalid or belongs to a different account.', false, embed));
   }
   pruneExpiredRequests();
   const fresh = getVaultRequest(req.params.requestId);
   if (fresh.status === 'fulfilled') {
-    return res.type('html').send(vaultFormPage(fresh, 'Already saved ✓', 'This secret was already stored. You can close this tab.', true));
+    return res.type('html').send(vaultFormPage(fresh, 'Already saved ✓', 'This secret was already stored. You can close this tab.', true, embed));
   }
   if (fresh.status !== 'pending') {
-    return res.type('html').send(vaultFormPage(fresh, 'Expired', 'This request expired. Ask the agent for a new secure form.', true));
+    return res.type('html').send(vaultFormPage(fresh, 'Expired', 'This request expired. Ask the agent for a new secure form.', true, embed));
   }
-  res.type('html').send(vaultFormPage(fresh, null, null, false));
+  res.type('html').send(vaultFormPage(fresh, null, null, false, embed));
 });
 
-function vaultFormPage(rq, title, message, done) {
+function vaultFormPage(rq, title, message, done, embed = false) {
   const isUpdate = !!(rq && rq.target_item_id);
   const heading = title || (isUpdate ? 'Update secret' : 'Save a secret');
   const label = rq ? rq.label : '';
@@ -1496,10 +1497,17 @@ function vaultFormPage(rq, title, message, done) {
 <title>${vaultEsc(heading)} — Orion vault</title>
 <style>
   :root { color-scheme: light dark; }
+  ${embed ? `
+  body { font-family: Georgia, 'Times New Roman', serif; background: transparent; color: #2b2620;
+    margin: 0; padding: 4px 2px; }
+  @media (prefers-color-scheme: dark) { body { color: #e8e0d2; } }
+  .card { max-width: none; width: 100%; }
+  ` : `
   body { font-family: Georgia, 'Times New Roman', serif; background: #faf7f0; color: #2b2620;
     margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
   @media (prefers-color-scheme: dark) { body { background: #171310; color: #e8e0d2; } }
   .card { max-width: 420px; width: 100%; }
+  `}
   .lock { font-size: 28px; }
   h1 { font-size: 22px; margin: 12px 0 4px; font-weight: 600; }
   .label-name { color: #8a8175; font-size: 14px; margin-bottom: 16px; }
