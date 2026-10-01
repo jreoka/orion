@@ -84,12 +84,28 @@ function assistantBodyHtml(m, opts) {
 function splitRuns(nodes) {
   const runs = [];
   let cur = [];
+  // A run interrupted by server restart appends this marker to its partial
+  // message; the resumed run is a continuation, not a new run — don't split
+  // there, so its work log folds into one.
+  const INTERRUPTED_MARKER = '(interrupted by server restart';
+  const prevWasInterrupted = () => {
+    for (let i = cur.length - 1; i >= 0; i--) {
+      const el = cur[i];
+      if (el.classList && el.classList.contains('msg') && el.classList.contains('assistant')) {
+        const content = el.querySelector('.a-body .content');
+        return !!content && content.textContent.includes(INTERRUPTED_MARKER);
+      }
+    }
+    return false;
+  };
   for (const el of nodes) {
     const isUser =
       el.classList && el.classList.contains('msg') &&
       el.classList.contains('user') && !el.classList.contains('update');
     const isRunStart = el.dataset && el.dataset.runStart;
-    if ((isUser || isRunStart) && cur.length) {
+    // A resumed run after restart continues the previous segment.
+    const isResume = isRunStart && !isUser && prevWasInterrupted();
+    if ((isUser || (isRunStart && !isResume)) && cur.length) {
       runs.push(cur);
       cur = [];
     }
