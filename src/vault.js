@@ -126,13 +126,13 @@ export function createVaultRequest(userId, conversationId, label, hint = '', fie
   if (!cleanLabel) throw new Error('vault_request: label is required');
   const cleanHint = String(hint ?? '').trim().slice(0, 500);
   const cleanFields = cleanVaultFields(fields);
-  const cleanFieldType = cleanFieldType(fieldType);
+  const fType = cleanFieldType(fieldType);
   const id = crypto.randomUUID();
   const now = Date.now();
   db.prepare(
     `INSERT INTO vault_requests (id, user_id, conversation_id, label, hint, fields, target_item_id, field_type, status, created_at, expires_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
-  ).run(id, userId, conversationId, cleanLabel, cleanHint, cleanFields ? JSON.stringify(cleanFields) : null, targetItemId, cleanFieldType, now, now + REQUEST_TTL_MS);
+  ).run(id, userId, conversationId, cleanLabel, cleanHint, cleanFields ? JSON.stringify(cleanFields) : null, targetItemId, fType, now, now + REQUEST_TTL_MS);
   return id;
 }
 
