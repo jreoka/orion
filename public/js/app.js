@@ -1503,55 +1503,57 @@ function wireComposerGlobalKeys() {
 // Called after messages render to wire up interactive elements.
 
 async function wirePlanCards() {
-  // Load pending plans and render them
-  document.querySelectorAll('.plan-card[data-plan-id]').forEach(async (card) => {
-    const planId = card.dataset.planId;
-    if (card.dataset.wired) return;
-    card.dataset.wired = '1';
+  const cards = [...document.querySelectorAll('.plan-card[data-plan-id]')].filter((c) => !c.dataset.wired);
+  if (!cards.length && !document.querySelector('.q-opt[data-qid]:not([data-wired])')) return;
+  // Fetch pending inputs once for all cards
+  let plans = [];
+  if (cards.length) {
     try {
       const res = await fetch('/api/pending-inputs', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed');
-      const plans = await res.json();
-      const plan = plans.find((p) => String(p.id) === String(planId) && p.type === 'plan');
-      if (!plan) {
-        card.innerHTML = '<p class="muted small">Plan no longer pending.</p>';
-        return;
-      }
-      const steps = plan.data.steps.map((s, i) => `<li>${escapeHtml(s)}</li>`).join('');
-      const risks = plan.data.risks && plan.data.risks.length
-        ? `<div class="plan-risks"><strong>Risks:</strong><ul>${plan.data.risks.map((r) => `<li>${escapeHtml(r)}</li>`).join('')}</ul></div>`
-        : '';
-      card.innerHTML = `
-        <div class="plan-header"><strong>📋 ${escapeHtml(plan.data.title)}</strong></div>
-        <ol class="plan-steps">${steps}</ol>
-        ${risks}
-        <div class="plan-actions">
-          <button class="btn primary plan-approve" data-id="${plan.id}">Approve</button>
-          <button class="btn danger-ghost plan-reject" data-id="${plan.id}">Reject</button>
-        </div>`;
-      card.querySelector('.plan-approve').addEventListener('click', async (e) => {
-        const btn = e.target;
-        btn.disabled = true;
-        btn.textContent = 'Approving…';
-        try {
-          await fetch(`/api/plans/${plan.id}/approve`, { method: 'POST', credentials: 'include' });
-          card.innerHTML = '<p class="muted small">✅ Plan approved — the agent is continuing.</p>';
-        } catch {
-          btn.disabled = false;
-          btn.textContent = 'Approve';
-        }
-      });
-      card.querySelector('.plan-reject').addEventListener('click', async (e) => {
-        const btn = e.target;
-        btn.disabled = true;
-        try {
-          await fetch(`/api/plans/${plan.id}/reject`, { method: 'POST', credentials: 'include' });
-          card.innerHTML = '<p class="muted small">❌ Plan rejected.</p>';
-        } catch { btn.disabled = false; }
-      });
-    } catch {
-      card.innerHTML = '<p class="muted small">Could not load plan.</p>';
+      if (res.ok) plans = await res.json();
+    } catch {}
+  }
+  // Load pending plans and render them
+  cards.forEach((card) => {
+    const planId = card.dataset.planId;
+    card.dataset.wired = '1';
+    const plan = plans.find((p) => String(p.id) === String(planId) && p.type === 'plan');
+    if (!plan) {
+      card.innerHTML = '<p class="muted small">Plan no longer pending.</p>';
+      return;
     }
+    const steps = plan.data.steps.map((s) => `<li>${escapeHtml(s)}</li>`).join('');
+    const risks = plan.data.risks && plan.data.risks.length
+      ? `<div class="plan-risks"><strong>Risks:</strong><ul>${plan.data.risks.map((r) => `<li>${escapeHtml(r)}</li>`).join('')}</ul></div>`
+      : '';
+    card.innerHTML = `
+      <div class="plan-header"><strong>📋 ${escapeHtml(plan.data.title)}</strong></div>
+      <ol class="plan-steps">${steps}</ol>
+      ${risks}
+      <div class="plan-actions">
+        <button class="btn primary plan-approve" data-id="${plan.id}">Approve</button>
+        <button class="btn danger-ghost plan-reject" data-id="${plan.id}">Reject</button>
+      </div>`;
+    card.querySelector('.plan-approve').addEventListener('click', async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      btn.textContent = 'Approving…';
+      try {
+        await fetch(`/api/plans/${plan.id}/approve`, { method: 'POST', credentials: 'include' });
+        card.innerHTML = '<p class="muted small">✅ Plan approved — the agent is continuing.</p>';
+      } catch {
+        btn.disabled = false;
+        btn.textContent = 'Approve';
+      }
+    });
+    card.querySelector('.plan-reject').addEventListener('click', async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      try {
+        await fetch(`/api/plans/${plan.id}/reject`, { method: 'POST', credentials: 'include' });
+        card.innerHTML = '<p class="muted small">❌ Plan rejected.</p>';
+      } catch { btn.disabled = false; }
+    });
   });
 
   // Question option buttons: tapping sends the answer as a message
