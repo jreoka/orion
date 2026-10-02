@@ -2,7 +2,6 @@
 // The agent pauses and waits for the user to respond.
 
 import { db } from './db.js';
-import { publish } from './events.js';
 
 // Wait for a pending input to be resolved. Polls the DB.
 // Returns the result object, or throws on abort/timeout.

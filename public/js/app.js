@@ -1502,6 +1502,12 @@ function wireComposerGlobalKeys() {
 // Plan approval cards and mid-run question options.
 // Called after messages render to wire up interactive elements.
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
 async function wirePlanCards() {
   // Load pending plans and render them
   document.querySelectorAll('.plan-card[data-plan-id]').forEach(async (card) => {
@@ -1563,7 +1569,10 @@ async function wirePlanCards() {
       btn.disabled = true;
       try {
         // Send as a regular message — the server resolves the pending question
-        await sendMessage(answer);
+        await api(`/api/conversations/${S.activeId}/messages`, {
+          method: 'POST',
+          body: { content: answer },
+        });
       } catch { btn.disabled = false; }
     });
   });

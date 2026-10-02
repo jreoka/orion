@@ -1843,28 +1843,35 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       limit = Math.max(1, Math.min(10, limit));
       // Simple LIKE-based search across the user's conversations.
       // Returns conversation titles with matching message snippets.
-      const words = query.split(/\s+/).filter(Boolean).slice(0, 5);
-      const likeClauses = words.map(() => `m.content LIKE ?`).join(' AND ');
+      // Escape LIKE wildcards so user input is matched literally.
+      const esc = (s) => s.replace(/[\\%_]/g, (c) => '\\' + c);
+      const words = query.split(/\s+/).filter(Boolean).slice(0, 5).map(esc);
+      if (!words.length) throw new Error('search_chats: query is required');
+      const likeClauses = (alias) => words.map(() => `${alias}.content LIKE ? ESCAPE '\\'`).join(' AND ');
       const likeParams = words.map((w) => `%${w}%`);
+      // Find conversations with at least one matching message.
+      // Subquery counts matches per conversation using its own alias.
+      const subClauses = likeClauses('m2');
       const rows = db.prepare(`
-        SELECT c.id, c.title, m.content, m.role, m.created_at,
-               (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = c.id AND (${likeClauses})) AS match_count
+        SELECT c.id, c.title,
+               (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = c.id AND (${subClauses})) AS match_count,
+               MAX(m.created_at) AS last_match
         FROM conversations c
         JOIN messages m ON m.conversation_id = c.id
-        WHERE c.user_id = ? AND c.kind != 'heartbeat' AND m.content LIKE ?
+        WHERE c.user_id = ? AND c.kind != 'heartbeat' AND (${likeClauses('m')})
         GROUP BY c.id
         HAVING match_count > 0
-        ORDER BY MAX(m.created_at) DESC
+        ORDER BY last_match DESC
         LIMIT ?
-      `).all(userId, `%${words[0]}%`, ...likeParams, limit);
+      `).all(userId, ...likeParams, ...likeParams, limit);
       // Get a snippet from each matching conversation
       const results = rows.map((r) => {
         const snippet = db.prepare(`
-          SELECT content, role FROM messages
-          WHERE conversation_id = ? AND (${likeClauses})
+          SELECT content FROM messages
+          WHERE conversation_id = ? AND (${likeClauses('messages')})
           ORDER BY created_at DESC LIMIT 1
         `).get(r.id, ...likeParams);
-        const preview = snippet ? snippet.content.slice(0, 300) : '';
+        const preview = snippet ? String(snippet.content).slice(0, 300) : '';
         return `**${r.title || 'Untitled'}** (chat ${r.id}, ${r.match_count} match${r.match_count === 1 ? '' : 'es'})\n> ${preview}${preview.length >= 300 ? '…' : ''}`;
       });
       if (!results.length) return { text: 'No past conversations matched that search.' };
@@ -2100,6 +2107,7 @@ async function runDelegateParallel({ userId, conversationId, getAssistantId, arg
   const parentMessageId = getAssistantId();
   // Run all subagents concurrently.
   const results = await Promise.all(tasks.map(async (t, i) => {
+    if (!t || typeof t !== 'object') return `--- Subagent ${i + 1} ---\nError: task must be an object with a 'task' field`;
     const task = String(t.task || '').trim();
     if (!task) return `--- Subagent ${i + 1} ---\nError: task is required`;
     if (task.length > 2000) return `--- Subagent ${i + 1} ---\nError: task too long (max 2000 chars)`;

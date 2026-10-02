@@ -63,14 +63,19 @@ function userBubbleHtml(m, opts) {
 
 // Inner HTML of .msg.assistant (avatar + body)
 function assistantBodyHtml(m, opts) {
-  // Plan approval card: rendered from pending plan data
-  if (m.pending_plan_id) {
+  // Plan approval card: detect via pending_plan_id (live) or [plan:ID] prefix (history)
+  let planId = m.pending_plan_id;
+  if (!planId && m.content) {
+    const pm = /^\[plan:(\d+)\]/.exec(m.content);
+    if (pm) planId = pm[1];
+  }
+  if (planId) {
     return `
       <div class="a-avatar">
         <span class="logo-glyph" aria-hidden="true">${LOGO_SVG}</span>
       </div>
       <div class="a-body">
-        <div class="content"><div class="plan-card" data-plan-id="${m.pending_plan_id}">
+        <div class="content"><div class="plan-card" data-plan-id="${planId}">
           <div class="plan-loading">Loading plan…</div>
         </div></div>
         <div class="rx-row" data-rxrow>${rxRowInner(m, opts)}</div>
