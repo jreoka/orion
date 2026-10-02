@@ -43,9 +43,3 @@ export function resolvePendingInput({ pendingId, userId, status, result }) {
   ).run(status, result ? JSON.stringify(result) : null, Date.now(), pendingId, userId);
   return info.changes > 0;
 }
-
-export function getPendingInput(pendingId, userId) {
-  const row = db.prepare('SELECT * FROM pending_inputs WHERE id = ? AND user_id = ?').get(pendingId, userId);
-  if (!row) return null;
-  return { ...row, data: JSON.parse(row.data), result: row.result ? JSON.parse(row.result) : null };
-}

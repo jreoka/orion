@@ -9,7 +9,7 @@ import { db, getSetting, getOrCreateConversation } from './db.js';
 import { httpError } from './auth.js';
 import { runAgent } from './agent.js';
 import { tryAcquireRun, releaseRun, isStopRequested, clearStop } from './runlock.js';
-import { registerController, unregisterController, startRunIfIdle, chainPendingUserMessages, trackExecStart, trackExecEnd, clearExecTracking } from './runs.js';
+import { registerController, unregisterController, chainPendingUserMessages, trackExecStart, trackExecEnd, clearExecTracking } from './runs.js';
 import { notifyConversation } from './push.js';
 
 const jobs = new Map(); // taskId -> { type: 'cron', job } | { type: 'timeout', timer }

@@ -822,8 +822,3 @@ export function proxySockDirHostPath(userId) {
   if (!Number.isInteger(id) || id <= 0) throw new Error('Invalid user id');
   return path.resolve(path.join(PROXY_HOST_DIR, `u${id}`));
 }
-
-/** Host-side path for bind-mounting the user's proxy socket into sandboxes. */
-export function proxySockHostPath(userId) {
-  return path.resolve(path.join(proxySockDirHostPath(userId), `u${Number(userId)}.sock`));
-}

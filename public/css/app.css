@@ -59,7 +59,6 @@ h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.015em; }
 p { margin: 0; }
 .muted { color: var(--ink-2); }
 .small { font-size: 13px; }
-.mono { font-family: var(--mono) !important; font-size: .92em; }
 a { color: var(--accent); }
 
 /* ============================================================
@@ -810,34 +809,6 @@ button.avatar.lg:hover { opacity: .85; }
 }
 @keyframes blink { 50% { opacity: 0; } }
 
-/* tool rows — whisper-quiet collapsible rows */
-.tool-row {
-  margin: 0 0 10px;
-  font-family: var(--sans);
-  font-size: 13px;
-  border-radius: var(--radius-sm);
-}
-.tool-row.open { background: var(--paper-2); }
-.tool-head {
-  display: flex; align-items: center; gap: 9px; width: 100%;
-  background: transparent; border: none; color: var(--ink-2);
-  font: inherit; padding: 7px 4px; cursor: pointer; text-align: left;
-  min-height: 40px; border-radius: var(--radius-sm);
-}
-.tool-head:hover { color: var(--ink); }
-.tool-head .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
-.tool-head .dot.running { background: linear-gradient(var(--swirl-angle, 120deg), #4f6df5, #8b5cf6, #c026d3, #4f6df5); background-size: 220% 220%; animation: usage-swirl 38s linear infinite, swirl-drift 53s ease-in-out infinite; }
-.tool-head .dot.done { background: var(--success); animation: none; }
-.tool-head .tname { font-family: var(--mono); font-size: 12.5px; }
-.tool-head .tsummary { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-3); }
-.tool-head .tchev { font-size: 10px; color: var(--ink-3); transition: transform .15s; }
-.tool-row.open .tool-head .tchev { transform: rotate(180deg); }
-.tool-detail {
-  display: none; padding: 2px 8px 10px 23px;
-  color: var(--ink-3); font-size: 12.5px; font-family: var(--mono);
-  white-space: pre-wrap; overflow-wrap: anywhere;
-}
-.tool-row.open .tool-detail { display: block; }
 
 /* single live status line — one general phrase, updated in place while a run works.
    The text lines up with message text: same column width as .msg, and the
@@ -872,11 +843,6 @@ button.avatar.lg:hover { opacity: .85; }
   transition: transform .15s var(--ease);
 }
 .msg-img:hover { transform: scale(1.015); }
-.msg-error {
-  color: var(--danger); font-size: 14.5px; font-style: italic;
-  background: var(--danger-soft);
-  border-radius: var(--radius-sm); padding: 12px 16px;
-}
 
 /* ---------- Empty state ---------- */
 .empty-state {
@@ -908,13 +874,13 @@ button.avatar.lg:hover { opacity: .85; }
   max-height: 180px; outline: none; padding: 8px 0;
 }
 .composer textarea::placeholder { color: var(--ink-3); font-style: italic; }
-.send-btn, .stop-btn {
+.send-btn {
   width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
   border: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: transform .12s var(--ease), opacity .12s, background .12s;
 }
-.send-btn[hidden], .stop-btn[hidden] { display: none !important; }
+.send-btn[hidden] { display: none !important; }
 .send-btn { background: var(--ink); color: var(--paper); }
 .send-btn:hover:not(:disabled) { transform: scale(1.07); background: #33302a; }
 .send-btn:active:not(:disabled) { transform: scale(.96); }
@@ -926,8 +892,6 @@ button.avatar.lg:hover { opacity: .85; }
 .send-btn.is-stop:hover { background: rgba(168, 50, 38, .14); }
 .send-btn.is-stop .icon-send { display: none; }
 .send-btn.is-stop .icon-stop { display: block; }
-.stop-btn { background: var(--danger-soft); color: var(--danger); }
-.stop-btn:hover { background: rgba(168, 50, 38, .14); }
 .composer-hint { text-align: center; color: var(--ink-3); font-size: 11.5px; font-family: var(--sans); margin-top: 9px; }
 
 /* ---------- file attachments ---------- */
@@ -1118,12 +1082,6 @@ button.avatar.lg:hover { opacity: .85; }
 }
 .turn-tick:hover::after { background: var(--ink-2); opacity: 1; }
 .turn-tick.active::after { background: var(--accent); opacity: 1; width: 16px; }
-/* brief highlight on the turn jumped to via the rail */
-.msg.turn-flash { animation: turnflash 1.1s var(--ease); }
-@keyframes turnflash {
-  0%, 100% { box-shadow: none; }
-  25%, 60% { box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 4px var(--accent); border-radius: 8px; }
-}
 .jump-count {
   position: absolute; top: -5px; right: -5px;
   background: var(--accent); color: #fff;
@@ -1478,19 +1436,6 @@ button.avatar.lg:hover { opacity: .85; }
 .pill.user { background: transparent; }
 .pill.off, .pill.danger { background: var(--danger-soft); border-color: transparent; color: var(--danger); }
 .u-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.link-btn {
-  background: transparent;
-  border: 1px solid var(--hairline);
-  color: var(--ink-2);
-  font-family: var(--sans); font-size: 12.5px; font-weight: 600;
-  border-radius: 99px; padding: 8px 15px; cursor: pointer; white-space: nowrap;
-  min-height: 36px;
-  transition: color .12s, border-color .12s, background .12s;
-}
-.link-btn:hover { color: var(--ink); border-color: var(--ink-3); background: var(--paper-2); }
-.link-btn.danger { color: var(--danger); }
-.link-btn.danger:hover { background: var(--danger-soft); border-color: transparent; }
-.link-btn:disabled { opacity: .35; cursor: default; }
 .th-actions { text-align: right; }
 
 /* ============================================================
@@ -1586,7 +1531,6 @@ button.avatar.lg:hover { opacity: .85; }
 }
 .set-h:first-child { margin-top: 0; }
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip {
   font-family: var(--sans); font-size: 13.5px; font-weight: 500; color: var(--ink);
   background: transparent;
@@ -1644,26 +1588,10 @@ button.avatar.lg:hover { opacity: .85; }
 .row-title { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .row-sub { font-size: 13px; font-family: var(--sans); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-row.disabled .row-title { opacity: .45; }
-.radio-row { display: flex; gap: 8px 18px; flex-wrap: wrap; }
-.radio-row label, .check-row label, .cron-presets label { display: flex; align-items: center; gap: 9px; font-size: 15px; cursor: pointer; min-height: 44px; }
-.cron-presets { display: flex; flex-direction: column; gap: 4px; }
-.cron-custom { display: flex; align-items: center; gap: 8px; }
-.cron-custom input { flex: 1; }
-.check-row { display: flex; align-items: center; gap: 9px; font-size: 15px; min-height: 44px; cursor: pointer; }
 input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-color: var(--accent); flex-shrink: 0; cursor: pointer; }
 .backup-codes { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 #backup-codes-wrap .secret { font-size: 13px; }
 .modal-form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
-
-/* conversation rename */
-.conv-rename {
-  flex: 1; min-width: 0;
-  background: transparent;
-  border: none; border-bottom: 1px solid var(--ink);
-  border-radius: 0;
-  color: var(--ink); font-size: 14.5px; padding: 8px 2px; font-family: var(--serif);
-  outline: none; min-height: 38px;
-}
 
 /* ============================================================
    Responsive — mobile-first refinements
@@ -1704,7 +1632,6 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
   .task-row .btn { flex: 1 1 40%; }
   .menu button { padding: 13px 12px; }
 
-  .u-actions .link-btn { min-height: 44px; padding: 10px 16px; }
   .modal { padding: 26px 22px; }
   .modal-actions .btn { flex: 1; }
 }

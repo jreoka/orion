@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import dns from 'node:dns';
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, replySummary, attachmentSummary, groupedReactions, getSetting } from './db.js';
+import { db, DATA_DIR, normalizeEmoji, setReaction, reactionSummary, replySummary, attachmentSummary, groupedReactions } from './db.js';
 import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
 import { imagePartsForMessage, imagePartFromFile, messageHasImages, stripImageParts } from './vision.js';
 import { notifyConversation } from './push.js';

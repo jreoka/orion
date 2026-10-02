@@ -47,7 +47,6 @@ import {
 } from './passkey.js';
 import { publish, subscribe, unsubscribe, subscribeUser, unsubscribeUser, publishToUser } from './events.js';
 import {
-  createVaultRequest as vaultCreateRequest,
   getVaultRequest,
   fulfillVaultRequest,
   parseVaultFields,
@@ -56,7 +55,7 @@ import {
   renameVaultItem,
   pruneExpiredRequests,
 } from './vault.js';
-import { runConversation, startRunIfIdle, abortRun, recoverStrandedRuns, setShuttingDown } from './runs.js';
+import { startRunIfIdle, abortRun, recoverStrandedRuns, setShuttingDown } from './runs.js';
 import { isRunLocked, requestStop, activeRunIds } from './runlock.js';
 import {
   validateTaskInput,
@@ -78,7 +77,7 @@ import {
   listSubscriptions,
   notifyUser,
 } from './push.js'
-import { ensureDockerProxy } from './docker-proxy.js';;
+import { ensureDockerProxy } from './docker-proxy.js';
 import {
   getWeeklyUsage,
   setWeeklyLimit,
@@ -1285,12 +1284,6 @@ const upload = multer({
   }),
   limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB per file
 });
-
-function formatBytes(n) {
-  if (n < 1024) return n + ' B';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-  return (n / (1024 * 1024)).toFixed(1) + ' MB';
-}
 
 app.post('/api/upload', requireAuth, (req, res) => {
   upload.single('file')(req, res, (err) => {

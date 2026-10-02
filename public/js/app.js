@@ -1555,9 +1555,7 @@ async function wirePlanCards() {
   });
 }
 
-// Call after messages render
-const origRenderMessages = typeof renderMessages === 'function' ? renderMessages : null;
-
+// Wire plan cards after messages render
 function renderMessages() {
   const box = $('#messages');
   // The live run-status line lives inside #messages; a re-render must not
@@ -5250,36 +5248,6 @@ function showBackupCodes(codes) {
     catch { toast('Copy failed — long-press the codes'); }
   };
   $('#backup-codes-close').onclick = () => { wrap.hidden = true; };
-}
-
-function passwordConfirmModal(title, message) {
-  return new Promise((resolve) => {
-    const root = $('#modal-root') || document.body;
-    const wrap = document.createElement('div');
-    wrap.className = 'modal-backdrop';
-    wrap.innerHTML = `
-      <div class="modal" role="dialog" aria-modal="true" aria-label="${esc(title)}">
-        <h3>${esc(title)}</h3>
-        <p class="muted">${esc(message)}</p>
-        <form class="modal-form">
-          <input type="password" class="input" autocomplete="current-password" placeholder="Password" required>
-          <div class="modal-actions">
-            <button type="button" class="btn cancel">Cancel</button>
-            <button type="submit" class="btn danger">Confirm</button>
-          </div>
-        </form>
-      </div>`;
-    root.appendChild(wrap);
-    const close = (v) => { wrap.remove(); resolve(v); };
-    const form = wrap.querySelector('form');
-    wrap.querySelector('.cancel').onclick = () => close(null);
-    wrap.addEventListener('click', (e) => { if (e.target === wrap) close(null); });
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      close(form.querySelector('input').value);
-    };
-    setTimeout(() => form.querySelector('input').focus(), 30);
-  });
 }
 
 async function disable2faModal() {
