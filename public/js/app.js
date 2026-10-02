@@ -2374,11 +2374,12 @@ function saveDoneFlags() {
 // shows no check — the client never observed the running→finished transition.
 const RUN_KEY = 'orion-running-chats';
 function loadRunFlags() {
-  try {
-    const o = JSON.parse(localStorage.getItem(RUN_KEY) || '{}') || {};
-    S.runByConv = {};
-    for (const k of Object.keys(o)) if (o[k]) S.runByConv[k] = true;
-  } catch { S.runByConv = {}; }
+  // Don't restore from localStorage on boot — a stale flag from a page
+  // closed mid-run would flash a working light and trigger a false green
+  // check. The server's `running` and `unseenFinish` flags are the source
+  // of truth; live runs re-announce via the chat list poll.
+  S.runByConv = {};
+  try { localStorage.removeItem(RUN_KEY); } catch {}
 }
 function saveRunFlags() {
   try { localStorage.setItem(RUN_KEY, JSON.stringify(S.runByConv)); } catch {}
@@ -2542,16 +2543,22 @@ async function loadConversationsQuiet(retried = false) {
         if (!S.runByConv[c.id]) { S.runByConv[c.id] = true; runDirty = true; }
         // A new run supersedes the finished check.
         if (S.doneByConv[c.id]) { delete S.doneByConv[c.id]; dirty = true; }
-      } else if (c.id !== S.activeId) {
-        // Server-side unseen-finish flag (works across devices/reloads).
-        // Local runByConv transition is the fallback for older servers.
-        if (c.unseenFinish || S.runByConv[c.id]) {
-          // The run finished while we were looking at another chat —
-          // show the green check where the working light was.
-          if (!S.doneByConv[c.id]) {
-            S.doneByConv[c.id] = true;
-            dirty = true;
-            refreshUsage(); // tokens moved
+      } else {
+        // Server says the run is not active — clear the local flag (it may
+        // be stale from localStorage after a page close during a run).
+        // Only show the green check if the user wasn't looking at this chat
+        // when the run finished; the active chat's finish was seen live.
+        if (c.id !== S.activeId) {
+          // Server-side unseen-finish flag (works across devices/reloads).
+          // Local runByConv transition is the fallback for older servers.
+          if (c.unseenFinish || S.runByConv[c.id]) {
+            // The run finished while we were looking at another chat —
+            // show the green check where the working light was.
+            if (!S.doneByConv[c.id]) {
+              S.doneByConv[c.id] = true;
+              dirty = true;
+              refreshUsage(); // tokens moved
+            }
           }
         }
         if (S.runByConv[c.id]) { delete S.runByConv[c.id]; runDirty = true; }
