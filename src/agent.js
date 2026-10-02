@@ -2145,10 +2145,17 @@ async function runProposePlan({ userId, conversationId, getAssistantId, args, de
   // Publish the plan as a message with Approve/Reject buttons.
   // The frontend renders pending_inputs of type 'plan' as an interactive card.
   const now = Date.now();
-  const info = db.prepare(
-    'INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)'
-  ).run(conversationId, 'assistant', `[plan:${pendingId}] ${title}`, now);
-  const msgId = Number(info.lastInsertRowid);
+  let msgId;
+  try {
+    const info = db.prepare(
+      'INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)'
+    ).run(conversationId, 'assistant', `[plan:${pendingId}] ${title}`, now);
+    msgId = Number(info.lastInsertRowid);
+  } catch (e) {
+    // Message insert failed — clean up the orphaned pending input
+    try { db.prepare("UPDATE pending_inputs SET status = 'expired' WHERE id = ?").run(pendingId); } catch {}
+    throw new Error(`propose_plan: failed to publish plan message: ${e.message}`);
+  }
   publish(conversationId, {
     type: 'message',
     message: {
@@ -2185,10 +2192,16 @@ async function runAskUser({ userId, conversationId, getAssistantId, args, delega
 
   // Publish the question. The user's next message in this chat resolves it.
   const now = Date.now();
-  const info = db.prepare(
-    'INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)'
-  ).run(conversationId, 'assistant', question, now);
-  const msgId = Number(info.lastInsertRowid);
+  let msgId;
+  try {
+    const info = db.prepare(
+      'INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)'
+    ).run(conversationId, 'assistant', question, now);
+    msgId = Number(info.lastInsertRowid);
+  } catch (e) {
+    try { db.prepare("UPDATE pending_inputs SET status = 'expired' WHERE id = ?").run(pendingId); } catch {}
+    throw new Error(`ask_user: failed to publish question: ${e.message}`);
+  }
   publish(conversationId, {
     type: 'message',
     message: {

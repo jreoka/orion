@@ -1502,12 +1502,6 @@ function wireComposerGlobalKeys() {
 // Plan approval cards and mid-run question options.
 // Called after messages render to wire up interactive elements.
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-}
-
 async function wirePlanCards() {
   // Load pending plans and render them
   document.querySelectorAll('.plan-card[data-plan-id]').forEach(async (card) => {
@@ -5706,7 +5700,7 @@ async function renderTasksTab() {
     return;
   }
   const rows = tasks.map((t) => {
-    const sched = t.kind === 'cron' ? `<code>${t.cron_expr}</code>` : new Date(t.run_at).toLocaleString();
+    const sched = t.kind === 'cron' ? `<code>${escapeHtml(t.cron_expr)}</code>` : escapeHtml(new Date(t.run_at).toLocaleString());
     const status = t.enabled ? '<span class="pill pill-green">active</span>' : '<span class="pill">paused</span>';
     return `<div class="task-row" data-id="${t.id}">
       <div class="task-main">

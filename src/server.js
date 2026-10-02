@@ -2290,6 +2290,15 @@ try {
 } catch (e) {
   console.warn('[orion] stranded-run recovery failed:', e.message);
 }
+// A crash/restart during a plan approval or mid-run question orphans the
+// pending input — the waiting agent is gone. Mark them expired so the UI
+// doesn't show actionable buttons for a dead wait.
+try {
+  const stale = db.prepare("UPDATE pending_inputs SET status = 'expired', resolved_at = ? WHERE status = 'pending'").run(Date.now());
+  if (stale.changes > 0) console.log(`[orion] expired ${stale.changes} stale pending input(s) from before restart`);
+} catch (e) {
+  console.warn('[orion] pending-input cleanup failed:', e.message);
+}
 
 const PORT = process.env.PORT || 3000;
 let listener = null;

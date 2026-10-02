@@ -4,6 +4,14 @@
    string, or DOM operations on passed-in nodes. Depends on markdown.js
    (esc, md) — load markdown.js before this file. */
 
+/* ---------- utilities ---------- */
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
 /* ---------- attachments ---------- */
 
 function isImageFile(name) {
@@ -143,6 +151,10 @@ function isIntermediateCandidate(el) {
     el.classList.contains('vault-request') || el.classList.contains('msg-empty')
   )
     return false;
+  // Plan approval cards and mid-run questions must stay visible — the agent
+  // is waiting for the user, so folding them into a collapsed work log
+  // would hide the thing they're waiting on.
+  if (el.querySelector('.plan-card, .q-opts')) return false;
   const content = el.querySelector('.a-body .content');
   return !!content && content.textContent.trim().length > 0;
 }
