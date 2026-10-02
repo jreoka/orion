@@ -336,6 +336,20 @@ CREATE TABLE IF NOT EXISTS shared_chats (
   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_shared_chats_user ON shared_chats(user_id);
+// Agent plan approvals and mid-run questions: the agent pauses and waits
+// for the user to approve a plan or answer a question.
+CREATE TABLE IF NOT EXISTS pending_inputs (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  conversation_id INTEGER NOT NULL,
+  type TEXT NOT NULL, -- 'plan' or 'question'
+  data TEXT NOT NULL, -- JSON: {title, steps[], risks[]} or {question, options[]}
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected | answered
+  result TEXT, -- JSON: user response (for questions: {answer}, for plans: {feedback})
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
+  resolved_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_pending_inputs_user ON pending_inputs(user_id, status);
 `);
 addColumn('shared_chats', 'snapshot', 'TEXT');
 // Vault multi-field forms: JSON [{name,label}] per request/item; NULL = legacy single value.

@@ -1766,3 +1766,36 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
   background: var(--paper-3); color: var(--ink); border-color: var(--ink-2);
 }
 
+
+/* Plan approval cards */
+.plan-card {
+  border: 1px solid var(--ink-3);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0;
+  background: var(--paper-2);
+}
+.plan-header { margin-bottom: 8px; font-size: 1.05em; }
+.plan-steps { margin: 8px 0 8px 20px; }
+.plan-steps li { margin: 4px 0; }
+.plan-risks { margin: 8px 0; padding: 8px; background: rgba(200, 50, 50, 0.08); border-radius: 4px; }
+.plan-risks ul { margin: 4px 0 4px 20px; }
+.plan-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+/* Mid-run question options */
+.q-opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.q-opt { cursor: pointer; }
+
+/* Scheduled tasks list */
+.task-list { display: flex; flex-direction: column; gap: 12px; }
+.task-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px; border: 1px solid var(--ink-3); border-radius: 8px;
+  background: var(--paper-2);
+}
+.task-main { flex: 1; }
+.task-name { font-weight: 600; margin-bottom: 4px; }
+.task-sched { font-size: 0.9em; }
+.task-actions { display: flex; gap: 8px; }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.8em; background: var(--ink-3); }
+.pill-green { background: rgba(50, 180, 80, 0.2); color: #2a8a4a; }

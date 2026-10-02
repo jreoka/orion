@@ -16,6 +16,7 @@ import { streamChatCompletion, LLM_NOT_CONFIGURED } from './llm.js';
 import { imagePartsForMessage, imagePartFromFile, messageHasImages, stripImageParts } from './vision.js';
 import { notifyConversation } from './push.js';
 import { publish, publishToUser } from './events.js';
+import { createPendingInput, waitForPendingInput } from './pending_inputs.js';
 import { recordUsage, isOverLimit, LIMIT_REACHED_MESSAGE } from './usage.js';
 import {
   sandboxExec,
@@ -63,6 +64,10 @@ Your tools:
 - send_image: attach an image file from your workspace to your reply so the user sees it inline in chat. When the user asks for an image ("send me a picture of ..."), download or generate it with exec, then send_image it — don't just describe it or drop links. You receive it as vision too: actually look at it and verify it shows what you claim before sending.
 - send_file: attach any other file from your workspace (a script, a text file, a PDF, a zip, ...) to your reply so the user can download it. Write or fetch the file with exec first, then send_file it — don't paste long files as chat text when the user asked for a file. And be proactive: when the user attached a file for you to work on and you modified it, send the updated file back when you finish. The deliverable of "fix this script" is the script — never make them ask for it back.
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
+- delegate_parallel: spawn 2–5 subagents that run IN PARALLEL for independent work. Use when you can split a big job into pieces that don't depend on each other — each gets its own task and context, all results return together. Max 5 per call.
+- propose_plan: for risky, destructive, or large operations (deleting data, major refactors, deploys, bulk changes), propose the plan FIRST and wait for approval. The user sees a card with Approve/Reject; your run pauses until they respond. Don't use for routine safe work.
+- ask_user: when you genuinely need the user to decide something or provide info only they have, ask and WAIT. Your run pauses until they reply. Don't use for things you can figure out yourself.
+- search_chats: search all past conversations for a topic, error, or decision. Use when the user asks "what did we do last time X happened?" or you need context from an old chat.
 - todo_write: track multi-step tasks (3+ steps). Set it up at the start, mark steps in_progress/completed as you go. Keeps you on track and shows the user progress.
 - send_update: post a progress note mid-run. It appears as a slim status line in the chat (not a full message card), so use it for meaningful milestones during long multi-step work — a sentence or two, not a narration of every tool call.
 - send_push: buzz the user's phone with a short push notification that deep-links to this chat. Use only when the user is likely away and the news is worth an interruption — a long task finished, you need them to act (approve something, unblock you), or they asked to be notified. The chat message itself is usually enough; never for routine progress (use send_update for that). Limited to 3 per chat per 10 minutes. Skipped automatically when the user is watching this chat, and when they have no push subscription — the result tells you which.
@@ -599,6 +604,71 @@ const MEMORY_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'search_chats',
+      description:
+        'Search across all of the user\'s past conversations for a topic, error message, or decision. Returns matching chats with titles and relevant message snippets. Use when the user asks "what did we do last time X broke?" or you need context from a previous conversation. Only searches the current user\'s chats.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search terms (1–200 chars). Matches against message content.' },
+          limit: { type: 'number', description: 'Max conversations to return (default 5, max 10)' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_plan',
+      description:
+        'Propose a plan and WAIT for the user to approve before proceeding. Use for risky, destructive, or large operations (deleting data, major refactors, deploys, bulk changes). The plan appears as a card with Approve/Reject buttons; your run PAUSES until the user responds. If approved, you continue; if rejected, you stop. Do not use for routine safe operations.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Short plan title (1–100 chars)' },
+          steps: {
+            type: 'array',
+            description: 'Ordered steps you will take (1–10 items)',
+            minItems: 1,
+            maxItems: 10,
+            items: { type: 'string' },
+          },
+          risks: {
+            type: 'array',
+            description: 'Risks or irreversible actions (optional)',
+            items: { type: 'string' },
+          },
+        },
+        required: ['title', 'steps'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ask_user',
+      description:
+        'Ask the user a question and WAIT for their answer before continuing. Use when you need information only the user has, or when a decision significantly changes what you should do. Your run PAUSES until they reply — do not use for things you can figure out yourself or look up. Keep questions concise and specific.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'The question to ask (1–500 chars)' },
+          options: {
+            type: 'array',
+            description: 'Suggested answers the user can tap (2–4 options, optional)',
+            minItems: 2,
+            maxItems: 4,
+            items: { type: 'string' },
+          },
+        },
+        required: ['question'],
+      },
+    },
+  },
 ];
 
 const DELEGATE_TOOL = {
@@ -615,6 +685,36 @@ const DELEGATE_TOOL = {
         max_steps: { type: 'number', description: 'Max agent steps for the subagent (default 20, max 40)' },
       },
       required: ['task'],
+    },
+  },
+};
+
+const DELEGATE_PARALLEL_TOOL = {
+  type: 'function',
+  function: {
+    name: 'delegate_parallel',
+    description:
+      'Spawn multiple subagents that run IN PARALLEL for independent pieces of work. Each gets the same VM, browser, and tools (but cannot delegate further). All results return together as text — use when you can split a big job into pieces that don\'t depend on each other (e.g. "research these 3 topics", "fix these 5 files"). Max 5 subagents per call. Include relevant persistent memory in each context — subagents cannot see MEMORY.md / SOUL.md themselves.',
+    parameters: {
+      type: 'object',
+      properties: {
+        tasks: {
+          type: 'array',
+          description: '1–5 independent tasks to run in parallel',
+          minItems: 1,
+          maxItems: 5,
+          items: {
+            type: 'object',
+            properties: {
+              task: { type: 'string', description: 'The task for this subagent (1–2000 chars, required)' },
+              context: { type: 'string', description: 'Background info for this subagent (max 4000 chars)' },
+              max_steps: { type: 'number', description: 'Max agent steps (default 20, max 40)' },
+            },
+            required: ['task'],
+          },
+        },
+      },
+      required: ['tasks'],
     },
   },
 };
@@ -706,6 +806,9 @@ function summarizeTool(name, args) {
     case 'browser_act': return 'Driving the browser…';
     case 'send_image': return 'Sending an image…';
     case 'delegate': return 'Working on a subtask…';
+    case 'delegate_parallel': return 'Running parallel subtasks…';
+    case 'propose_plan': return 'Proposing a plan…';
+    case 'ask_user': return 'Asking you a question…';
     case 'send_update': return null; // the update line speaks for itself
     case 'send_push': return 'Sending a notification…';
     case 'post_message': return 'Posting a message…';
@@ -729,6 +832,7 @@ function summarizeTool(name, args) {
       return current ? current.activeForm || current.content : 'Updating task list…';
     }
     case 'soul_note': return 'Updating notes…';
+    case 'search_chats': return 'Searching past chats…';
     default: return 'Working…';
   }
 }
@@ -1732,6 +1836,40 @@ async function executeTool(userId, conversationId, assistantMessageId, name, arg
       await appendIdentityFile(userId, 'SOUL.md', `- ${date}: ${text}`);
       return { text: 'Noted — appended to your soul.' };
     }
+    case 'search_chats': {
+      const query = String(args.query ?? '').trim().slice(0, 200);
+      if (!query) throw new Error('search_chats: query is required');
+      let limit = Math.floor(Number(args.limit) || 5);
+      limit = Math.max(1, Math.min(10, limit));
+      // Simple LIKE-based search across the user's conversations.
+      // Returns conversation titles with matching message snippets.
+      const words = query.split(/\s+/).filter(Boolean).slice(0, 5);
+      const likeClauses = words.map(() => `m.content LIKE ?`).join(' AND ');
+      const likeParams = words.map((w) => `%${w}%`);
+      const rows = db.prepare(`
+        SELECT c.id, c.title, m.content, m.role, m.created_at,
+               (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = c.id AND (${likeClauses})) AS match_count
+        FROM conversations c
+        JOIN messages m ON m.conversation_id = c.id
+        WHERE c.user_id = ? AND c.kind != 'heartbeat' AND m.content LIKE ?
+        GROUP BY c.id
+        HAVING match_count > 0
+        ORDER BY MAX(m.created_at) DESC
+        LIMIT ?
+      `).all(userId, `%${words[0]}%`, ...likeParams, limit);
+      // Get a snippet from each matching conversation
+      const results = rows.map((r) => {
+        const snippet = db.prepare(`
+          SELECT content, role FROM messages
+          WHERE conversation_id = ? AND (${likeClauses})
+          ORDER BY created_at DESC LIMIT 1
+        `).get(r.id, ...likeParams);
+        const preview = snippet ? snippet.content.slice(0, 300) : '';
+        return `**${r.title || 'Untitled'}** (chat ${r.id}, ${r.match_count} match${r.match_count === 1 ? '' : 'es'})\n> ${preview}${preview.length >= 300 ? '…' : ''}`;
+      });
+      if (!results.length) return { text: 'No past conversations matched that search.' };
+      return { text: `Found ${results.length} conversation${results.length === 1 ? '' : 's'}:\n\n${results.join('\n\n')}` };
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -1954,10 +2092,130 @@ async function runDelegate({ userId, conversationId, getAssistantId, args, deleg
   }
 }
 
+async function runDelegateParallel({ userId, conversationId, getAssistantId, args, delegateCtx }) {
+  const tasks = args.tasks;
+  if (!Array.isArray(tasks) || tasks.length === 0) throw new Error('delegate_parallel: tasks array is required');
+  if (tasks.length > 5) throw new Error('delegate_parallel: max 5 parallel tasks');
+  const { settings, deadlineAt, shouldAbort, signal, onExecStart, onExecEnd } = delegateCtx;
+  const parentMessageId = getAssistantId();
+  // Run all subagents concurrently.
+  const results = await Promise.all(tasks.map(async (t, i) => {
+    const task = String(t.task || '').trim();
+    if (!task) return `--- Subagent ${i + 1} ---\nError: task is required`;
+    if (task.length > 2000) return `--- Subagent ${i + 1} ---\nError: task too long (max 2000 chars)`;
+    const context = String(t.context || '').slice(0, 4000);
+    let maxSteps = Math.floor(Number(t.max_steps) || 20);
+    maxSteps = Math.max(1, Math.min(40, maxSteps));
+    try {
+      const { answer, steps, toolCounts } = await runChildAgent({
+        userId, conversationId, parentMessageId, task, context, maxSteps,
+        settings, deadlineAt, shouldAbort, signal, onExecStart, onExecEnd,
+      });
+      const parts = Object.entries(toolCounts).map(([n, c]) => `${c} ${n}`);
+      const summary = parts.length ? parts.join(', ') : 'no tools used';
+      return `--- Subagent ${i + 1}: ${task.slice(0, 80)}${task.length > 80 ? '…' : ''} ---\n${answer}\n[${steps} step${steps === 1 ? '' : 's'}, ${summary}]`;
+    } catch (e) {
+      if (e?.name === 'AbortError') throw e;
+      return `--- Subagent ${i + 1} ---\nFailed: ${e?.message || 'unknown error'}`;
+    }
+  }));
+  return { text: `All ${tasks.length} subagents finished:\n\n${results.join('\n\n')}` };
+}
+
+async function runProposePlan({ userId, conversationId, getAssistantId, args, delegateCtx }) {
+  const title = String(args.title || '').trim().slice(0, 100);
+  if (!title) throw new Error('propose_plan: title is required');
+  const steps = Array.isArray(args.steps) ? args.steps.map((s) => String(s).slice(0, 500)).slice(0, 10) : [];
+  if (!steps.length) throw new Error('propose_plan: at least one step is required');
+  const risks = Array.isArray(args.risks) ? args.risks.map((r) => String(r).slice(0, 500)).slice(0, 5) : [];
+
+  const pendingId = createPendingInput({
+    userId, conversationId, type: 'plan',
+    data: { title, steps, risks },
+  });
+
+  // Publish the plan as a message with Approve/Reject buttons.
+  // The frontend renders pending_inputs of type 'plan' as an interactive card.
+  const now = Date.now();
+  const info = db.prepare(
+    'INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)'
+  ).run(conversationId, 'assistant', `[plan:${pendingId}] ${title}`, now);
+  const msgId = Number(info.lastInsertRowid);
+  publish(conversationId, {
+    type: 'message',
+    message: {
+      id: msgId, role: 'assistant', content: `[plan:${pendingId}] ${title}`,
+      created_at: now, pending_plan_id: pendingId,
+    },
+  });
+
+  // Wait for the user to approve or reject.
+  const { shouldAbort, signal } = delegateCtx;
+  const result = await waitForPendingInput({ pendingId, userId, conversationId, shouldAbort, signal });
+
+  if (result.status === 'approved') {
+    const feedback = result.feedback ? ` User feedback: ${result.feedback}` : '';
+    return { text: `Plan approved by the user.${feedback} Proceed with the plan.` };
+  } else if (result.status === 'rejected') {
+    const feedback = result.feedback ? ` Reason: ${result.feedback}` : '';
+    throw new Error(`Plan rejected by the user.${feedback} Stop and explain what you'll do differently.`);
+  } else {
+    // Expired: continue with best judgment
+    return { text: 'Plan approval timed out (10 min). The user did not respond — proceed with your best judgment, erring on the side of caution.' };
+  }
+}
+
+async function runAskUser({ userId, conversationId, getAssistantId, args, delegateCtx }) {
+  const question = String(args.question || '').trim().slice(0, 500);
+  if (!question) throw new Error('ask_user: question is required');
+  const options = Array.isArray(args.options) ? args.options.map((o) => String(o).slice(0, 100)).slice(0, 4) : [];
+
+  const pendingId = createPendingInput({
+    userId, conversationId, type: 'question',
+    data: { question, options },
+  });
+
+  // Publish the question. The user's next message in this chat resolves it.
+  const now = Date.now();
+  const info = db.prepare(
+    'INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)'
+  ).run(conversationId, 'assistant', question, now);
+  const msgId = Number(info.lastInsertRowid);
+  publish(conversationId, {
+    type: 'message',
+    message: {
+      id: msgId, role: 'assistant', content: question,
+      created_at: now, pending_question_id: pendingId,
+      question_options: options.length ? options : undefined,
+    },
+  });
+
+  const { shouldAbort, signal } = delegateCtx;
+  const result = await waitForPendingInput({ pendingId, userId, conversationId, shouldAbort, signal });
+
+  if (result.status === 'answered') {
+    return { text: `User answered: "${result.answer}"` };
+  } else {
+    return { text: 'User did not answer within 10 minutes. Proceed with your best judgment.' };
+  }
+}
+
 export async function dispatchTool({ isChild, userId, conversationId, getAssistantId, name, args, delegateCtx, execCtx }) {
   if (name === 'delegate') {
     if (isChild) throw new Error('delegate is not available to subagents — one level of delegation only');
     return runDelegate({ userId, conversationId, getAssistantId, args, delegateCtx });
+  }
+  if (name === 'delegate_parallel') {
+    if (isChild) throw new Error('delegate_parallel is not available to subagents — one level of delegation only');
+    return runDelegateParallel({ userId, conversationId, getAssistantId, args, delegateCtx });
+  }
+  if (name === 'propose_plan') {
+    if (isChild) throw new Error('propose_plan is only available to the parent agent');
+    return runProposePlan({ userId, conversationId, getAssistantId, args, delegateCtx });
+  }
+  if (name === 'ask_user') {
+    if (isChild) throw new Error('ask_user is only available to the parent agent');
+    return runAskUser({ userId, conversationId, getAssistantId, args, delegateCtx });
   }
   // Durable memory is the parent's alone: subagents get relevant context
   // via delegate, never write access.
@@ -2638,7 +2896,7 @@ export async function runAgentLoop({
     const { finalText, stopReason } = await runToolLoop({
       settings,
       convo,
-      tools: [...TOOLS, DELEGATE_TOOL, SEND_UPDATE_TOOL, SEND_PUSH_TOOL, POST_MESSAGE_TOOL, ...MEMORY_TOOLS],
+      tools: [...TOOLS, DELEGATE_TOOL, DELEGATE_PARALLEL_TOOL, SEND_UPDATE_TOOL, SEND_PUSH_TOOL, POST_MESSAGE_TOOL, ...MEMORY_TOOLS],
       isChild: false,
       deadlineAt,
       userId,

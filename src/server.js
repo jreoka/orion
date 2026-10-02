@@ -1019,6 +1019,24 @@ app.post('/api/conversations/:id/messages', requireAuth, asyncRoute(async (req, 
         .all(...attachmentIds).map(r => r.filename).filter(Boolean);
     } catch { /* titling is best-effort */ }
   }
+  // If the agent is waiting for an answer to a mid-run question, the user's
+  // message IS the answer — resolve it and don't start a new run.
+  try {
+    const { resolvePendingInput } = await import('./pending_inputs.js');
+    const pending = db.prepare(
+      "SELECT id FROM pending_inputs WHERE user_id = ? AND conversation_id = ? AND type = 'question' AND status = 'pending' ORDER BY created_at DESC LIMIT 1"
+    ).get(req.user.id, conv.id);
+    if (pending) {
+      resolvePendingInput({
+        pendingId: pending.id,
+        userId: req.user.id,
+        status: 'answered',
+        result: { answer: content.slice(0, 2000) },
+      });
+      // Don't start a new run — the waiting agent picks up the answer.
+      return res.json({ message, answered: true });
+    }
+  } catch { /* best-effort */ }
   if (!startRunIfIdle(conv.id, req.user.id, content, { trigger: 'user-message', hasAttachments: attachmentIds.length > 0, attachmentNames })) {
     publish(conv.id, { type: 'queued' });
     return res.json({ message, queued: true });
@@ -1607,6 +1625,39 @@ app.post('/api/vault/requests/:requestId/fulfill', requireAuth, asyncRoute(async
 // Metadata only — values never leave the vault through the API.
 app.get('/api/vault/items', requireAuth, (req, res) => {
   res.json(listVaultItems(req.user.id));
+});
+
+// Plan approvals and mid-run questions: the agent pauses and waits.
+app.post('/api/plans/:id/approve', requireAuth, asyncRoute(async (req, res) => {
+  const { resolvePendingInput } = await import('./pending_inputs.js');
+  const ok = resolvePendingInput({
+    pendingId: Number(req.params.id),
+    userId: req.user.id,
+    status: 'approved',
+    result: { feedback: String(req.body?.feedback || '').slice(0, 500) },
+  });
+  if (!ok) throw httpError(404, 'Plan not found or already resolved');
+  res.json({ ok: true });
+}));
+
+app.post('/api/plans/:id/reject', requireAuth, asyncRoute(async (req, res) => {
+  const { resolvePendingInput } = await import('./pending_inputs.js');
+  const ok = resolvePendingInput({
+    pendingId: Number(req.params.id),
+    userId: req.user.id,
+    status: 'rejected',
+    result: { feedback: String(req.body?.feedback || '').slice(0, 500) },
+  });
+  if (!ok) throw httpError(404, 'Plan not found or already resolved');
+  res.json({ ok: true });
+}));
+
+app.get('/api/pending-inputs', requireAuth, (req, res) => {
+  // List pending plans/questions for the current user (for UI rendering).
+  const rows = db.prepare(
+    "SELECT id, conversation_id, type, data, created_at FROM pending_inputs WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC"
+  ).all(req.user.id);
+  res.json(rows.map((r) => ({ ...r, data: JSON.parse(r.data) })));
 });
 
 app.delete('/api/vault/items/:id', requireAuth, (req, res) => {

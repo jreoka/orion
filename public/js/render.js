@@ -63,6 +63,35 @@ function userBubbleHtml(m, opts) {
 
 // Inner HTML of .msg.assistant (avatar + body)
 function assistantBodyHtml(m, opts) {
+  // Plan approval card: rendered from pending plan data
+  if (m.pending_plan_id) {
+    return `
+      <div class="a-avatar">
+        <span class="logo-glyph" aria-hidden="true">${LOGO_SVG}</span>
+      </div>
+      <div class="a-body">
+        <div class="content"><div class="plan-card" data-plan-id="${m.pending_plan_id}">
+          <div class="plan-loading">Loading plan…</div>
+        </div></div>
+        <div class="rx-row" data-rxrow>${rxRowInner(m, opts)}</div>
+      </div>`;
+  }
+  // Mid-run question: render options as tappable buttons
+  if (m.pending_question_id && m.question_options && m.question_options.length) {
+    const opts = m.question_options.map((o, i) =>
+      `<button class="btn small q-opt" data-qid="${m.pending_question_id}" data-opt="${i}">${escapeHtml(o)}</button>`
+    ).join('');
+    return `
+      <div class="a-avatar">
+        <span class="logo-glyph" aria-hidden="true">${LOGO_SVG}</span>
+      </div>
+      <div class="a-body">
+        ${quoteHtml(m)}
+        <div class="content">${m.content ? md(m.content) : ''}<div class="q-opts">${opts}</div></div>
+        <div class="imgs">${(m.attachments || []).map(attachmentHtml).join('')}</div>
+        <div class="rx-row" data-rxrow>${rxRowInner(m, opts)}</div>
+      </div>`;
+  }
   return `
       <div class="a-avatar">
         <span class="logo-glyph" aria-hidden="true">${LOGO_SVG}</span>

@@ -1499,6 +1499,79 @@ function wireComposerGlobalKeys() {
   });
 }
 
+// Plan approval cards and mid-run question options.
+// Called after messages render to wire up interactive elements.
+
+async function wirePlanCards() {
+  // Load pending plans and render them
+  document.querySelectorAll('.plan-card[data-plan-id]').forEach(async (card) => {
+    const planId = card.dataset.planId;
+    if (card.dataset.wired) return;
+    card.dataset.wired = '1';
+    try {
+      const res = await fetch('/api/pending-inputs', { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed');
+      const plans = await res.json();
+      const plan = plans.find((p) => String(p.id) === String(planId) && p.type === 'plan');
+      if (!plan) {
+        card.innerHTML = '<p class="muted small">Plan no longer pending.</p>';
+        return;
+      }
+      const steps = plan.data.steps.map((s, i) => `<li>${escapeHtml(s)}</li>`).join('');
+      const risks = plan.data.risks && plan.data.risks.length
+        ? `<div class="plan-risks"><strong>Risks:</strong><ul>${plan.data.risks.map((r) => `<li>${escapeHtml(r)}</li>`).join('')}</ul></div>`
+        : '';
+      card.innerHTML = `
+        <div class="plan-header"><strong>📋 ${escapeHtml(plan.data.title)}</strong></div>
+        <ol class="plan-steps">${steps}</ol>
+        ${risks}
+        <div class="plan-actions">
+          <button class="btn primary plan-approve" data-id="${plan.id}">Approve</button>
+          <button class="btn danger-ghost plan-reject" data-id="${plan.id}">Reject</button>
+        </div>`;
+      card.querySelector('.plan-approve').addEventListener('click', async (e) => {
+        const btn = e.target;
+        btn.disabled = true;
+        btn.textContent = 'Approving…';
+        try {
+          await fetch(`/api/plans/${plan.id}/approve`, { method: 'POST', credentials: 'include' });
+          card.innerHTML = '<p class="muted small">✅ Plan approved — the agent is continuing.</p>';
+        } catch {
+          btn.disabled = false;
+          btn.textContent = 'Approve';
+        }
+      });
+      card.querySelector('.plan-reject').addEventListener('click', async (e) => {
+        const btn = e.target;
+        btn.disabled = true;
+        try {
+          await fetch(`/api/plans/${plan.id}/reject`, { method: 'POST', credentials: 'include' });
+          card.innerHTML = '<p class="muted small">❌ Plan rejected.</p>';
+        } catch { btn.disabled = false; }
+      });
+    } catch {
+      card.innerHTML = '<p class="muted small">Could not load plan.</p>';
+    }
+  });
+
+  // Question option buttons: tapping sends the answer as a message
+  document.querySelectorAll('.q-opt[data-qid]').forEach((btn) => {
+    if (btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', async () => {
+      const answer = btn.textContent.trim();
+      btn.disabled = true;
+      try {
+        // Send as a regular message — the server resolves the pending question
+        await sendMessage(answer);
+      } catch { btn.disabled = false; }
+    });
+  });
+}
+
+// Call after messages render
+const origRenderMessages = typeof renderMessages === 'function' ? renderMessages : null;
+
 function renderMessages() {
   const box = $('#messages');
   // The live run-status line lives inside #messages; a re-render must not
@@ -1566,6 +1639,8 @@ function renderMessages() {
       if (S.activeId === fillId) jumpToBottom();
     })();
   }
+  // Wire up plan approval cards and question options
+  wirePlanCards();
 }
 
 // Fold a finished run's intermediate chatter into a single expandable
@@ -4802,7 +4877,7 @@ async function passkeyLogin() {
 }
 
 /* ---------- settings ---------- */
-const SETTINGS_TABS = ['security', 'sessions', 'vault', 'notifications'];
+const SETTINGS_TABS = ['security', 'sessions', 'vault', 'notifications', 'tasks'];
 let _settingsTab = 'security';
 let _twofaStatus = null;
 let _passkeys = null;
@@ -4843,6 +4918,7 @@ async function renderSettings() {
   else if (_settingsTab === 'sessions') renderSessionsTab();
   else if (_settingsTab === 'vault') renderVaultTab();
   else if (_settingsTab === 'notifications') renderNotificationsTab();
+  else if (_settingsTab === 'tasks') renderTasksTab();
   renderProfileCard();
   renderUsageCard();
 }
@@ -5601,5 +5677,74 @@ async function renderNotificationsTab() {
       toast('Couldn\u2019t send test: ' + err.message, 'error');
     }
     btn.disabled = false;
+  });
+}
+
+async function renderTasksTab() {
+  const box = document.getElementById('tasks-box');
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  let tasks = [];
+  try {
+    const res = await fetch('/api/tasks', { credentials: 'include' });
+    if (!res.ok) throw new Error('Failed to load');
+    tasks = await res.json();
+  } catch {
+    box.innerHTML = '<p class="muted">Could not load scheduled tasks.</p>';
+    return;
+  }
+  if (!tasks.length) {
+    box.innerHTML = '<p class="muted">No scheduled tasks. Ask the agent to create one — e.g. "check orion.dill.moe every morning at 9".</p>';
+    return;
+  }
+  const rows = tasks.map((t) => {
+    const sched = t.kind === 'cron' ? `<code>${t.cron_expr}</code>` : new Date(t.run_at).toLocaleString();
+    const status = t.enabled ? '<span class="pill pill-green">active</span>' : '<span class="pill">paused</span>';
+    return `<div class="task-row" data-id="${t.id}">
+      <div class="task-main">
+        <div class="task-name">${escapeHtml(t.name)} ${status}</div>
+        <div class="task-sched muted small">${t.kind === 'cron' ? 'Repeats: ' : 'Runs: '}${sched}</div>
+      </div>
+      <div class="task-actions">
+        <button class="btn small task-toggle" data-id="${t.id}">${t.enabled ? 'Pause' : 'Resume'}</button>
+        <button class="btn small task-run" data-id="${t.id}">Run now</button>
+        <button class="btn small danger-ghost task-del" data-id="${t.id}">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+  box.innerHTML = `<div class="task-list">${rows}</div>`;
+  box.querySelectorAll('.task-toggle').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const task = tasks.find((t) => String(t.id) === String(id));
+      btn.disabled = true;
+      try {
+        await fetch(`/api/tasks/${id}`, {
+          method: 'PATCH', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !task.enabled }),
+        });
+        renderTasksTab();
+      } catch { btn.disabled = false; }
+    });
+  });
+  box.querySelectorAll('.task-run').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Running…';
+      try {
+        await fetch(`/api/tasks/${btn.dataset.id}/run`, { method: 'POST', credentials: 'include' });
+      } catch {}
+      btn.disabled = false;
+      btn.textContent = 'Run now';
+    });
+  });
+  box.querySelectorAll('.task-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Delete this scheduled task?')) return;
+      try {
+        await fetch(`/api/tasks/${btn.dataset.id}`, { method: 'DELETE', credentials: 'include' });
+        renderTasksTab();
+      } catch {}
+    });
   });
 }
