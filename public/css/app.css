@@ -1782,10 +1782,6 @@ input[type="checkbox"], input[type="radio"] { width: 19px; height: 19px; accent-
 .plan-risks ul { margin: 4px 0 4px 20px; }
 .plan-actions { display: flex; gap: 8px; margin-top: 12px; }
 
-/* Mid-run question options */
-.q-opts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.q-opt { cursor: pointer; }
-
 /* Scheduled tasks list */
 .task-list { display: flex; flex-direction: column; gap: 12px; }
 .task-row {

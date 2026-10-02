@@ -1,4 +1,4 @@
-// Pending user inputs (plan approvals, mid-run questions).
+// Pending user inputs (plan approvals).
 // The agent pauses and waits for the user to respond.
 
 import { db } from './db.js';

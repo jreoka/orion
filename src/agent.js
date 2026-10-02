@@ -66,7 +66,6 @@ Your tools:
 - delegate: spawn a subagent to handle a self-contained piece of work. Give it a clear task plus any background context it needs; it runs synchronously and returns its result as text, which you then use to continue your own work. Delegate independent or parallelizable sub-tasks (research one thing while you do another, split a big job into pieces); do quick single sequences yourself.
 - delegate_parallel: spawn 2–5 subagents that run IN PARALLEL for independent work. Use when you can split a big job into pieces that don't depend on each other — each gets its own task and context, all results return together. Max 5 per call.
 - propose_plan: for risky, destructive, or large operations (deleting data, major refactors, deploys, bulk changes), propose the plan FIRST and wait for approval. The user sees a card with Approve/Reject; your run pauses until they respond. Don't use for routine safe work.
-- ask_user: when you genuinely need the user to decide something or provide info only they have, ask and WAIT. Your run pauses until they reply. Don't use for things you can figure out yourself.
 - search_chats: search all past conversations for a topic, error, or decision. Use when the user asks "what did we do last time X happened?" or you need context from an old chat.
 - todo_write: track multi-step tasks (3+ steps). Set it up at the start, mark steps in_progress/completed as you go. Keeps you on track and shows the user progress.
 - send_update: post a progress note mid-run. It appears as a slim status line in the chat (not a full message card), so use it for meaningful milestones during long multi-step work — a sentence or two, not a narration of every tool call.
@@ -647,28 +646,6 @@ const MEMORY_TOOLS = [
       },
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'ask_user',
-      description:
-        'Ask the user a question and WAIT for their answer before continuing. Use when you need information only the user has, or when a decision significantly changes what you should do. Your run PAUSES until they reply — do not use for things you can figure out yourself or look up. Keep questions concise and specific.',
-      parameters: {
-        type: 'object',
-        properties: {
-          question: { type: 'string', description: 'The question to ask (1–500 chars)' },
-          options: {
-            type: 'array',
-            description: 'Suggested answers the user can tap (2–4 options, optional)',
-            minItems: 2,
-            maxItems: 4,
-            items: { type: 'string' },
-          },
-        },
-        required: ['question'],
-      },
-    },
-  },
 ];
 
 const DELEGATE_TOOL = {
@@ -808,7 +785,6 @@ function summarizeTool(name, args) {
     case 'delegate': return 'Working on a subtask…';
     case 'delegate_parallel': return 'Running parallel subtasks…';
     case 'propose_plan': return 'Proposing a plan…';
-    case 'ask_user': return 'Asking you a question…';
     case 'send_update': return null; // the update line speaks for itself
     case 'send_push': return 'Sending a notification…';
     case 'post_message': return 'Posting a message…';
@@ -2180,47 +2156,6 @@ async function runProposePlan({ userId, conversationId, getAssistantId, args, de
   }
 }
 
-async function runAskUser({ userId, conversationId, getAssistantId, args, delegateCtx }) {
-  const question = String(args.question || '').trim().slice(0, 500);
-  if (!question) throw new Error('ask_user: question is required');
-  const options = Array.isArray(args.options) ? args.options.map((o) => String(o).slice(0, 100)).slice(0, 4) : [];
-
-  const pendingId = createPendingInput({
-    userId, conversationId, type: 'question',
-    data: { question, options },
-  });
-
-  // Publish the question. The user's next message in this chat resolves it.
-  const now = Date.now();
-  let msgId;
-  try {
-    const info = db.prepare(
-      'INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)'
-    ).run(conversationId, 'assistant', question, now);
-    msgId = Number(info.lastInsertRowid);
-  } catch (e) {
-    try { db.prepare("UPDATE pending_inputs SET status = 'expired' WHERE id = ?").run(pendingId); } catch {}
-    throw new Error(`ask_user: failed to publish question: ${e.message}`);
-  }
-  publish(conversationId, {
-    type: 'message',
-    message: {
-      id: msgId, role: 'assistant', content: question,
-      created_at: now, pending_question_id: pendingId,
-      question_options: options.length ? options : undefined,
-    },
-  });
-
-  const { shouldAbort, signal } = delegateCtx;
-  const result = await waitForPendingInput({ pendingId, userId, conversationId, shouldAbort, signal });
-
-  if (result.status === 'answered') {
-    return { text: `User answered: "${result.answer}"` };
-  } else {
-    return { text: 'User did not answer within 10 minutes. Proceed with your best judgment.' };
-  }
-}
-
 export async function dispatchTool({ isChild, userId, conversationId, getAssistantId, name, args, delegateCtx, execCtx }) {
   if (name === 'delegate') {
     if (isChild) throw new Error('delegate is not available to subagents — one level of delegation only');
@@ -2233,10 +2168,6 @@ export async function dispatchTool({ isChild, userId, conversationId, getAssista
   if (name === 'propose_plan') {
     if (isChild) throw new Error('propose_plan is only available to the parent agent');
     return runProposePlan({ userId, conversationId, getAssistantId, args, delegateCtx });
-  }
-  if (name === 'ask_user') {
-    if (isChild) throw new Error('ask_user is only available to the parent agent');
-    return runAskUser({ userId, conversationId, getAssistantId, args, delegateCtx });
   }
   // Durable memory is the parent's alone: subagents get relevant context
   // via delegate, never write access.

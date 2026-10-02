@@ -1504,15 +1504,13 @@ function wireComposerGlobalKeys() {
 
 async function wirePlanCards() {
   const cards = [...document.querySelectorAll('.plan-card[data-plan-id]')].filter((c) => !c.dataset.wired);
-  if (!cards.length && !document.querySelector('.q-opt[data-qid]:not([data-wired])')) return;
+  if (!cards.length) return;
   // Fetch pending inputs once for all cards
   let plans = [];
-  if (cards.length) {
-    try {
-      const res = await fetch('/api/pending-inputs', { credentials: 'include' });
-      if (res.ok) plans = await res.json();
-    } catch {}
-  }
+  try {
+    const res = await fetch('/api/pending-inputs', { credentials: 'include' });
+    if (res.ok) plans = await res.json();
+  } catch {}
   // Load pending plans and render them
   cards.forEach((card) => {
     const planId = card.dataset.planId;
@@ -1552,23 +1550,6 @@ async function wirePlanCards() {
       try {
         await fetch(`/api/plans/${plan.id}/reject`, { method: 'POST', credentials: 'include' });
         card.innerHTML = '<p class="muted small">❌ Plan rejected.</p>';
-      } catch { btn.disabled = false; }
-    });
-  });
-
-  // Question option buttons: tapping sends the answer as a message
-  document.querySelectorAll('.q-opt[data-qid]').forEach((btn) => {
-    if (btn.dataset.wired) return;
-    btn.dataset.wired = '1';
-    btn.addEventListener('click', async () => {
-      const answer = btn.textContent.trim();
-      btn.disabled = true;
-      try {
-        // Send as a regular message — the server resolves the pending question
-        await api(`/api/conversations/${S.activeId}/messages`, {
-          method: 'POST',
-          body: { content: answer },
-        });
       } catch { btn.disabled = false; }
     });
   });

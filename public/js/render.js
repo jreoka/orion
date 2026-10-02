@@ -89,22 +89,6 @@ function assistantBodyHtml(m, opts) {
         <div class="rx-row" data-rxrow>${rxRowInner(m, opts)}</div>
       </div>`;
   }
-  // Mid-run question: render options as tappable buttons
-  if (m.pending_question_id && m.question_options && m.question_options.length) {
-    const opts = m.question_options.map((o, i) =>
-      `<button class="btn small q-opt" data-qid="${m.pending_question_id}" data-opt="${i}">${escapeHtml(o)}</button>`
-    ).join('');
-    return `
-      <div class="a-avatar">
-        <span class="logo-glyph" aria-hidden="true">${LOGO_SVG}</span>
-      </div>
-      <div class="a-body">
-        ${quoteHtml(m)}
-        <div class="content">${m.content ? md(m.content) : ''}<div class="q-opts">${opts}</div></div>
-        <div class="imgs">${(m.attachments || []).map(attachmentHtml).join('')}</div>
-        <div class="rx-row" data-rxrow>${rxRowInner(m, opts)}</div>
-      </div>`;
-  }
   return `
       <div class="a-avatar">
         <span class="logo-glyph" aria-hidden="true">${LOGO_SVG}</span>
@@ -151,10 +135,10 @@ function isIntermediateCandidate(el) {
     el.classList.contains('vault-request') || el.classList.contains('msg-empty')
   )
     return false;
-  // Plan approval cards and mid-run questions must stay visible — the agent
-  // is waiting for the user, so folding them into a collapsed work log
-  // would hide the thing they're waiting on.
-  if (el.querySelector('.plan-card, .q-opts')) return false;
+  // Plan approval cards must stay visible — the agent is waiting for the
+  // user, so folding them into a collapsed work log would hide the thing
+  // they're waiting on.
+  if (el.querySelector('.plan-card')) return false;
   const content = el.querySelector('.a-body .content');
   return !!content && content.textContent.trim().length > 0;
 }
