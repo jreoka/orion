@@ -3,7 +3,7 @@ services:
     build: .
     restart: unless-stopped
     volumes:
-      - orion-data:/app/data
+      - ./orion-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
       - ./docker-proxy:/docker-proxy
     environment:
@@ -20,8 +20,8 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
+      - ./caddy-data:/data
+      - ./caddy-config:/config
 
   # Bundled metasearch for the agent's web_search tool. Internal-only —
   # not published to the host, reachable from the orion container as
@@ -31,8 +31,3 @@ services:
     restart: unless-stopped
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
-
-volumes:
-  orion-data:
-  caddy-data:
-  caddy-config:
